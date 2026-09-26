@@ -15,18 +15,8 @@ ROOT="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$ROOT"; cd "$ROOT"
 OUT="$SWIFT_BUILD/out/llvm"
 
 echo "==> 1. pinned llvm-project source (fetched BY SHA via shared clone_pinned.sh)"
-# LLVM build support cut for any other Swift release than SWIFT_VERSION builds fine and is wrong,
-# which no later gate can see -- so refuse it here, before anything is fetched or built.
-[ "$LLVM_SWIFT_RELEASE" = "$SWIFT_VERSION" ] || {
-  echo "FAIL: LLVM is pinned at $LLVM_TAG, but SWIFT_VERSION is $SWIFT_VERSION"
-  echo "      move LLVM_SWIFT_RELEASE and LLVM_SHA in pins.env to llvm-project's $SWIFT_TAG"; exit 1; }
-# platform: git ls-remote lists an annotated tag twice, the tag object and then its peeled commit
-#           (refs/tags/T^{}); only the peeled one is comparable with a commit SHA.
-LLVM_TAG_SHA="$(git ls-remote https://github.com/swiftlang/llvm-project.git "refs/tags/$LLVM_TAG" "refs/tags/$LLVM_TAG^{}" \
-  | awk -v t="refs/tags/$LLVM_TAG" '{ sha[$2] = $1 } END { if ((t "^{}") in sha) print sha[t "^{}"]; else print sha[t] }')"
-[ -n "$LLVM_TAG_SHA" ] || { echo "FAIL: llvm-project has no tag $LLVM_TAG"; exit 1; }
-[ "$LLVM_TAG_SHA" = "$LLVM_SHA" ] || {
-  echo "FAIL: LLVM_SHA is $LLVM_SHA, but llvm-project's $LLVM_TAG is $LLVM_TAG_SHA"; exit 1; }
+check_release_pin llvm-project "$LLVM_SWIFT_RELEASE" "$LLVM_TAG" "$LLVM_SHA" \
+  https://github.com/swiftlang/llvm-project.git || exit 1
 # clone_pinned fetches the pinned commit DIRECTLY, so where a branch or tag moves later never matters.
 # Guard on llvm/ existing, not on .git -- an interrupted checkout leaves a .git whose HEAD passes the
 # SHA test while the worktree is empty (cmake then dies confusingly), so re-fetch from scratch then.
@@ -38,22 +28,33 @@ test "$(git -C llvm-project rev-parse HEAD)" = "$LLVM_SHA" || {
   echo "FAIL: llvm-project SHA mismatch (want $LLVM_SHA)"; exit 1; }
 [ -d llvm-project/llvm ] || { echo "FAIL: llvm-project checkout incomplete"; exit 1; }
 
+echo "==> 1b. LLVM patches (patches/llvm, on a pristine checkout: a previous run left it patched)"
+git -C llvm-project reset -q --hard "$LLVM_SHA"
+git -C llvm-project clean -q -fdx
+for p in "$HERE"/patches/llvm/*.patch; do
+  git -C llvm-project apply -p0 --check "$p" && git -C llvm-project apply -p0 "$p" || { echo "FAIL: patch did not apply: $p"; exit 1; }
+done
+grep -q 'absent before macOS 10.10' llvm-project/llvm/lib/CAS/OnDiskCommon.cpp || { echo "FAIL: llvm patch 0001 not applied"; exit 1; }
+grep -q 'LLVM_LINKER_IS_LLD AND NOT APPLE' llvm-project/llvm/cmake/modules/AddLLVM.cmake || { echo "FAIL: llvm patch 0002 not applied"; exit 1; }
+grep -q "swiftlang's fork refuses every Apple-platform input" llvm-project/lld/MachO/InputFiles.cpp || { echo "FAIL: llvm patch 0003 not applied"; exit 1; }
+
 echo "==> 2. configure + build TableGen only (libswiftCore does not link LLVM)"
 # spec: 2026-09-13 shipyard CMake flag day -- the .cmake files installed in step 3 ARE the shipped
 #       product, and this repo's build.sh consumes them with shipyard-cmake. Generating them
 #       with one CMake and consuming them with another is the mismatch this repo exists to prevent,
 #       so the same pinned shipyard-cmake writes them.
-if [ ! -x llvm-build/bin/llvm-tblgen ]; then
+if [ ! -f llvm-build/build.ninja ] || [ ! -x "$(sed -n 's/^CMAKE_COMMAND:INTERNAL=//p' llvm-build/CMakeCache.txt)" ]; then
   shipyard-cmake -G Ninja -S llvm-project/llvm -B llvm-build \
     -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS=clang \
     -DLLVM_TARGETS_TO_BUILD="X86;AArch64" \
     -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
     -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF
-  # llvm-min-tblgen is named explicitly: step 3 copies it, and relying on it appearing
-  # transitively would break the copy if a future LLVM stops pulling it in.
-  ninja -C llvm-build llvm-tblgen llvm-min-tblgen clang-tblgen llvm-config \
-        intrinsics_gen clang-tablegen-targets
 fi
+# llvm-min-tblgen is named explicitly: step 3 copies it, and relying on it appearing
+# transitively would break the copy if a future LLVM stops pulling it in. LLVMBitstreamReader is for
+# build-toolchain.sh's native helper tools.
+ninja -C llvm-build llvm-tblgen llvm-min-tblgen clang-tblgen llvm-config \
+      intrinsics_gen clang-tablegen-targets LLVMBitstreamReader
 
 echo "==> 3. install the relocatable subset"
 rm -rf "$OUT"; mkdir -p "$OUT"

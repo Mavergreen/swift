@@ -1,0 +1,12 @@
+diff --git llvm/cmake/modules/AddLLVM.cmake llvm/cmake/modules/AddLLVM.cmake
+--- llvm/cmake/modules/AddLLVM.cmake
++++ llvm/cmake/modules/AddLLVM.cmake
+@@ -291,7 +291,7 @@ endif()
+ 
+ function(add_link_opts target_name)
+   # Newer lld defaults to no-undefined-version, which we don't expect
+-  if(LLVM_LINKER_IS_LLD)
++  if(LLVM_LINKER_IS_LLD AND NOT APPLE)
+     set_property(TARGET ${target_name} APPEND_STRING PROPERTY
+       LINK_FLAGS " -Wl,-undefined-version")
+   endif()

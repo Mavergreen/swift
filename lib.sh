@@ -51,3 +51,17 @@ expand_toolchain() {
   rm -rf "$2.x"
   mv "$_rec.tmp" "$_rec"
 }
+
+# check_release_pin <what> <release> <tag> <sha> <repo-url> -- fail unless <release> is SWIFT_VERSION
+# and <sha> is the commit <repo-url>'s <tag> names. Source code cut for another Swift release builds
+# fine and is wrong, which no later gate can see; this refuses it before anything is fetched.
+check_release_pin() {
+  [ "$2" = "$SWIFT_VERSION" ] || {
+    echo "FAIL: $1 is pinned at $3, but SWIFT_VERSION is $SWIFT_VERSION -- move its pins in pins.env" >&2; return 1; }
+  # platform: git ls-remote lists an annotated tag twice, the tag object and then its peeled commit
+  #           (refs/tags/T^{}); only the peeled one is comparable with a commit SHA.
+  _sha="$(git ls-remote "$5" "refs/tags/$3" "refs/tags/$3^{}" \
+    | awk -v t="refs/tags/$3" '{ sha[$2] = $1 } END { if ((t "^{}") in sha) print sha[t "^{}"]; else print sha[t] }')"
+  [ -n "$_sha" ] || { echo "FAIL: $5 has no tag $3" >&2; return 1; }
+  [ "$_sha" = "$4" ] || { echo "FAIL: $1's pinned commit is $4, but $5's $3 is $_sha" >&2; return 1; }
+}

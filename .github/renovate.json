@@ -31,14 +31,35 @@
       "packageNameTemplate": "swiftlang/llvm-project",
       "datasourceTemplate": "github-tags",
       "extractVersionTemplate": "^swift-(?<version>.+)-RELEASE$"
+    },
+    {
+      "description": "swift-cmark, the compiler's Markdown parser, tagged swift-X.Y.Z-RELEASE per Swift release like llvm-project and tracked the same way: version and commit in ONE regex. build-toolchain.sh runs check_release_pin on it.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^pins\\.env$/"],
+      "matchStrings": ["CMARK_SWIFT_RELEASE=\"(?<currentValue>[^\"]+)\"[\\s\\S]*?CMARK_SHA=\"(?<currentDigest>[0-9a-f]{40})\""],
+      "depNameTemplate": "swiftlang/swift-cmark",
+      "packageNameTemplate": "swiftlang/swift-cmark",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^swift-(?<version>.+)-RELEASE$"
+    },
+    {
+      "description": "mavericks-clang-22's cross toolchain, the C/C++ compiler of the 10.9-hosted Swift toolchain. The whole pin is the version: fetch-clang22.sh verifies the pkg against that release's own SHA256SUMS. The versioning regex reads -mavericks.N as the build number; Renovate's default would coerce it away and never propose a repackage.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^pins\\.env$/"],
+      "matchStrings": ["CLANG22_VERSION=\"(?<currentValue>[^\"]+)\""],
+      "depNameTemplate": "Mavergreen/clang-22",
+      "packageNameTemplate": "Mavergreen/clang-22",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
     }
   ],
   "packageRules": [
     {
-      "description": "ONE PR per Swift release, moving the Swift pin and the llvm-project pin together. Apart, each fails build-llvm.sh's check that both name the same release, so neither could merge.",
+      "description": "ONE PR per Swift release, moving the Swift pin, the llvm-project pin and the swift-cmark pin together. Apart, each fails its release-pin check (build-llvm.sh, build-toolchain.sh), so none could merge.",
       "matchDepNames": [
         "swiftlang/swift",
-        "swiftlang/llvm-project"
+        "swiftlang/llvm-project",
+        "swiftlang/swift-cmark"
       ],
       "groupName": "Swift release"
     },

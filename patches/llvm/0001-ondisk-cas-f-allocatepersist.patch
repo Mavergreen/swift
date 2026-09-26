@@ -1,0 +1,13 @@
+diff --git llvm/lib/CAS/OnDiskCommon.cpp llvm/lib/CAS/OnDiskCommon.cpp
+--- llvm/lib/CAS/OnDiskCommon.cpp
++++ llvm/lib/CAS/OnDiskCommon.cpp
+@@ -147,6 +147,9 @@ Expected<size_t> cas::ondisk::preallocateFileTail(int FD, size_t CurrentSize, si
+     return CreateError(std::error_code(Err, std::generic_category()));
+   return NewSize;
+ #elif defined(__APPLE__)
++#ifndef F_ALLOCATEPERSIST
++#define F_ALLOCATEPERSIST 0 /* absent before macOS 10.10's SDK; best-effort without it */
++#endif
+   fstore_t FAlloc;
+   FAlloc.fst_flags = F_ALLOCATEALL | F_ALLOCATEPERSIST;
+   FAlloc.fst_posmode = F_PEOFPOSMODE;
