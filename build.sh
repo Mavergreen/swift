@@ -12,7 +12,7 @@ set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"   # capture BEFORE the cd below: $0 is relative as ./build.sh
 . "$HERE/pins.env"
-. "$HERE/lib.sh"    # -> $SWIFT_BUILD, verify_toolchain_signature
+. "$HERE/lib.sh"    # -> $SWIFT_BUILD, verify_toolchain_signature, expand_toolchain
 . "$HERE/msc.sh"    # -> $SHIPYARD (clone_pinned.sh)
 ROOT="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$ROOT"; cd "$ROOT"
 DI="$(xcrun -f dyld_info)"
@@ -23,12 +23,7 @@ echo "==> 1. host build environment (built here: LLVM build support; verified: s
 [ -d "$LLVMB/lib/cmake/llvm" ] || { echo "FAIL: no LLVM build support at $LLVMB -- run ./build-llvm.sh"; exit 1; }
 [ -f "$PKG" ] || { echo "FAIL: no swift.org toolchain at $PKG -- run ./mirror-toolchain.sh"; exit 1; }
 verify_toolchain_signature "$PKG"
-if [ ! -x toolchain/usr/bin/swiftc ]; then
-  rm -rf tc-expand toolchain; mkdir -p toolchain
-  pkgutil --expand "$PKG" tc-expand
-  ditto -x -z "$(find tc-expand -name Payload | head -1)" toolchain
-  rm -rf tc-expand
-fi
+expand_toolchain "$PKG" toolchain || { echo "FAIL: could not expand $PKG"; exit 1; }
 TC="$ROOT/toolchain/usr"
 
 echo "==> 2. pinned swift source, reset to pristine (a previous run left it patched)"
