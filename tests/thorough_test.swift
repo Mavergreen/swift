@@ -5,11 +5,13 @@
 // The point is to drive the machinery that the trivial `print` test did not:
 // value/reference types, generics, existentials, error handling, ARC with
 // weak/unowned, and — most importantly — CLASS REALIZATION on the legacy
-// (_objc_realizeClassFromSwift-absent) path, via both a pure-Swift class
-// hierarchy and (guarded) an NSObject subclass.
+// (_objc_realizeClassFromSwift-absent) path, via a pure-Swift class hierarchy.
+// (The NSObject case is objc_interop_test.swift: it needs the ObjectiveC overlay.)
 //
 // Build:  make-selftest.sh (at -O and -Onone, rpath /usr/local/mavergreen/swift-runtime/lib/swift)
 // Run:    run-selftest.sh --gate   (NO DYLD_* env vars)   → each prints a checksum, exit(0)
+
+import Darwin   // exit(); on 10.9 without overlays this is the SDK's Clang module
 
 // A small accumulator so the optimizer can't dead-strip the work and so the
 // Mavericks operator gets one deterministic line to eyeball.
@@ -113,20 +115,6 @@ func exerciseARC() {
     mix(w != nil)
 }
 
-// ---- NSObject subclass — objc-interop class realization ------------------
-// libswiftCore links libobjc, so NSObject is available via the ObjectiveC module
-// without Foundation. No @objc attributes (those require the Foundation overlay,
-// which doesn't exist yet); a plain subclass still drives objc class realization.
-import ObjectiveC
-class MyObj: NSObject { func tag() -> Int { 0xBEEF } }
-func exerciseObjCClass() {
-    let o = MyObj()
-    mix(o.tag())
-    mix(String(describing: type(of: o)))
-    mix(o.hash)                       // NSObject.hash — real objc method dispatch
-    mix(o.isEqual(o))
-}
-
 // ---- OS-version availability query (exercises the guarded os_system_version
 //      fallback added for 10.9). On 10.9 these must return the low branch
 //      WITHOUT crashing — the whole point of the Availability.mm guard.
@@ -140,7 +128,6 @@ exerciseControlFlow()
 exerciseGenerics()
 exerciseSwiftClasses()
 exerciseARC()
-exerciseObjCClass()
 exerciseAvailability()
 
 print("thorough_test OK  checksum=0x\(String(acc, radix: 16))")
