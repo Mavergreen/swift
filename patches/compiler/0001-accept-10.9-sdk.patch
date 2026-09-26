@@ -1,0 +1,14 @@
+diff --git lib/Driver/Driver.cpp lib/Driver/Driver.cpp
+--- lib/Driver/Driver.cpp
++++ lib/Driver/Driver.cpp
+@@ -1067,7 +1067,9 @@ static bool isSDKTooOld(StringRef sdkPath, llvm::VersionTuple minVersion,
+ /// the given target.
+ static bool isSDKTooOld(StringRef sdkPath, const llvm::Triple &target) {
+   if (target.isMacOSX()) {
+-    return isSDKTooOld(sdkPath, llvm::VersionTuple(10, 15), "OSX");
++    // Mavergreen: any macOS SDK back to 10.9 is accepted. This check exists because Apple's SDKs
++    // are where Swift expects its overlays; for OS X 10.9 they come from the Swift runtime instead.
++    return false;
+
+   } else if (target.isiOS()) {
+     // Includes both iOS and TVOS.
