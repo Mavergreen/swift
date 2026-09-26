@@ -4,10 +4,10 @@ diff --git cmake/modules/AddSwift.cmake cmake/modules/AddSwift.cmake
 @@ -497,7 +497,7 @@ function(_add_swift_runtime_link_flags target relpath_to_lib_dir bootstrapping)
        # Add the SDK directory for the host platform.
        target_link_directories(${target} PRIVATE "${sdk_dir}")
-
+ 
 -      # Include the abi stable system stdlib in our rpath.
 -      set(swift_runtime_rpath "/usr/lib/swift")
 +      # Mavergreen: host tools run on the toolchain's own bundled runtime, not /usr/lib/swift.
 +      set(swift_runtime_rpath "@loader_path/${relpath_to_lib_dir}/swift/${SWIFT_SDK_${SWIFT_HOST_VARIANT_SDK}_LIB_SUBDIR}")
-
+ 
      elseif(ASRLF_BOOTSTRAPPING_MODE STREQUAL "CROSSCOMPILE-WITH-HOSTLIBS")

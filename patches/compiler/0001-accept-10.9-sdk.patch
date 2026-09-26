@@ -9,6 +9,6 @@ diff --git lib/Driver/Driver.cpp lib/Driver/Driver.cpp
 +    // Mavergreen: any macOS SDK back to 10.9 is accepted. This check exists because Apple's SDKs
 +    // are where Swift expects its overlays; for OS X 10.9 they come from the Swift runtime instead.
 +    return false;
-
+ 
    } else if (target.isiOS()) {
      // Includes both iOS and TVOS.
