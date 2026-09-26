@@ -64,11 +64,13 @@ believing a release is good; it is not the bar for publishing one.
 ## Conformance deviations
 
 `check-artifact-conformance.sh` holds a release's artifacts to the family's schemes, and the compat
-guard (`scripts/guard.sh`) reads the `sdk-pin` entries too. These departures are deliberate, and each
-is scoped to the artifact it concerns: the first to the runtime's dylibs, the rest to the swift.org
-mirror attached to `-mavericks.1` releases.
+guard (`scripts/guard.sh`) reads the `sdk-pin` entries too. These departures are deliberate, and
+each is scoped to the artifact it concerns: the first two to the stdlib dylibs (the runtime pkg's,
+and the same bytes in the toolchain pkg), the rest to the swift.org mirror attached to
+`-mavericks.1` releases.
 
 - sdk-pin:*/swift-runtime/lib/swift/*.dylib: the Swift runtime cannot be built against the 10.9 SDK, which has no libc++ headers at all (only libstdc++ 4.2.1) while Swift 6.4 requires C++17, and which lacks declarations of post-10.9 APIs the runtime calls behind availability checks. Its build uses a modern SDK: today the CI runner's Xcode SDK, unpinned; the swift T2 decision (2026-09-25) replaces that with one pinned modern SDK used by CI and on 10.9. minos stays 10.9, and the real-10.9 gate is its acceptance. Revisit if the gate gains per-product pins.
+- sdk-pin:*/swift-toolchain/lib/swift/macosx/*.dylib: the toolchain's stdlib dylibs are the runtime's own bytes, staged from the one stdlib build (scripts/stage-toolchain.sh), so the runtime's reason above applies verbatim. The compiler, lld and clang beside them record the pinned 10.9 SDK and take no exemption.
 - version:upstream-swift-*.pkg: mirrored verbatim from swift.org, so its version is upstream's own
   (`6.4.20260913101` for 6.4.0). Rewriting it would break the correspondence with download.swift.org
   that the mirror exists to keep checkable.

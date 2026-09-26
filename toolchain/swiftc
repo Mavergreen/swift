@@ -1,0 +1,30 @@
+#!/bin/sh
+# platform: macOS-only -- runs this toolchain's swift-frontend, an OS X 10.9 x86_64 program
+#   usage: swiftc [swiftc arguments]
+#          Swift for Mavericks: the Swift compiler driver with this toolchain's OS X 10.9 defaults
+#          (target, SDK, linker, runtime location). Your arguments follow the defaults, so yours win
+#          wherever the driver takes the last value.
+set -e
+self="$0"
+# platform: 10.9's readlink has no -f, so a linked swiftc (the family link farm's, or one in
+#           /usr/local/bin) is resolved by hand.
+while [ -L "$self" ]; do
+  link="$(readlink "$self")"
+  case "$link" in /*) self="$link" ;; *) self="$(dirname "$self")/$link" ;; esac
+done
+BIN="$(cd "$(dirname "$self")" && pwd -P)"
+PREFIX="$(dirname "$BIN")"
+LIBEXEC="$PREFIX/libexec/mavergreen-swift"
+SDK="${SDKROOT:-}"
+if [ -z "$SDK" ]; then
+  SDK="$(sh "$LIBEXEC/fetch_sdk.sh")" || { echo "swiftc: could not obtain the Mac OS X 10.9 SDK" >&2; exit 1; }
+fi
+SWIFT_AVOID_WARNING_USING_OLD_DRIVER=1; export SWIFT_AVOID_WARNING_USING_OLD_DRIVER
+exec "$BIN/swift-frontend" --driver-mode=swiftc \
+  -target x86_64-apple-macosx10.9 \
+  -sdk "$SDK" -tools-directory "$LIBEXEC" \
+  -runtime-compatibility-version none \
+  -Xfrontend -disable-implicit-concurrency-module-import \
+  -Xfrontend -disable-implicit-string-processing-module-import \
+  -no-stdlib-rpath -Xlinker -rpath -Xlinker /usr/local/mavergreen/swift-runtime/lib/swift \
+  "$@"

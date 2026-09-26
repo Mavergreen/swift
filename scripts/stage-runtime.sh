@@ -11,24 +11,8 @@
 set -eu
 [ $# -eq 3 ] || { echo "usage: stage-runtime.sh <built-lib-dir> <out-dir> <license-file>" >&2; exit 2; }
 BUILT="$1"; OUT="$2"; LICENSE="$3"
-# set -u does not catch an EMPTY argument, and below this removes "$OUT/usr".
-case "$OUT" in
-  ''|/) echo "stage-runtime: refusing out-dir '$OUT'" >&2; exit 2 ;;
-esac
-# Nor does that catch / by another name (//, /., /tmp/.., a symlink's ..), and 10.9 has no SIP to
-# save /usr. So resolve an existing out-dir both ways: logically, as cd reads it (/tmp/.. is /), and
-# physically, as rm does (/tmp/.. is /private). CDPATH could send cd somewhere rm never goes, and
-# this sh keeps a leading // in pwd's answer, so / is any string of nothing but slashes.
-if [ -d "$OUT" ]; then
-  logical="$(CDPATH='' cd "$OUT" && pwd -P)"
-  physical="$(CDPATH='' cd -P "$OUT" && pwd -P)"
-  for r in "$logical" "$physical"; do
-    case "$r" in
-      *[!/]*) ;;
-      *) echo "stage-runtime: refusing out-dir '$OUT' (it is /)" >&2; exit 2 ;;
-    esac
-  done
-fi
+. "$(dirname "$0")/outdir.sh"
+refuse_root_outdir stage-runtime "$OUT"
 for lib in libswiftCore.dylib libswiftSwiftOnoneSupport.dylib; do
   [ -f "$BUILT/$lib" ] || { echo "stage-runtime: $BUILT has no $lib" >&2; exit 1; }
 done

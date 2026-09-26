@@ -50,3 +50,9 @@ libraries: Apache-2.0 WITH Runtime Library Exception; LLVM/clang/lldb:
 Apache-2.0 WITH LLVM-exception; others under their own); it is redistributed
 unmodified, its SHA256 matching upstream's. It is host build tooling and is not
 part of the runtime .pkg. Upstream: https://download.swift.org/
+
+The toolchain package (swift-toolchain-*.pkg) also contains the Swift compiler
+(swift-frontend; Apache-2.0 WITH Runtime Library Exception, like this repo), and
+LLVM's clang and lld (clang, ld64.lld; Apache-2.0 WITH LLVM-exception), built from
+swiftlang/llvm-project with the patches in ./patches/llvm; LLVM's license ships
+beside them as share/doc/LICENSE-LLVM.txt.

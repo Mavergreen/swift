@@ -1,0 +1,5 @@
+#!/bin/sh
+# platform: macOS-only -- execs ld64.lld, this toolchain's OS X linker
+#   The Swift driver runs a program named `ld`; lld takes its Mach-O personality only when invoked as
+#   ld64.lld, so this execs it under that name.
+exec "$(dirname "$0")/../../bin/ld64.lld" "$@"
