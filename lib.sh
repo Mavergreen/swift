@@ -135,3 +135,30 @@ native_host_shim() {
   ln -s "$1/bin/ld64.lld" "$2/usr/bin/ld64.lld" && ln -s "$1/lib" "$2/usr/lib" || return 1
   printf '#!/bin/sh\nexec "%s/bin/ld64.lld" "$@"\n' "$1" > "$2/usr/bin/ld" && chmod 755 "$2/usr/bin/ld"
 }
+
+# macho_minos <macho> -- the minimum macOS <macho> records. dyld_info when $DYLDINFO names it; else
+# otool's LC_VERSION_MIN_MACOSX or LC_BUILD_VERSION (OS X 10.9 has no dyld_info). Prints nothing when
+# the file records neither.
+macho_minos() {
+  if [ -n "${DYLDINFO:-}" ]; then
+    "$DYLDINFO" -platform "$1" | awk '$1 == "macOS" { print $2; exit }'
+  else
+    otool -l "$1" | awk '$1 == "cmd" { c = $2 }
+      c == "LC_VERSION_MIN_MACOSX" && $1 == "version" { print $2; exit }
+      c == "LC_BUILD_VERSION" && $1 == "minos" { print $2; exit }'
+  fi
+}
+
+# macho_imports <macho> -- one line per symbol <macho> imports, `<symbol> [weak-import] (from <lib>)` for
+# a weak one and `<symbol> (from <lib>)` otherwise: dyld_info -imports when $DYLDINFO names it, else nm
+# (${NM:-nm}) -m -u rewritten to the same shape. Fails when the tool fails: an empty answer read as
+# "imports nothing" is how a preflight passes having checked nothing.
+macho_imports() {
+  if [ -n "${DYLDINFO:-}" ]; then
+    _mi_out="$("$DYLDINFO" -imports "$1")" || return 1
+    printf '%s\n' "$_mi_out" | sed '1,2d; s/^ *//' | tr -s ' '
+  else
+    _mi_out="$("${NM:-nm}" -m -u "$1")" || return 1
+    printf '%s\n' "$_mi_out" | sed -e 's/^ *(undefined) //' -e 's/^weak external \([^ ]*\)/\1 [weak-import]/' -e 's/^external //'
+  fi
+}
