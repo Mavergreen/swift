@@ -139,8 +139,8 @@ grep -q "$T/missing/swift-runtime-updater.app" "$T/noupd.log" \
   || fail "package.sh refused, but did not name the missing updater: $(cat "$T/noupd.log")"
 [ -z "$(ls "$T/dist-noupd"/swift-runtime-*.pkg 2>/dev/null)" ] || fail "package.sh left a pkg behind after refusing"
 
-echo "-- package.sh packages exactly the prefix, with no updater left from an earlier run"
-OUT="$T/out" DIST="$T/dist" UPD_APP=/nonexistent sh ./package.sh > "$T/pkg.log" 2>&1 \
+echo "-- package.sh packages exactly the prefix, with no updater left from an earlier run, run from /"
+( cd / && OUT="$T/out" DIST="$T/dist" UPD_APP=/nonexistent sh "$REPO/package.sh" ) > "$T/pkg.log" 2>&1 \
   || { cat "$T/pkg.log" >&2; fail "package.sh failed on the staged layout"; }
 pkg="$(ls "$T/dist"/swift-runtime-*.pkg)"
 expand_pkg "$pkg" "$T/x"

@@ -24,7 +24,7 @@ mkdir -p "$DIST"
 
 echo ">> resources (welcome + license shown at install)"
 RES="$DIST/resources"; mkdir -p "$RES"
-cp scripts/resources/Welcome.html "$RES/"
+cp "$HERE/scripts/resources/Welcome.html" "$RES/"
 LICENSE_TXT="$OUT/usr/local/mavergreen/swift-runtime/share/doc/LICENSE.txt"
 [ -f "$LICENSE_TXT" ] || { echo "no $LICENSE_TXT; run build.sh (it vendors the license)" >&2; exit 1; }
 cp "$LICENSE_TXT" "$RES/"

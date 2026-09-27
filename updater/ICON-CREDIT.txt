@@ -9,3 +9,6 @@ mark cropped from the mark-plus-wordmark lockup, with no recolouring, compositin
 and assembled into an .icns with iconutil.
 
 This project is not affiliated with, sponsored by, or endorsed by Apple Inc.
+
+The toolchain's updater (swift-toolchain-updater.app) uses the same icon, unmodified: that package IS a
+Swift compiler for OS X 10.9, so the mark identifies it the same way.
