@@ -45,6 +45,16 @@ if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out" 2> "$T/err"; t
 grep -q 'llvm-x86/bin/lld' "$T/err" || fail "did not name the missing lld: $(cat "$T/err")"
 mv "$T/lld.away" "$W/llvm-x86/bin/lld"
 
+echo "-- refuses, naming them, when a reused build root holds more than one clang resource dir"
+mkdir -p "$W/llvm-x86/lib/clang/22/include"
+if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out" 2> "$T/err"; then
+  fail "staged with two clang resource dirs, picking one"
+fi
+grep -q 'lib/clang/21/include' "$T/err" && grep -q 'lib/clang/22/include' "$T/err" \
+  || fail "did not name both clang resource dirs: $(cat "$T/err")"
+[ ! -d "$T/out/usr" ] || fail "wrote a payload before refusing"
+rm -r "$W/llvm-x86/lib/clang/22"
+
 echo "-- lays out exactly the payload, replacing an earlier one, leaving Library/ alone"
 mkdir -p "$T/out/usr/stale" "$T/out/Library/keep"
 SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out"

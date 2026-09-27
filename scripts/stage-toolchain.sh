@@ -17,7 +17,13 @@ refuse_root_outdir stage-toolchain "$OUT"
 . "$HERE/msc.sh"     # -> $SHIPYARD (fetch_sdk.sh, mavericks_fetch.sh, sdk-pins.sh)
 W="${SWIFT_WORK:-$SWIFT_BUILD/work}"
 STDLIB="$W/stdlib-build/lib/swift"
-CLANG_INC="$(ls -d "$W"/llvm-x86/lib/clang/*/include 2>/dev/null | head -1)"
+# A reused build root keeps the previous LLVM major's resource dir beside the new one; picking either
+# silently could ship the wrong clang headers, so more than one is refused, named.
+CLANG_INC=""; n=0
+for d in "$W"/llvm-x86/lib/clang/*/include; do
+  if [ -d "$d" ]; then CLANG_INC="$CLANG_INC${CLANG_INC:+ }$d"; n=$((n + 1)); fi
+done
+[ "$n" -le 1 ] || { echo "stage-toolchain: $n clang resource dirs, where one was expected (a stale LLVM major in a reused build root? remove it): $CLANG_INC" >&2; exit 1; }
 for f in "$W/swift-x86/bin/swift-frontend" "$W/llvm-x86/bin/lld" "$W/llvm-x86/bin/clang" "${CLANG_INC:-$W/llvm-x86/lib/clang/<v>/include}" \
          "$STDLIB/macosx/Swift.swiftmodule" "$STDLIB/macosx/SwiftOnoneSupport.swiftmodule" \
          "$STDLIB/macosx/x86_64/libswiftCore.dylib" "$STDLIB/macosx/x86_64/libswiftSwiftOnoneSupport.dylib" \
