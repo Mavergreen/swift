@@ -12,7 +12,9 @@ while [ -L "$self" ]; do
   link="$(readlink "$self")"
   case "$link" in /*) self="$link" ;; *) self="$(dirname "$self")/$link" ;; esac
 done
-BIN="$(cd "$(dirname "$self")" && pwd -P)"
+# platform: cd -P, because a relative link's ".." is its PHYSICAL parent (a linked swiftc reached through
+#           a symlinked directory); CDPATH=, because an exported CDPATH makes cd print into BIN.
+BIN="$(CDPATH= cd -P -- "$(dirname "$self")" && pwd -P)"
 PREFIX="$(dirname "$BIN")"
 LIBEXEC="$PREFIX/libexec/mavergreen-swift"
 SDK="${SDKROOT:-}"

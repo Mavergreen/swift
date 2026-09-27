@@ -62,6 +62,18 @@ for s in "$T/mg/bin/swiftc" "$T/links/abs-swiftc" "$T/links/deeper/chained-swift
   "$s" x.swift | grep -qx -- "$P/libexec/mavergreen-swift" || fail "through $s the prefix was not found"
 done
 
+# A relative link inside a directory reached through a symlinked directory: its ".." is the physical
+# parent (real/), not the lexical one ($T), so a lexical cd walks out of the tree.
+mkdir -p "$T/real/links"
+ln -s ../../mg/swift-toolchain/bin/swiftc "$T/real/links/swiftc"
+ln -s real/links "$T/alias"
+"$T/alias/swiftc" x.swift | grep -qx -- "$P/libexec/mavergreen-swift" \
+  || fail "through a symlinked directory ($T/alias/swiftc) the prefix was not found"
+
+# An exported CDPATH makes a cd to a relative directory print where it went, into BIN.
+( cd "$T" && CDPATH="$T" && export CDPATH && mg/bin/swiftc x.swift ) | grep -qx -- "$P/libexec/mavergreen-swift" \
+  || fail "with CDPATH exported, run by a relative path, the prefix was not found"
+
 rm -f "$T/fetched"
 SDKROOT=/other/sdk "$P/bin/swiftc" x.swift | grep -qx /other/sdk || fail "SDKROOT not used"
 [ ! -f "$T/fetched" ] || fail "fetched the SDK although SDKROOT was set"
