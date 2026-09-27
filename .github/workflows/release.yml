@@ -176,6 +176,12 @@ jobs:
         id: toolchain
         run: ./build-toolchain.sh
 
+      # Whether a warm run hits the cache shows here first; absent ccache is no failure.
+      - name: ccache statistics
+        if: ${{ !cancelled() && steps.toolchain.outcome != 'skipped' }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then ccache -s; else echo "no ccache on PATH: no statistics"; fi
+
       # The restore step saves only when the whole job succeeds, and a cold build that fails late would
       # lose hours of ccache (mavergreen-clang's pattern: a cache key can never be overwritten, so this
       # saves under a per-run key the restore prefix finds).
@@ -198,6 +204,10 @@ jobs:
           find "$SWIFT_BUILD/payload/toolchain" -type f \( -perm -111 -o -name '*.dylib' \) \
             -exec sh -c 'file "$1" | grep -q Mach-O && echo "$1"' _ {} \; > "$RUNNER_TEMP/toolchain-machos"
           cat "$RUNNER_TEMP/toolchain-machos"
+          # BSD xargs runs nothing on empty input, so an empty list would pass unguarded: expect
+          # swift-frontend, ld64.lld, clang and the two stdlib dylibs, exactly.
+          n="$(wc -l < "$RUNNER_TEMP/toolchain-machos" | tr -d ' ')"
+          [ "$n" -eq 5 ] || { echo "::error::the toolchain payload holds $n Mach-O files, not 5 (swift-frontend, ld64.lld, clang, 2 stdlib dylibs)"; exit 1; }
           xargs ./scripts/guard.sh < "$RUNNER_TEMP/toolchain-machos"
 
       # INGREDIENTS.md declares this: rosetta:.github/workflows/release.yml. The runner is arm64 and the
