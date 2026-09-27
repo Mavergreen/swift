@@ -7,7 +7,9 @@
 #   mode. Nothing it builds is run: the runtime is not installed here, and running them is the real-10.9
 #   gate's job. The compiler and linker are x86_64, so on an arm64 host every one of their processes
 #   runs translated (INGREDIENTS.md declares it: rosetta:tests/toolchain-smoke-test.sh). SKIPs (77) when
-#   nothing is staged or x86_64 code cannot run here; release.yml fails its step on that SKIP.
+#   nothing is staged or x86_64 code cannot run here; release.yml fails its step on that SKIP. It runs a
+#   copy of the staged prefix whose swift-frontend takes the OS's Swift runtime (see below): what the
+#   copy compiles and links against -- the staged 10.9 stdlib, SDK defaults and linker -- is unchanged.
 #   Env: MAVERICKS_BUILD_ROOT.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,9 +26,21 @@ export SDKROOT
 T="$(mktemp -d "${TMPDIR:-/tmp}/toolchain-smoke.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 
-echo "-- the staged swiftc compiles and links a hello world ($STAGED, SDK $SDKROOT)"
+# platform: on a modern macOS, CoreFoundation, Security and CoreServices load the OS's own Swift runtime
+#           (/usr/lib/swift) into every process linking them, so the shipped swift-frontend, whose Swift
+#           code binds @rpath/libswiftCore.dylib to the toolchain's own 10.9 runtime (compiler patch
+#           0002), holds two Swift runtimes there and crashes (CI run 36297440367: a segfault in the SIL
+#           optimizer, after objc's "Class ... is implemented in both" warnings). OS X 10.9 has no OS
+#           Swift runtime, so there the shipped layout runs on one. Here the copy's frontend names
+#           /usr/lib/swift instead, and so runs on one runtime too, the OS's.
+cp -R "$(dirname "$(dirname "$STAGED")")" "$T/tc"
+install_name_tool -rpath @loader_path/../lib/swift/macosx /usr/lib/swift "$T/tc/bin/swift-frontend" \
+  || fail "cannot re-point the copied swift-frontend's rpath @loader_path/../lib/swift/macosx at /usr/lib/swift"
+COPY="$T/tc/bin/swiftc"
+
+echo "-- the staged swiftc compiles and links a hello world ($STAGED, run as $COPY; SDK $SDKROOT)"
 printf 'print("hello from Mavericks Swift")\n' > "$T/hello.swift"
-"$STAGED" "$T/hello.swift" -o "$T/hello" || fail "the staged swiftc could not compile and link a hello world"
+"$COPY" "$T/hello.swift" -o "$T/hello" || fail "the staged swiftc could not compile and link a hello world"
 [ -f "$T/hello" ] || fail "the staged swiftc exited 0 but wrote no $T/hello"
 
 echo "-- for OS X 10.9, against the 10.9 SDK"
@@ -40,7 +54,7 @@ echo "$rp"
 [ "$rp" = /usr/local/mavergreen/swift-runtime/lib/swift ] || fail "the rpaths are [$rp], not the runtime's alone"
 
 echo "-- it builds the gate corpus through make-selftest.sh"
-SWIFTC="$STAGED" DIST="$T/dist" sh "$REPO/make-selftest.sh" || fail "make-selftest.sh could not build the gate corpus"
+SWIFTC="$COPY" DIST="$T/dist" sh "$REPO/make-selftest.sh" || fail "make-selftest.sh could not build the gate corpus"
 tar -xzf "$T/dist/swift-runtime-selftest.tar.gz" -C "$T" || fail "cannot unpack the self-test bundle"
 ls "$T/swift-runtime-selftest/bin"
 for b in thorough_test thorough_test-Onone; do
