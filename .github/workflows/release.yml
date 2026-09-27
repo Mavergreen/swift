@@ -12,7 +12,11 @@ name: release
 # a macOS 26 runner is structurally blind to the 10.9-only behaviour this runtime exists to fix (it
 # needs six source patches for exactly that reason). ACCEPTANCE is manual real-10.9 validation:
 # install the .pkg on real 10.9.5 and run it. This runtime was validated 500/500 + Guard Malloc /
-# MallocScribble there. Do not treat CI green as acceptance.
+# MallocScribble there. Do not treat CI green as acceptance. The toolchain's acceptance is the same
+# real-10.9 gate: on 10.9, with its .pkg installed, build the corpus with
+# `SWIFTC=/usr/local/mavergreen/bin/swiftc sh make-selftest.sh` and run it (`run-selftest.sh --gate`).
+# CI's Rosetta smoke (tests/toolchain-smoke-test.sh) only proves the staged toolchain compiles and
+# links for 10.9; it runs nothing it builds.
 # (The automated self-test bundle + 10.9 gate were dropped this release; the hand-rolled self-test
 # linked Increment-1 siblings the core .pkg doesn't ship. They return rebuilt to match the .pkg.)
 
@@ -195,6 +199,26 @@ jobs:
             -exec sh -c 'file "$1" | grep -q Mach-O && echo "$1"' _ {} \; > "$RUNNER_TEMP/toolchain-machos"
           cat "$RUNNER_TEMP/toolchain-machos"
           xargs ./scripts/guard.sh < "$RUNNER_TEMP/toolchain-machos"
+
+      # INGREDIENTS.md declares this: rosetta:.github/workflows/release.yml. The runner is arm64 and the
+      # toolchain x86_64, so the smoke below runs its compiler and linker translated.
+      - name: Ensure this runner can run x86_64 (Rosetta)
+        run: |
+          # Already installed is fine (porthole's pattern); an install that fails is a failure here.
+          if arch -x86_64 /usr/bin/true 2>/dev/null; then
+            echo "Rosetta is already installed"
+          else
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+
+      # CI's one run of the toolchain it ships: the staged swiftc compiles and links for 10.9 (see the
+      # test's header). Here a SKIP is a failure -- a runner that lost Rosetta would otherwise let a
+      # compiler that cannot compile automerge on green.
+      - name: Toolchain smoke under Rosetta (the staged swiftc compiles and links; must not skip)
+        run: |
+          rc=0; sh tests/toolchain-smoke-test.sh || rc=$?
+          [ "$rc" -ne 77 ] || { echo "::error::the toolchain smoke SKIPPED, so this run never ran the toolchain it ships"; exit 1; }
+          exit "$rc"
 
       - name: Build swift-toolchain-updater.app (Cocoa/Sparkle; must NOT link Swift)
         run: |
