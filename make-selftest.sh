@@ -9,7 +9,10 @@
 #                             (default /usr/local/mavergreen/swift-runtime). Run after build.sh.
 #            SWIFTC=<swiftc>  exactly `$SWIFTC -O|-Onone <file> -o <out>`: this repo's own toolchain,
 #                             on 10.9, whose defaults supply target, SDK and rpath. Skips every test
-#                             whose first line is `// requires: overlays`.
+#                             whose first line is `// requires: overlays`. With SWIFT_RUNTIME_PREFIX
+#                             also set (a staged, uninstalled runtime), each compile adds
+#                             `-Xlinker -headerpad_max_install_names`, and install_name_tool then
+#                             replaces the wrapper's rpath with $SWIFT_RUNTIME_PREFIX/lib/swift.
 #          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, TC (toolchain usr/), DIST (output dir),
 #          SWIFT_RUNTIME_PREFIX, SWIFTC.
 set -eu
@@ -18,7 +21,17 @@ REPO="$(cd "$(dirname "$0")" && pwd)"
 DIST="${DIST:-$SWIFT_BUILD/dist}"
 if [ -n "${SWIFTC:-}" ]; then
   [ -x "$SWIFTC" ] || { echo "make-selftest: SWIFTC=$SWIFTC is not executable" >&2; exit 1; }
-  compile() { "$SWIFTC" "-$1" "$2" -o "$3" >&2; }
+  if [ -n "${SWIFT_RUNTIME_PREFIX:-}" ]; then
+    # platform: the toolchain's swiftc always adds the INSTALLED runtime's rpath, first, so an added
+    #           rpath would lose to it; so it is replaced. 10.9's install_name_tool refuses to grow the
+    #           load commands without the header padding the first line asks the linker for.
+    compile() {
+      "$SWIFTC" "-$1" -Xlinker -headerpad_max_install_names "$2" -o "$3" >&2 &&
+        install_name_tool -rpath /usr/local/mavergreen/swift-runtime/lib/swift "$SWIFT_RUNTIME_PREFIX/lib/swift" "$3" >&2
+    }
+  else
+    compile() { "$SWIFTC" "-$1" "$2" -o "$3" >&2; }
+  fi
 else
   TC="${TC:-${SWIFT_WORK:-$SWIFT_BUILD/work}/toolchain/usr}"
   [ -x "$TC/bin/swiftc" ] || { echo "make-selftest: no swiftc at $TC/bin/swiftc -- run build.sh first" >&2; exit 1; }
