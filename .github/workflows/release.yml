@@ -1,8 +1,9 @@
 name: release
 
-# Build libswiftCore FROM SOURCE for OS X 10.9 / x86_64 on a macOS 26 runner, build the Sparkle
-# updater, package the runtime .pkg (with the updater), sign it, and attach the .pkg + signed
-# appcast to a GitHub Release. Tags ARE the version -- no `v` prefix; see VERSION.
+# Build libswiftCore FROM SOURCE for OS X 10.9 / x86_64 on a macOS 26 runner, then a Swift toolchain
+# that runs on 10.9 (build-toolchain.sh) with the same stdlib; package each as a .pkg with its own
+# Sparkle updater, sign both, and attach the .pkgs + signed appcasts to one GitHub Release. Tags ARE
+# the version -- no `v` prefix; see VERSION.
 #
 # The host build environment is built here too: build-llvm.sh (swiftlang LLVM build support) and
 # mirror-toolchain.sh (the swift.org compiler, signer-verified), both pinned in pins.env.
@@ -50,7 +51,9 @@ concurrency:
 jobs:
   build:
     runs-on: macos-26
-    timeout-minutes: 180
+    timeout-minutes: 355   # safety cap under GitHub's 360; the toolchain cross-build is hours cold (mavergreen-clang's cap)
+    env:
+      MAVERICKS_USE_CCACHE: "1"   # build-toolchain.sh launches its compilers through ccache
     outputs:
       version: ${{ steps.ver.outputs.version }}
       publish: ${{ steps.ver.outputs.publish }}
@@ -66,6 +69,17 @@ jobs:
       # find_package(MavericksShipyard) under shipyard-cmake, and via msc.sh in the shell scripts.
       - name: Install mavericks-shipyard
         uses: Mavergreen/shipyard/.github/actions/install@v1
+
+      - name: Ensure ccache
+        run: command -v ccache >/dev/null 2>&1 || brew install ccache
+
+      # Content-addressed, so a stale entry can only miss, never change a result.
+      - name: Restore ccache
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-${{ runner.os }}-swift-${{ hashFiles('pins.env','patches/**','native-helpers/**','build-toolchain.sh') }}
+          restore-keys: ccache-${{ runner.os }}-swift-
 
       - name: Record the pre-build tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
@@ -124,8 +138,8 @@ jobs:
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
           echo "version=$VER publish=$PUBLISH"
 
-      # No cache step, deliberately: every input is pinned and verified, so a cold run and a warm run
-      # produce the same result, and correctness never depends on cache state.
+      # Only build-toolchain.sh compiles through ccache; these steps build cold every run. Every input
+      # is pinned and verified, so correctness never depends on cache state.
       - name: Build the LLVM build support (TableGen + CMake package; nothing links LLVM)
         run: ./build-llvm.sh
 
@@ -151,6 +165,49 @@ jobs:
       - name: Package runtime .pkg (10.9.5 floor; stages the manifest, updater + LaunchAgent)
         run: REQUIRE_UPDATER=1 ./package.sh
 
+      - name: Disk before the toolchain build
+        run: df -h "$RUNNER_TEMP" | tail -1
+
+      - name: Build the native toolchain (swift-frontend, lld and clang for 10.9; ccache)
+        id: toolchain
+        run: ./build-toolchain.sh
+
+      # The restore step saves only when the whole job succeeds, and a cold build that fails late would
+      # lose hours of ccache (mavergreen-clang's pattern: a cache key can never be overwritten, so this
+      # saves under a per-run key the restore prefix finds).
+      - name: Save ccache, even when the build or a later step fails
+        if: ${{ !cancelled() && steps.toolchain.outcome != 'skipped' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-${{ runner.os }}-swift-${{ hashFiles('pins.env','patches/**','native-helpers/**','build-toolchain.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Stage the toolchain payload
+        run: |
+          sh scripts/stage-toolchain.sh "$SWIFT_BUILD/payload/toolchain"
+          du -sh "$SWIFT_BUILD/payload/toolchain"; df -h "$RUNNER_TEMP" | tail -1
+
+      # Every run, not only publishing ones: conformance (which also checks the SDK pin) runs only when
+      # this run publishes.
+      - name: Compat guard over the toolchain payload (must pass)
+        run: |
+          find "$SWIFT_BUILD/payload/toolchain" -type f \( -perm -111 -o -name '*.dylib' \) \
+            -exec sh -c 'file "$1" | grep -q Mach-O && echo "$1"' _ {} \; > "$RUNNER_TEMP/toolchain-machos"
+          cat "$RUNNER_TEMP/toolchain-machos"
+          xargs ./scripts/guard.sh < "$RUNNER_TEMP/toolchain-machos"
+
+      - name: Build swift-toolchain-updater.app (Cocoa/Sparkle; must NOT link Swift)
+        run: |
+          shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater-toolchain" -DSWIFT_UPDATER_PRODUCT=swift-toolchain \
+            -DCMAKE_OBJC_COMPILER=/usr/bin/clang -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
+          shipyard-cmake --build "$SWIFT_BUILD/build/updater-toolchain" --target swift-toolchain-updater
+          otool -L "$SWIFT_BUILD/build/updater-toolchain/swift-toolchain-updater.app/Contents/MacOS/swift-toolchain-updater" > /tmp/ot.txt
+          cat /tmp/ot.txt
+          ! grep -q 'libswift' /tmp/ot.txt || { echo "::error::toolchain updater links a Swift runtime library (self-update circularity)"; exit 1; }
+
+      - name: Package the toolchain .pkg (10.9.5 floor; stages the manifest, updater + LaunchAgent)
+        run: REQUIRE_UPDATER=1 ./package-toolchain.sh
+
       # One generator call writes the one file the appcast below and the Release body both read --
       # title, optional committed prose (release-notes/$VER.md, verbatim), What changed, Build
       # ingredients (only when a pin moved), and the footer. A gap it cannot fill honestly (no visible
@@ -162,7 +219,7 @@ jobs:
           sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "$VER" --version "$VER" \
             --product Swift --min-os 10.9.5 --out "$SWIFT_BUILD/dist/RELEASE_NOTES.md"
 
-      - name: Sign the .pkg + generate the Sparkle appcast
+      - name: Sign both .pkgs + generate their Sparkle appcasts
         if: steps.ver.outputs.publish == 'true'
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
@@ -181,6 +238,12 @@ jobs:
             --channel-title "Mavericks Swift Runtime" --version "$VER" \
             --pkg-url "$URL" --notes-file "$SWIFT_BUILD/dist/RELEASE_NOTES.md" --pkg "$PKG" --min-os 10.9.5
           echo "=== swift-runtime.xml ==="; cat "$SWIFT_BUILD/dist/swift-runtime.xml"
+          TPKG=$(ls "$SWIFT_BUILD"/dist/swift-toolchain-*.pkg | head -1)
+          TURL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$TPKG")"
+          sh "$SH/sign_and_appcast.sh" --product swift-toolchain --feed-dir "$SWIFT_BUILD/dist" \
+            --channel-title "Mavericks Swift Toolchain" --version "$VER" \
+            --pkg-url "$TURL" --notes-file "$SWIFT_BUILD/dist/RELEASE_NOTES.md" --pkg "$TPKG" --min-os 10.9.5
+          echo "=== swift-toolchain.xml ==="; cat "$SWIFT_BUILD/dist/swift-toolchain.xml"
 
       # The mirror changes only when Swift does, so it rides the new upstream's first release only
       # (docs/superpowers/specs/2026-09-24-t1a-one-repo-design.md); INGREDIENTS.md declares its
@@ -216,15 +279,17 @@ jobs:
           # sparkle:version that orders strictly after the last published one (ordering conformance
           # never exercised; the gap the "-mavericks.N compares EQUAL" bug shipped through).
           sh "$SHIPYARD_SCRIPTS/assert_appcast_upgradeable.sh" --appcast "$SWIFT_BUILD/dist/swift-runtime.xml" --version "${{ steps.ver.outputs.version }}"
+          sh "$SHIPYARD_SCRIPTS/assert_appcast_upgradeable.sh" --appcast "$SWIFT_BUILD/dist/swift-toolchain.xml" --version "${{ steps.ver.outputs.version }}"
 
       # No SHA256SUMS in the artifact: publish-release.yml regenerates it over everything it attaches.
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: swift-runtime
+          name: swift
           path: |
             ${{ env.SWIFT_BUILD }}/dist/*.pkg
             ${{ env.SWIFT_BUILD }}/dist/swift-runtime.xml
+            ${{ env.SWIFT_BUILD }}/dist/swift-toolchain.xml
             ${{ env.SWIFT_BUILD }}/dist/RELEASE_NOTES.md
 
   # Before anything is published: no log of this run, and no file about to be released, carries a
@@ -238,7 +303,7 @@ jobs:
       contents: read
     uses: Mavergreen/shipyard/.github/workflows/scan-for-key.yml@v1
     with:
-      artifact: swift-runtime
+      artifact: swift
     secrets:
       SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
 
@@ -250,7 +315,7 @@ jobs:
     uses: Mavergreen/shipyard/.github/workflows/publish-release.yml@v1
     with:
       version: ${{ needs.build.outputs.version }}
-      artifact: swift-runtime
+      artifact: swift
 
   # The real-10.9 self-test acceptance job is removed with the self-test bundle. Acceptance for this
   # release is manual (install the .pkg on real 10.9; the runtime was validated 500/500 + Guard

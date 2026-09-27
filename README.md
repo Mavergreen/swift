@@ -1,8 +1,8 @@
 # swift
 
-**Swift for OS X 10.9 "Mavericks"** (Intel x86_64), built from source. Today this repo ships the
-**Swift runtime**; a toolchain that runs *on* 10.9, and one for modern Macs that targets it, come next
-from the same release.
+**Swift for OS X 10.9 "Mavericks"** (Intel x86_64), built from source. Every release ships the
+**Swift runtime** and a **Swift toolchain that runs on 10.9**; one for modern Macs that targets 10.9
+comes next, from the same release.
 
 Modern Swift (6.x) assumes an Objective-C runtime and Swift ABI machinery that first shipped in
 macOS 10.14.4. This repo builds `libswiftCore` from unmodified
@@ -25,8 +25,8 @@ and `if #available`. Enough for **command-line / computational Swift**.
   Foundation / AppKit *overlays* — needed for most apps, and for GUI — are later roadmap increments.
 - **Framework ceiling untouched.** Swift running does not bring back APIs absent from 10.9 (modern
   WKWebView, CryptoKit, Network.framework, …). Those are separate work.
-- **Compilation happens on a modern host** cross-targeting `x86_64-apple-macosx10.9`. This is a
-  *runtime*, not a native toolchain.
+- **Compile on the 10.9 Mac** with the toolchain package (below), or on a modern Mac with the swift.org
+  toolchain (Install). Neither has macros, Swift Concurrency or the Darwin/ObjectiveC overlays yet.
 - Running on an OS with no security updates is your own risk.
 
 ## Install
@@ -57,12 +57,32 @@ run on 10.9:
 rpath replace /usr/lib/swift /usr/local/mavergreen/swift-runtime/lib/swift
 ```
 
+## The toolchain: `swiftc` on 10.9
+
+```sh
+sudo installer -pkg swift-runtime-<version>.pkg -target /
+sudo installer -pkg swift-toolchain-<version>.pkg -target /
+```
+Installs `swiftc`, the standard library, `ld64.lld` and a matching `clang` into
+`/usr/local/mavergreen/swift-toolchain/`, and puts `swiftc` on the `PATH` of new Terminal windows
+(through `/usr/local/mavergreen/bin`). Then, on the 10.9 Mac itself:
+```sh
+swiftc hello.swift -o hello && ./hello
+```
+`swiftc` supplies the 10.9 target, the SDK (fetched into `~/Library/Caches/mavericks-sdk` on first
+use; `$SDKROOT` overrides it), its own linker and the runtime's rpath. Your arguments come after
+those, so yours win. Programs it builds need only the runtime package. Not yet: macros, Swift
+Concurrency, the Darwin and ObjectiveC overlays (`import Darwin` works, through the SDK's C module).
+
 ## How it's built
 
 On a modern macOS, in order: `./build-llvm.sh` (swiftlang's LLVM build support: TableGen and the
 CMake package, nothing that links), `./mirror-toolchain.sh` (the pinned swift.org compiler, verified
 by its signer), `./build.sh` (the standard library only, with `patches/runtime/` applied, then its
-own self pre-flight), `./package.sh`. CI runs the compat guard (`scripts/guard.sh`) after `build.sh`.
+own self pre-flight), `./package.sh`; then, for the toolchain, `./build-toolchain.sh` (LLVM, clang and
+lld for an x86_64/10.9 host with mavericks-clang-22's cross compiler, cmark, and `swift-frontend`, with
+`patches/llvm/` and `patches/compiler/`), `sh scripts/stage-toolchain.sh "$SWIFT_BUILD/payload/toolchain"`,
+`./package-toolchain.sh`. CI runs the compat guard (`scripts/guard.sh`) after each build.
 Every source, tool and compiler input is pinned in `pins.env` (the build SDK is not yet: see
 `INGREDIENTS.md`). CI does the same on a `macos-26` runner and attaches the `.pkg` to a GitHub
 Release (see `.github/workflows/release.yml`).
