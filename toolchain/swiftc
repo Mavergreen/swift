@@ -21,6 +21,7 @@ SDK="${SDKROOT:-}"
 if [ -z "$SDK" ]; then
   SDK="$(sh "$LIBEXEC/fetch_sdk.sh")" || { echo "swiftc: could not obtain the Mac OS X 10.9 SDK" >&2; exit 1; }
 fi
+[ -d "$SDK" ] || { echo "swiftc: no Mac OS X 10.9 SDK at '$SDK'" >&2; exit 1; }
 SWIFT_AVOID_WARNING_USING_OLD_DRIVER=1; export SWIFT_AVOID_WARNING_USING_OLD_DRIVER
 exec "$BIN/swift-frontend" --driver-mode=swiftc \
   -target x86_64-apple-macosx10.9 \
