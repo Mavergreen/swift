@@ -10,19 +10,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 T="$(mktemp -d "${TMPDIR:-/tmp}/stage-toolchain.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 W="$T/work"
-mkdir -p "$W/swift-x86/bin" "$W/swift-x86/share/swift/diagnostics" "$W/llvm-x86/bin" "$W/llvm-x86/lib/clang/21/include" \
-  "$W/stdlib-build/lib/swift/macosx/x86_64" "$W/stdlib-build/lib/swift/macosx/Swift.swiftmodule" \
-  "$W/stdlib-build/lib/swift/macosx/SwiftOnoneSupport.swiftmodule" "$W/stdlib-build/lib/swift/shims" "$W/llvm-project/llvm"
-for f in swift-x86/bin/swift-frontend llvm-x86/bin/lld llvm-x86/bin/clang llvm-x86/lib/clang/21/include/stdint.h \
-  stdlib-build/lib/swift/macosx/x86_64/libswiftCore.dylib stdlib-build/lib/swift/macosx/x86_64/libswiftSwiftOnoneSupport.dylib \
-  stdlib-build/lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule \
-  stdlib-build/lib/swift/macosx/SwiftOnoneSupport.swiftmodule/x86_64-apple-macos.swiftmodule \
-  stdlib-build/lib/swift/macosx/layouts-x86_64.yaml stdlib-build/lib/swift/shims/module.modulemap \
-  swift-x86/share/swift/compatibility-symbols swift-x86/share/swift/diagnostics/en.db \
-  swift-x86/share/swift/diagnostics/en.strings swift-x86/share/swift/diagnostics/.gitkeep \
-  swift-x86/share/swift/diagnostics/generated llvm-project/llvm/LICENSE.TXT; do
-  echo "$f" > "$W/$f"
-done
+. "$REPO/tests/lib/fake-toolchain-build.sh"
+fake_toolchain_build "$W"
 
 echo "-- refuses an empty out-dir, or / by any name, before writing anything"
 # Every command that writes is faked (and fails), so a regressed guard fails this test instead of

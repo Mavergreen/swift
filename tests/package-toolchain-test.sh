@@ -1,11 +1,12 @@
 #!/bin/sh
 # platform: macOS-only -- pkgbuild builds, and pkgutil expands, the pkg under test; PlistBuddy reads its manifest
 # usage: sh tests/package-toolchain-test.sh   (from the repo root, as run-repo-tests.sh runs it)
-#   Packages a fake staged toolchain with package-toolchain.sh, run from another directory, and checks:
-#   the payload is exactly the prefix, its manifest, and the updater and LaunchAgent shipyard's registry
-#   derives for swift-toolchain; dev.mavergreen.base installs first; the manifest exports swiftc alone,
-#   so the toolchain links beside an installed clang22, whose group owns clang, clang++ and ld64.lld;
-#   REQUIRE_UPDATER=1 refuses without the updater; and the pkg passes artifact conformance.
+#   Stages a fake build with scripts/stage-toolchain.sh -- so the payload's bin/ is the one a release
+#   stages, and a new entry there cannot be exported unnoticed -- packages it with package-toolchain.sh,
+#   run from another directory, and checks: the payload is exactly what was staged, its manifest, and the
+#   updater and LaunchAgent shipyard's registry derives for swift-toolchain; dev.mavergreen.base installs
+#   first; linking exports swiftc alone, beside an installed clang22, whose group owns clang, clang++ and
+#   ld64.lld; REQUIRE_UPDATER=1 refuses without the updater; and the pkg passes artifact conformance.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
@@ -20,15 +21,19 @@ FEED="$(sh "$SHIPYARD/product-name.sh" feed swift-toolchain)" \
 [ "$FEED" = https://github.com/Mavergreen/swift/releases/latest/download/swift-toolchain.xml ] \
   || fail "the registry derives the feed '$FEED'"
 
-O="$T/out"
-mkdir -p "$O/$P/bin" "$O/$P/lib/swift/macosx" "$O/$P/share/doc"
-cp toolchain/swiftc "$O/$P/bin/swiftc"
-for f in swift-frontend ld64.lld clang; do echo "$f" > "$O/$P/bin/$f"; done
-ln -s clang "$O/$P/bin/clang++"
+W="$T/work"
+. "$REPO/tests/lib/fake-toolchain-build.sh"
+fake_toolchain_build "$W"
+# Real Mach-O stdlib dylibs, so conformance measures them under the scoped sdk-pin deviation.
 printf 'int f(void){return 0;}\n' > "$T/f.c"
-cc -dynamiclib -arch x86_64 -mmacosx-version-min=10.9 -install_name @rpath/libswiftCore.dylib \
-  -o "$O/$P/lib/swift/macosx/libswiftCore.dylib" "$T/f.c"
-cp LICENSE "$O/$P/share/doc/LICENSE.txt"
+for n in Core SwiftOnoneSupport; do
+  cc -dynamiclib -arch x86_64 -mmacosx-version-min=10.9 -install_name "@rpath/libswift$n.dylib" \
+    -o "$W/stdlib-build/lib/swift/macosx/x86_64/libswift$n.dylib" "$T/f.c"
+done
+O="$T/out"
+SWIFT_WORK="$W" sh scripts/stage-toolchain.sh "$O" > "$T/stage.log" 2>&1 \
+  || { cat "$T/stage.log" >&2; fail "stage-toolchain.sh failed over the fake build"; }
+staged="$(cd "$O" && find . | sort)"
 A="$T/upd/swift-toolchain-updater.app"
 mkdir -p "$A/Contents/MacOS"
 printf '#!/bin/sh\n' > "$A/Contents/MacOS/swift-toolchain-updater"; chmod +x "$A/Contents/MacOS/swift-toolchain-updater"
@@ -59,10 +64,7 @@ LA=Library/LaunchAgents/dev.mavergreen.swift-toolchain-updatecheck.plist
 # platform: a pkg built on a macOS 27 host whose files carry com.apple.provenance lists AppleDouble
 #           ._* members for them; CI-built pkgs have none, and 10.9's installer lays down no ._ file.
 got="$(lsbom -s "$comp/Bom" | grep -v '/\._' | sort)"
-want="$(printf '%s\n' . ./usr ./usr/local ./usr/local/mavergreen "./$P" "./$P/bin" "./$P/bin/clang" \
-  "./$P/bin/clang++" "./$P/bin/ld64.lld" "./$P/bin/swift-frontend" "./$P/bin/swiftc" "./$P/lib" "./$P/lib/swift" \
-  "./$P/lib/swift/macosx" "./$P/lib/swift/macosx/libswiftCore.dylib" "./$P/mavergreen.plist" "./$P/share" \
-  "./$P/share/doc" "./$P/share/doc/LICENSE.txt" ./Library "./Library/Application Support" \
+want="$(printf '%s\n' "$staged" "./$P/mavergreen.plist" ./Library "./Library/Application Support" \
   "./Library/Application Support/Mavergreen" "./$U" "./$U/Contents" "./$U/Contents/Info.plist" \
   "./$U/Contents/MacOS" "./$U/Contents/MacOS/swift-toolchain-updater" ./Library/LaunchAgents "./$LA" | sort)"
 [ "$got" = "$want" ] || fail "payload is
@@ -93,7 +95,11 @@ F="$V/usr/local/mavergreen/bin"
 for n in clang clang++ ld64.lld; do
   [ "$(readlink "$F/$n")" = "../clang22/bin/$n" ] || fail "bin/$n links to '$(readlink "$F/$n")', not clang22's"
 done
-[ ! -e "$F/swift-frontend" ] && [ ! -L "$F/swift-frontend" ] || fail "exported swift-frontend"
+# Every link into the toolchain, anywhere in the farm: the staged bin/ holds more than swiftc, and
+# only swiftc may reach PATH.
+exported="$(cd "$V/usr/local/mavergreen" && find . -path ./swift-toolchain -prune -o -type l -print | sort \
+  | while IFS= read -r l; do case "$(readlink "$l")" in (*swift-toolchain/*) echo "$l" ;; esac; done)"
+[ "$exported" = ./bin/swiftc ] || fail "linking exported [$exported], not ./bin/swiftc alone"
 
 echo "-- passes artifact conformance (its stdlib dylib by the scoped sdk-pin deviation)"
 version="$(basename "$pkg" .pkg)"; version="${version#swift-toolchain-}"
