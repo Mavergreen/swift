@@ -1,9 +1,15 @@
 name: release
 
-# Build libswiftCore FROM SOURCE for OS X 10.9 / x86_64 on a macOS 26 runner, then a Swift toolchain
-# that runs on 10.9 (build-toolchain.sh) with the same stdlib; package each as a .pkg with its own
-# Sparkle updater, sign both, and attach the .pkgs + signed appcasts to one GitHub Release. Tags ARE
-# the version -- no `v` prefix; see VERSION.
+# Build libswiftCore FROM SOURCE for OS X 10.9 / x86_64 on a macOS 26 runner, then two Swift toolchains
+# with the same stdlib -- one that runs on 10.9 (build-toolchain.sh) and one that runs on an
+# Apple-silicon Mac and targets 10.9 (build-toolchain.sh --host arm64) -- package each as a .pkg with its
+# own Sparkle updater, sign all three, and attach the .pkgs + signed appcasts to one GitHub Release. Tags
+# ARE the version -- no `v` prefix; see VERSION.
+#
+# Five jobs: `version` resolves the one version every job labels its pkgs with; `build` (the runtime and
+# the native toolchain) and `build-cross` (the cross toolchain) run side by side, each building the
+# runtime's stdlib and builtins itself; `collect` checks that both toolchains carry those same bytes,
+# signs, renders the feeds and runs conformance over all three pkgs; `scan` and `publish` follow it.
 #
 # The host build environment is built here too: build-llvm.sh (swiftlang LLVM build support, and the
 # lld that links the runtime), build-builtins.sh (compiler-rt's builtins for 10.9) and
@@ -15,9 +21,10 @@ name: release
 # install the .pkg on real 10.9.5 and run it. This runtime was validated 500/500 + Guard Malloc /
 # MallocScribble there. Do not treat CI green as acceptance. The toolchain's acceptance is the same
 # real-10.9 gate: on 10.9, with its .pkg installed, build the corpus with
-# `SWIFTC=/usr/local/mavergreen/bin/swiftc sh make-selftest.sh` and run it (`run-selftest.sh --gate`).
-# CI's Rosetta smoke (tests/toolchain-smoke-test.sh) only proves the staged toolchain compiles and
-# links for 10.9; it runs nothing it builds.
+# `SWIFTC=/usr/local/mavergreen/bin/swiftc sh make-selftest.sh` and run it (`run-selftest.sh --gate`);
+# the cross toolchain's is the same corpus built on an Apple-silicon Mac, gated on 10.9.
+# CI's Rosetta smoke (tests/toolchain-smoke-test.sh) only proves the staged native toolchain compiles and
+# links for 10.9, and its native arm64 run the same of the cross one; they run nothing they build.
 # (The automated self-test bundle + 10.9 gate were dropped this release; the hand-rolled self-test
 # linked Increment-1 siblings the core .pkg doesn't ship. They return rebuilt to match the .pkg.)
 
@@ -54,19 +61,18 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build:
+  # One version for the whole run: the two build jobs run side by side, and each labels its pkgs with
+  # this one (resolve-version.sh reuses a written VERSION: "every job must agree").
+  version:
     runs-on: macos-26
-    timeout-minutes: 355   # safety cap under GitHub's 360; the toolchain cross-build is hours cold (mavergreen-clang's cap)
-    env:
-      MAVERICKS_USE_CCACHE: "1"   # build-toolchain.sh launches its compilers through ccache
     outputs:
       version: ${{ steps.ver.outputs.version }}
       publish: ${{ steps.ver.outputs.publish }}
     steps:
       - uses: actions/checkout@v7
         with:
-          # Both the derived version and assert_appcast_upgradeable.sh order this release against the
-          # existing *-mavericks.* tags, so the full history has to be here.
+          # The derived version orders this release against the existing *-mavericks.* tags, so the
+          # full history has to be here.
           fetch-depth: 0
 
       # shipyard installs itself via its own action (HTTPS via the runner token): the pkg, which puts
@@ -74,31 +80,6 @@ jobs:
       # find_package(MavericksShipyard) under shipyard-cmake, and via msc.sh in the shell scripts.
       - name: Install mavericks-shipyard
         uses: Mavergreen/shipyard/.github/actions/install@v1
-
-      - name: Ensure ccache
-        run: command -v ccache >/dev/null 2>&1 || brew install ccache
-
-      # Content-addressed, so a stale entry can only miss, never change a result.
-      - name: Restore ccache
-        uses: actions/cache@v6
-        with:
-          path: ~/Library/Caches/ccache
-          key: ccache-${{ runner.os }}-swift-${{ hashFiles('pins.env','patches/**','native-helpers/**','build-toolchain.sh') }}
-          restore-keys: ccache-${{ runner.os }}-swift-
-
-      - name: Record the pre-build tree
-        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
-
-      - name: Build out of tree
-        run: |
-          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
-          echo "SWIFT_BUILD=$RUNNER_TEMP/mm-build/swift" >> "$GITHUB_ENV"
-
-      # The shared runner takes the whole top-level suite, so a newly added test runs the day it
-      # lands. run-selftest.sh needs the runtime installed on a real 10.9 box, so here it exits 77
-      # and is reported SKIP rather than failing a run that was never going to have one.
-      - name: Run the repo's tests
-        run: sh "$SHIPYARD_SCRIPTS/run-repo-tests.sh"
 
       # Derived, so there is nothing for a tag to disagree with. What this replaces -- "tag must equal
       # the committed VERSION" -- made every release a commit-to-main then tag ritual, and the commit
@@ -138,10 +119,57 @@ jobs:
               PUBLISH=false
             fi
           fi
-          printf '%s\n' "$VER" > VERSION     # a build product; every later step reads this one
+          [ -n "$VER" ] || { echo "::error::no version resolved"; exit 1; }
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
           echo "version=$VER publish=$PUBLISH"
+
+  # The runtime and the native toolchain.
+  build:
+    needs: [version]
+    runs-on: macos-26
+    timeout-minutes: 355   # safety cap under GitHub's 360; the toolchain cross-build is hours cold (mavergreen-clang's cap)
+    env:
+      MAVERICKS_USE_CCACHE: "1"   # build-toolchain.sh launches its compilers through ccache
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install mavericks-shipyard
+        uses: Mavergreen/shipyard/.github/actions/install@v1
+
+      - name: Ensure ccache
+        run: command -v ccache >/dev/null 2>&1 || brew install ccache
+
+      # Content-addressed, so a stale entry can only miss, never change a result.
+      - name: Restore ccache
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-${{ runner.os }}-swift-${{ hashFiles('pins.env','patches/**','native-helpers/**','build-toolchain.sh') }}
+          restore-keys: ccache-${{ runner.os }}-swift-
+
+      - name: Record the pre-build tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
+
+      - name: Build out of tree
+        run: |
+          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+          echo "SWIFT_BUILD=$RUNNER_TEMP/mm-build/swift" >> "$GITHUB_ENV"
+
+      # The shared runner takes the whole top-level suite, so a newly added test runs the day it
+      # lands. run-selftest.sh needs the runtime installed on a real 10.9 box, so here it exits 77
+      # and is reported SKIP rather than failing a run that was never going to have one.
+      - name: Run the repo's tests
+        run: sh "$SHIPYARD_SCRIPTS/run-repo-tests.sh"
+
+      - name: Derive the upstream version from the pin, and pin the version the version job resolved
+        run: |
+          sh scripts/derive-upstream-version.sh
+          printf '%s\n' "${{ needs.version.outputs.version }}" > VERSION   # a build product; every later step reads this one
 
       # Only build-toolchain.sh compiles through ccache; these steps build cold every run. Every input
       # is pinned and verified, so correctness never depends on cache state.
@@ -201,6 +229,15 @@ jobs:
           sh scripts/stage-toolchain.sh "$SWIFT_BUILD/payload/toolchain"
           du -sh "$SWIFT_BUILD/payload/toolchain"; df -h "$RUNNER_TEMP" | tail -1
 
+      # collect compares this with build-cross's: the two toolchain pkgs must carry the same stdlib and
+      # builtins archive, byte for byte, since both are built from one source at one pin.
+      - name: Digest the stdlib and builtins the native toolchain ships
+        id: digest
+        run: |
+          d="$(. ./lib.sh && toolchain_digest "$SWIFT_BUILD/payload/toolchain/usr/local/mavergreen/swift-toolchain")"
+          echo "$d"
+          echo "digest=$d" >> "$GITHUB_OUTPUT"
+
       # Every run, not only publishing ones: conformance (which also checks the SDK pin) runs only when
       # this run publishes.
       - name: Compat guard over the toolchain payload (must pass)
@@ -248,50 +285,13 @@ jobs:
       - name: Package the toolchain .pkg (10.9.5 floor; stages the manifest, updater + LaunchAgent)
         run: REQUIRE_UPDATER=1 ./package-toolchain.sh
 
-      # One generator call writes the one file the appcast below and the Release body both read --
-      # title, optional committed prose (release-notes/$VER.md, verbatim), What changed, Build
-      # ingredients (only when a pin moved), and the footer. A gap it cannot fill honestly (no visible
-      # tags, an unreadable ingredient pin) stops the run here rather than shipping a shorter body.
-      - name: Generate release notes
-        run: |
-          VER="${{ steps.ver.outputs.version }}"
-          mkdir -p "$SWIFT_BUILD/dist"
-          sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "$VER" --version "$VER" \
-            --product Swift --min-os 10.9.5 --out "$SWIFT_BUILD/dist/RELEASE_NOTES.md"
-
-      - name: Sign both .pkgs + generate their Sparkle appcasts
-        if: steps.ver.outputs.publish == 'true'
-        env:
-          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
-          GH_TOKEN: ${{ github.token }}   # sign_and_appcast.sh fetches ed25519-sign via `gh` -> needs auth (else 403 rate-limit)
-        run: |
-          # printenv, not [ -n "$SPARKLE_PRIVATE_KEY" ]: the shell never expands the key, so no trace can print it
-          printenv SPARKLE_PRIVATE_KEY | grep -q . || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
-          SH="$SHIPYARD_SCRIPTS"   # exported by install@v1; don't re-derive it from the registry
-          [ -d "$SH" ] || { echo "::error::SHIPYARD_SCRIPTS not set by install@v1"; exit 1; }
-          VER="${{ steps.ver.outputs.version }}"
-          PKG=$(ls "$SWIFT_BUILD"/dist/swift-runtime-*.pkg | head -1)
-          # The tag IS the version, so the download path carries no `v`.
-          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$PKG")"
-          # sign_and_appcast.sh auto-fetches the prebuilt ed25519-sign, signs the pkg, and renders the appcast.
-          sh "$SH/sign_and_appcast.sh" --product swift-runtime --feed-dir "$SWIFT_BUILD/dist" \
-            --channel-title "Mavericks Swift Runtime" --version "$VER" \
-            --pkg-url "$URL" --notes-file "$SWIFT_BUILD/dist/RELEASE_NOTES.md" --pkg "$PKG" --min-os 10.9.5
-          echo "=== swift-runtime.xml ==="; cat "$SWIFT_BUILD/dist/swift-runtime.xml"
-          TPKG=$(ls "$SWIFT_BUILD"/dist/swift-toolchain-*.pkg | head -1)
-          TURL="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER/$(basename "$TPKG")"
-          sh "$SH/sign_and_appcast.sh" --product swift-toolchain --feed-dir "$SWIFT_BUILD/dist" \
-            --channel-title "Mavericks Swift Toolchain" --version "$VER" \
-            --pkg-url "$TURL" --notes-file "$SWIFT_BUILD/dist/RELEASE_NOTES.md" --pkg "$TPKG" --min-os 10.9.5
-          echo "=== swift-toolchain.xml ==="; cat "$SWIFT_BUILD/dist/swift-toolchain.xml"
-
       # The mirror changes only when Swift does, so it rides the new upstream's first release only
       # (docs/superpowers/specs/2026-09-24-t1a-one-repo-design.md); INGREDIENTS.md declares its
       # conformance deviations.
       - name: Attach the swift.org mirror (a new upstream's first release only)
-        if: steps.ver.outputs.publish == 'true'
+        if: needs.version.outputs.publish == 'true'
         run: |
-          case "${{ steps.ver.outputs.version }}" in
+          case "${{ needs.version.outputs.version }}" in
             *-mavericks.1)
               . ./pins.env
               cp "$SWIFT_BUILD/cache/$TOOLCHAIN_ASSET" "$SWIFT_BUILD/dist/" ;;
@@ -307,19 +307,244 @@ jobs:
       - name: The build must not have written into the source tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
 
+      # collect signs these, beside build-cross's, and publishes all of them as the artifact `swift`.
+      - name: Upload the runtime and native toolchain pkgs for collect
+        uses: actions/upload-artifact@v7
+        with:
+          name: swift-native
+          path: ${{ env.SWIFT_BUILD }}/dist/*.pkg
+
+  # The cross toolchain: arm64, macOS 11.0, built natively on this arm64 runner with nothing
+  # cross-compiled. It builds its own LLVM build support, stdlib and builtins, which collect checks
+  # against build's, rather than waiting hours for build's.
+  build-cross:
+    needs: [version]
+    runs-on: macos-26
+    timeout-minutes: 355   # the same cap: LLVM and swift-frontend again, hours cold
+    env:
+      MAVERICKS_USE_CCACHE: "1"   # build-toolchain.sh launches its compilers through ccache
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install mavericks-shipyard
+        uses: Mavergreen/shipyard/.github/actions/install@v1
+
+      - name: Ensure ccache
+        run: command -v ccache >/dev/null 2>&1 || brew install ccache
+
+      # Its own key: the arm64 build's objects are not the native build's.
+      - name: Restore ccache (cross)
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-${{ runner.os }}-swift-cross-${{ hashFiles('pins.env','patches/**','build-toolchain.sh','lib.sh') }}
+          restore-keys: ccache-${{ runner.os }}-swift-cross-
+
+      - name: Record the pre-build tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
+
+      - name: Build out of tree
+        run: |
+          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+          echo "SWIFT_BUILD=$RUNNER_TEMP/mm-build/swift" >> "$GITHUB_ENV"
+
+      - name: Derive the upstream version from the pin, and pin the version the version job resolved
+        run: |
+          sh scripts/derive-upstream-version.sh
+          printf '%s\n' "${{ needs.version.outputs.version }}" > VERSION   # a build product; every later step reads this one
+
+      - name: Build the LLVM build support and lld (TableGen for the cross LLVM; lld links the runtime)
+        run: ./build-llvm.sh
+
+      - name: Fetch the swift.org compiler (verbatim; signer must match pins.env)
+        run: ./mirror-toolchain.sh
+
+      - name: Build compiler-rt's builtins (x86_64, 10.9; the cross toolchain ships them)
+        run: ./build-builtins.sh
+
+      - name: Build the runtime's stdlib (the cross toolchain ships it)
+        run: ./build.sh
+
+      - name: Disk before the toolchain build
+        run: df -h "$RUNNER_TEMP" | tail -1
+
+      - name: Build the cross toolchain (swift-frontend, lld and clang for arm64 / macOS 11; ccache)
+        id: toolchain
+        run: ./build-toolchain.sh --host arm64
+
+      - name: ccache statistics
+        if: ${{ !cancelled() && steps.toolchain.outcome != 'skipped' }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then ccache -s; else echo "no ccache on PATH: no statistics"; fi
+
+      # As in build: a cold build that fails late must not lose hours of ccache.
+      - name: Save ccache (cross), even when the build or a later step fails
+        if: ${{ !cancelled() && steps.toolchain.outcome != 'skipped' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-${{ runner.os }}-swift-cross-${{ hashFiles('pins.env','patches/**','build-toolchain.sh','lib.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Stage the cross toolchain payload
+        run: |
+          STAGE_HOST=arm64 sh scripts/stage-toolchain.sh "$SWIFT_BUILD/payload/toolchain-cross"
+          du -sh "$SWIFT_BUILD/payload/toolchain-cross"; df -h "$RUNNER_TEMP" | tail -1
+
+      # Two batches: the three tools are arm64 (the family's arm64 pin, minOS 11.0 and SDK 11.3), the two
+      # stdlib dylibs x86_64 (the 10.9 target, by their declared sdk-pin deviation).
+      - name: Compat guard over the cross toolchain payload (must pass)
+        run: |
+          P="$SWIFT_BUILD/payload/toolchain-cross/usr/local/mavergreen/swift-toolchain-cross"
+          find "$P" -type f \( -perm -111 -o -name '*.dylib' \) \
+            -exec sh -c 'file "$1" | grep -q Mach-O && echo "$1"' _ {} \; | sort > "$RUNNER_TEMP/cross-machos"
+          cat "$RUNNER_TEMP/cross-machos"
+          # Exactly these five, so nothing new in the payload goes unguarded.
+          printf '%s\n' "$P/bin/clang" "$P/bin/ld64.lld" "$P/bin/swift-frontend" \
+            "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib" | sort > "$RUNNER_TEMP/cross-want"
+          cmp -s "$RUNNER_TEMP/cross-machos" "$RUNNER_TEMP/cross-want" \
+            || { echo "::error::the cross payload's Mach-O files are not swift-frontend, ld64.lld, clang and the 2 stdlib dylibs"; diff "$RUNNER_TEMP/cross-want" "$RUNNER_TEMP/cross-machos"; exit 1; }
+          MAVERICKS_ALLOW_ARCHS=arm64 ./scripts/guard.sh "$P/bin/swift-frontend" "$P/bin/ld64.lld" "$P/bin/clang"
+          ./scripts/guard.sh "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib"
+          # The builtins archive is not executable, so the list above misses it; guard it by name.
+          ./scripts/guard.sh "$P"/lib/clang/*/lib/darwin/libclang_rt.osx.a
+
+      - name: Digest the stdlib and builtins the cross toolchain ships
+        id: digest
+        run: |
+          d="$(. ./lib.sh && toolchain_digest "$SWIFT_BUILD/payload/toolchain-cross/usr/local/mavergreen/swift-toolchain-cross")"
+          echo "$d"
+          echo "digest=$d" >> "$GITHUB_OUTPUT"
+
+      # The cross toolchain runs natively here: no Rosetta. A SKIP is a failure, as in build's smoke.
+      - name: Cross toolchain smoke, native arm64 (the staged swiftc compiles and links; must not skip)
+        run: |
+          rc=0; STAGE_HOST=arm64 sh tests/toolchain-smoke-test.sh || rc=$?
+          [ "$rc" -ne 77 ] || { echo "::error::the cross toolchain smoke SKIPPED, so this run never ran the toolchain it ships"; exit 1; }
+          exit "$rc"
+
+      # arm64 / macOS 11, where the cross toolchain runs (clang22-cross's updater, CLANG_VARIANT=cross).
+      - name: Build swift-toolchain-cross-updater.app (Cocoa/Sparkle, arm64 / macOS 11; must NOT link Swift)
+        run: |
+          shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater-toolchain-cross" -DSWIFT_UPDATER_PRODUCT=swift-toolchain-cross \
+            -DCMAKE_OBJC_COMPILER=/usr/bin/clang -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
+          shipyard-cmake --build "$SWIFT_BUILD/build/updater-toolchain-cross" --target swift-toolchain-cross-updater
+          U="$SWIFT_BUILD/build/updater-toolchain-cross/swift-toolchain-cross-updater.app/Contents/MacOS/swift-toolchain-cross-updater"
+          otool -L "$U" > /tmp/oc.txt
+          cat /tmp/oc.txt
+          ! grep -q 'libswift' /tmp/oc.txt || { echo "::error::cross toolchain updater links a Swift runtime library (self-update circularity)"; exit 1; }
+          [ "$(lipo -archs "$U")" = arm64 ] || { echo "::error::the cross toolchain updater is $(lipo -archs "$U"), not arm64"; exit 1; }
+
+      - name: Package the cross toolchain .pkg (macOS 11 arm64 floor; stages the manifest, updater + LaunchAgent)
+        run: STAGE_HOST=arm64 REQUIRE_UPDATER=1 ./package-toolchain.sh
+
+      - name: The build must not have written into the source tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
+
+      - name: Upload the cross toolchain pkg for collect
+        uses: actions/upload-artifact@v7
+        with:
+          name: swift-cross
+          path: ${{ env.SWIFT_BUILD }}/dist/swift-toolchain-cross-*.pkg
+
+  # All three pkgs exist only here, so this is where the two toolchains are compared, and where the
+  # release is signed and checked as a whole (mavergreen-clang's collect).
+  collect:
+    needs: [version, build, build-cross]
+    runs-on: macos-26
+    outputs:
+      version: ${{ needs.version.outputs.version }}
+      publish: ${{ needs.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Both the release notes and assert_appcast_upgradeable.sh order this release against the
+          # existing *-mavericks.* tags, so the full history has to be here.
+          fetch-depth: 0
+
+      # Every run, publishing or not: two toolchain pkgs that disagree about the stdlib or the builtins
+      # would build different programs from one source, which is what one release must never ship.
+      - name: The two toolchains carry the same stdlib and builtins archive, byte for byte
+        env:
+          NATIVE_DIGEST: ${{ needs.build.outputs.digest }}
+          CROSS_DIGEST: ${{ needs.build-cross.outputs.digest }}
+        run: |
+          echo "native: $NATIVE_DIGEST"; echo "cross:  $CROSS_DIGEST"
+          . ./lib.sh
+          toolchain_digests_agree "$NATIVE_DIGEST" "$CROSS_DIGEST" \
+            || { echo "::error::the native and cross toolchains do not carry the same stdlib and builtins"; exit 1; }
+
+      - name: Install mavericks-shipyard
+        uses: Mavergreen/shipyard/.github/actions/install@v1
+
+      - name: Derive the upstream version from the pin, and pin the version the version job resolved
+        run: |
+          sh scripts/derive-upstream-version.sh
+          printf '%s\n' "${{ needs.version.outputs.version }}" > VERSION
+
+      - uses: actions/download-artifact@v8
+        with: { name: swift-native, path: dist }
+
+      - uses: actions/download-artifact@v8
+        with: { name: swift-cross, path: dist }
+
+      # One generator call writes the one file the appcasts below and the Release body all read --
+      # title, optional committed prose (release-notes/$VER.md, verbatim), What changed, Build
+      # ingredients (only when a pin moved), and the footer. A gap it cannot fill honestly (no visible
+      # tags, an unreadable ingredient pin) stops the run here rather than shipping a shorter body.
+      # --min-os 10.9.5 describes the runtime and native pkgs; the cross feed carries its own floor.
+      - name: Generate release notes
+        run: |
+          VER="${{ needs.version.outputs.version }}"
+          sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "$VER" --version "$VER" \
+            --product Swift --min-os 10.9.5 --out dist/RELEASE_NOTES.md
+
+      - name: Sign the three .pkgs + generate their Sparkle appcasts
+        if: needs.version.outputs.publish == 'true'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          GH_TOKEN: ${{ github.token }}   # sign_and_appcast.sh fetches ed25519-sign via `gh` -> needs auth (else 403 rate-limit)
+        run: |
+          # printenv, not [ -n "$SPARKLE_PRIVATE_KEY" ]: the shell never expands the key, so no trace can print it
+          printenv SPARKLE_PRIVATE_KEY | grep -q . || { echo "::error::SPARKLE_PRIVATE_KEY secret not set"; exit 1; }
+          SH="$SHIPYARD_SCRIPTS"   # exported by install@v1; don't re-derive it from the registry
+          [ -d "$SH" ] || { echo "::error::SHIPYARD_SCRIPTS not set by install@v1"; exit 1; }
+          VER="${{ needs.version.outputs.version }}"
+          # The tag IS the version, so the download path carries no `v`.
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$VER"
+          PKG=$(ls dist/swift-runtime-*.pkg | head -1)
+          sh "$SH/sign_and_appcast.sh" --product swift-runtime --feed-dir dist \
+            --channel-title "Mavericks Swift Runtime" --version "$VER" \
+            --pkg-url "$base/$(basename "$PKG")" --notes-file dist/RELEASE_NOTES.md --pkg "$PKG" --min-os 10.9.5
+          echo "=== swift-runtime.xml ==="; cat dist/swift-runtime.xml
+          TPKG=$(ls dist/swift-toolchain-[0-9]*.pkg | head -1)
+          sh "$SH/sign_and_appcast.sh" --product swift-toolchain --feed-dir dist \
+            --channel-title "Mavericks Swift Toolchain" --version "$VER" \
+            --pkg-url "$base/$(basename "$TPKG")" --notes-file dist/RELEASE_NOTES.md --pkg "$TPKG" --min-os 10.9.5
+          echo "=== swift-toolchain.xml ==="; cat dist/swift-toolchain.xml
+          XPKG=$(ls dist/swift-toolchain-cross-*.pkg | head -1)
+          sh "$SH/sign_and_appcast.sh" --product swift-toolchain-cross --feed-dir dist \
+            --channel-title "Mavericks Swift Toolchain (cross)" --version "$VER" \
+            --pkg-url "$base/$(basename "$XPKG")" --notes-file dist/RELEASE_NOTES.md --pkg "$XPKG" --min-os 11.0
+          echo "=== swift-toolchain-cross.xml ==="; cat dist/swift-toolchain-cross.xml
+
       # Conformance: do the artifacts about to be published agree with each other and with the
-      # family's schemes? Gated on publish, since only a publishing run signs and so has the feed this
+      # family's schemes? Gated on publish, since only a publishing run signs and so has the feeds this
       # asks about.
       - name: Artifact conformance
-        if: steps.ver.outputs.publish == 'true'
+        if: needs.version.outputs.publish == 'true'
         run: |
-          sh "$SHIPYARD_SCRIPTS/artifact-facts.sh" "$SWIFT_BUILD/dist" "${{ steps.ver.outputs.version }}" \
+          sh "$SHIPYARD_SCRIPTS/artifact-facts.sh" dist "${{ needs.version.outputs.version }}" \
             | sh "$SHIPYARD_SCRIPTS/check-artifact-conformance.sh"
           # Behavior gate: a client on the previous release must SEE this as an upgrade -- a numeric
           # sparkle:version that orders strictly after the last published one (ordering conformance
           # never exercised; the gap the "-mavericks.N compares EQUAL" bug shipped through).
-          sh "$SHIPYARD_SCRIPTS/assert_appcast_upgradeable.sh" --appcast "$SWIFT_BUILD/dist/swift-runtime.xml" --version "${{ steps.ver.outputs.version }}"
-          sh "$SHIPYARD_SCRIPTS/assert_appcast_upgradeable.sh" --appcast "$SWIFT_BUILD/dist/swift-toolchain.xml" --version "${{ steps.ver.outputs.version }}"
+          for a in swift-runtime swift-toolchain swift-toolchain-cross; do
+            sh "$SHIPYARD_SCRIPTS/assert_appcast_upgradeable.sh" --appcast "dist/$a.xml" --version "${{ needs.version.outputs.version }}"
+          done
 
       # No SHA256SUMS in the artifact: publish-release.yml regenerates it over everything it attaches.
       - name: Upload artifacts
@@ -327,17 +552,18 @@ jobs:
         with:
           name: swift
           path: |
-            ${{ env.SWIFT_BUILD }}/dist/*.pkg
-            ${{ env.SWIFT_BUILD }}/dist/swift-runtime.xml
-            ${{ env.SWIFT_BUILD }}/dist/swift-toolchain.xml
-            ${{ env.SWIFT_BUILD }}/dist/RELEASE_NOTES.md
+            dist/*.pkg
+            dist/swift-runtime.xml
+            dist/swift-toolchain.xml
+            dist/swift-toolchain-cross.xml
+            dist/RELEASE_NOTES.md
 
   # Before anything is published: no log of this run, and no file about to be released, carries a
   # piece of the signing key. shipyard's publish-release.yml looks for this job's record on any signed
   # release; it cannot run the scan itself (reading job logs needs actions: read).
   scan:
-    needs: [build]
-    if: always() && (needs.build.outputs.publish == 'true')   # a build that fails after signing left logs too; scan them
+    needs: [collect]
+    if: always() && (needs.collect.outputs.publish == 'true')   # a collect that fails after signing left logs too; scan them
     permissions:
       actions: read     # this run's job logs
       contents: read
@@ -348,13 +574,13 @@ jobs:
       SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
 
   publish:
-    needs: [build, scan]
-    if: needs.build.outputs.publish == 'true'
+    needs: [collect, scan]
+    if: needs.collect.outputs.publish == 'true'
     permissions:
       contents: write
     uses: Mavergreen/shipyard/.github/workflows/publish-release.yml@v1
     with:
-      version: ${{ needs.build.outputs.version }}
+      version: ${{ needs.collect.outputs.version }}
       artifact: swift
 
   # The real-10.9 self-test acceptance job is removed with the self-test bundle. Acceptance for this
