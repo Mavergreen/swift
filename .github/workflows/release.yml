@@ -504,12 +504,13 @@ jobs:
 
       # Same generator, same content, only the floor prose differs: the cross toolchain requires macOS
       # 11.0 on arm64, not 10.9.5. Only its appcast reads this one; the native feeds and the Release body
-      # keep the 10.9.5 notes above.
+      # keep the 10.9.5 notes above. It lives outside dist/: publish-release attaches every dist file but
+      # RELEASE_NOTES.md and SHA256SUMS as a release asset, and these notes are not one.
       - name: Generate release notes (cross floor)
         run: |
           VER="${{ needs.version.outputs.version }}"
           sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "$VER" --version "$VER" \
-            --product Swift --min-os 11.0 --out dist/RELEASE_NOTES-cross.md
+            --product Swift --min-os 11.0 --out "$RUNNER_TEMP/RELEASE_NOTES-cross.md"
 
       - name: Sign the three .pkgs + generate their Sparkle appcasts
         if: needs.version.outputs.publish == 'true'
@@ -537,7 +538,7 @@ jobs:
           XPKG=$(ls dist/swift-toolchain-cross-*.pkg | head -1)
           sh "$SH/sign_and_appcast.sh" --product swift-toolchain-cross --feed-dir dist \
             --channel-title "Mavericks Swift Toolchain (cross)" --version "$VER" \
-            --pkg-url "$base/$(basename "$XPKG")" --notes-file dist/RELEASE_NOTES-cross.md --pkg "$XPKG" --min-os 11.0
+            --pkg-url "$base/$(basename "$XPKG")" --notes-file "$RUNNER_TEMP/RELEASE_NOTES-cross.md" --pkg "$XPKG" --min-os 11.0
           echo "=== swift-toolchain-cross.xml ==="; cat dist/swift-toolchain-cross.xml
 
       # Conformance: do the artifacts about to be published agree with each other and with the
@@ -566,7 +567,6 @@ jobs:
             dist/swift-toolchain.xml
             dist/swift-toolchain-cross.xml
             dist/RELEASE_NOTES.md
-            dist/RELEASE_NOTES-cross.md
 
   # Before anything is published: no log of this run, and no file about to be released, carries a
   # piece of the signing key. shipyard's publish-release.yml looks for this job's record on any signed
