@@ -162,3 +162,69 @@ macho_imports() {
     printf '%s\n' "$_mi_out" | sed -e 's/^ *(undefined) //' -e 's/^weak external \([^ ]*\)/\1 [weak-import]/' -e 's/^external //'
   fi
 }
+
+# toolchain_host_select x86_64|arm64 -- names what the toolchain that RUNS on that host is built in and
+# shipped as, in six variables: TH_LLVM, TH_CMARK and TH_SWIFT (its build dirs under $SWIFT_WORK),
+# TH_CHECKOUT (its own swift compiler checkout there, so neither host's patches land in the other's),
+# TH_PRODUCT (its prefix under /usr/local/mavergreen and its pkg's short name) and TH_PAYLOAD (its
+# payload root under $SWIFT_BUILD/payload). x86_64 is the native toolchain, which runs on OS X 10.9;
+# arm64 the cross toolchain, which runs on an Apple-silicon Mac. Any other host returns 2, naming both.
+toolchain_host_select() {
+  case "$1" in
+    x86_64) TH_LLVM=llvm-x86; TH_CMARK=cmark-x86; TH_SWIFT=swift-x86; TH_CHECKOUT=swift-compiler
+            TH_PRODUCT=swift-toolchain; TH_PAYLOAD=toolchain ;;
+    arm64)  TH_LLVM=llvm-arm64; TH_CMARK=cmark-arm64; TH_SWIFT=swift-arm64; TH_CHECKOUT=swift-compiler-arm64
+            TH_PRODUCT=swift-toolchain-cross; TH_PAYLOAD=toolchain-cross ;;
+    *) echo "the toolchain host is x86_64 (the native toolchain, for OS X 10.9) or arm64 (the cross toolchain, for an Apple-silicon Mac), not '$1'" >&2
+       return 2 ;;
+  esac
+}
+
+# compiler_patches x86_64|arm64 <dir> -- the patches in <dir> (patches/compiler) that host's compiler
+# takes, one path per line, in order. 0002 is x86_64's alone: it gives the native swift-frontend the
+# rpath @loader_path/../lib/swift/macosx, the bundled 10.9 runtime it runs on there. The cross
+# package's lib/swift/macosx holds that same x86_64 stdlib, which an arm64 frontend cannot load; it
+# runs on the OS's /usr/lib/swift, upstream's default without 0002. Every other patch is both hosts'.
+# Returns 2 for any other host, and 1 when <dir> holds no patch for it.
+compiler_patches() {
+  ( toolchain_host_select "$1" ) || return 2   # validates only: the caller's TH_* stay as they were
+  _cp_n=0
+  for _cp_p in "$2"/*.patch; do
+    [ -f "$_cp_p" ] || continue
+    case "$1:${_cp_p##*/}" in arm64:0002-*) continue ;; esac
+    printf '%s\n' "$_cp_p"; _cp_n=$((_cp_n + 1))
+  done
+  [ "$_cp_n" -gt 0 ] || { echo "compiler_patches: no $1 patches in $2" >&2; return 1; }
+}
+
+# toolchain_digest <toolchain-prefix> -- one line, `<name>=<sha256>` for each file both toolchain pkgs
+# must carry byte for byte, because both are staged from the one stdlib build and the one builtins
+# archive: lib/swift/macosx/libswiftCore.dylib, lib/swift/macosx/libswiftSwiftOnoneSupport.dylib and
+# lib/clang/<v>/lib/darwin/libclang_rt.osx.a, in that order, space-separated. Fails, naming it, when a
+# file is missing: two jobs that each printed nothing must never compare equal.
+toolchain_digest() {
+  _td_inc="$(clang_resource_include "$1")" || return 1
+  _td_line=""
+  for _td_f in "$1/lib/swift/macosx/libswiftCore.dylib" "$1/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib" \
+               "${_td_inc%/include}/lib/darwin/libclang_rt.osx.a"; do
+    [ -f "$_td_f" ] || { echo "toolchain_digest: no $_td_f" >&2; return 1; }
+    _td_s="$(shasum -a 256 "$_td_f" | awk '{ print $1 }')"
+    [ "${#_td_s}" -eq 64 ] || { echo "toolchain_digest: could not hash $_td_f" >&2; return 1; }
+    _td_line="$_td_line${_td_line:+ }${_td_f##*/}=$_td_s"
+  done
+  printf '%s\n' "$_td_line"
+}
+
+# toolchain_digests_agree <digest> <digest> -- 0 when two toolchain_digest lines are the same complete
+# line; otherwise 1, saying why. An empty or partial line never agrees, not even with itself.
+toolchain_digests_agree() {
+  for _ta_d in "$1" "$2"; do
+    case "$_ta_d" in
+      libswiftCore.dylib=?*' 'libswiftSwiftOnoneSupport.dylib=?*' 'libclang_rt.osx.a=?*) ;;
+      *) echo "toolchain_digests_agree: '$_ta_d' is not a whole toolchain_digest line" >&2; return 1 ;;
+    esac
+  done
+  [ "$1" = "$2" ] || { echo "toolchain_digests_agree: they differ:
+  $1
+  $2" >&2; return 1; }
+}
