@@ -22,6 +22,11 @@ DIST="${DIST:-$SWIFT_BUILD/dist}"
 if [ -n "${SWIFTC:-}" ]; then
   [ -x "$SWIFTC" ] || { echo "make-selftest: SWIFTC=$SWIFTC is not executable" >&2; exit 1; }
   if [ -n "${SWIFT_RUNTIME_PREFIX:-}" ]; then
+    # The prefix becomes every test's rpath, so a mistyped one (an unset MAVERICKS_BUILD_ROOT made it
+    # /swift/payload/...) would surface only on the box, as a dyld failure in every test.
+    case "$SWIFT_RUNTIME_PREFIX" in /*) ;; *) echo "make-selftest: SWIFT_RUNTIME_PREFIX=$SWIFT_RUNTIME_PREFIX is not an absolute path" >&2; exit 1 ;; esac
+    [ -f "$SWIFT_RUNTIME_PREFIX/lib/swift/libswiftCore.dylib" ] || {
+      echo "make-selftest: SWIFT_RUNTIME_PREFIX=$SWIFT_RUNTIME_PREFIX has no lib/swift/libswiftCore.dylib -- run build.sh, or name the staged runtime" >&2; exit 1; }
     # platform: the toolchain's swiftc always adds the INSTALLED runtime's rpath, first, so an added
     #           rpath would lose to it; so it is replaced. 10.9's install_name_tool refuses to grow the
     #           load commands without the header padding the first line asks the linker for.

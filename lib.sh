@@ -8,6 +8,14 @@
 # platform: a family checkout may live on NFS, where a build cost 11.16s wall / 25% CPU against
 #           2.96s / 88% on local disk with identical user time -- the whole difference is I/O wait.
 : "${MAVERICKS_BUILD_ROOT:=${TMPDIR:-/tmp}/mm-build}"
+# A relative root is made absolute here, once, before any script cds: build.sh cds into the root and
+# then named paths under it relative to the new cwd ("run ./build-llvm.sh" after it had run). A root
+# holding whitespace is refused: the compile and link flags that name it are split on whitespace by
+# CMake, and the build failed in CMake's compiler probe after build-llvm.sh's 28 minutes.
+case "$MAVERICKS_BUILD_ROOT" in /*) ;; *) MAVERICKS_BUILD_ROOT="$(pwd)/$MAVERICKS_BUILD_ROOT" ;; esac
+[ "$(printf '%s' "$MAVERICKS_BUILD_ROOT" | tr -d ' \t\n')" = "$MAVERICKS_BUILD_ROOT" ] || {
+  echo "lib.sh: MAVERICKS_BUILD_ROOT '$MAVERICKS_BUILD_ROOT' holds whitespace, which the build's flags cannot carry -- choose a root without" >&2
+  return 1 2>/dev/null || exit 1; }
 # work/ (sources and build trees), out/llvm (LLVM build support), cache/ (the swift.org pkg),
 # payload/<pkg> (each pkg's install root -- pkgbuild ships everything in it, so no build tree may live
 # there), build/updater, dist/ (release assets).
@@ -78,6 +86,11 @@ prefix_map_flags() {
   case "$2" in /*) ;; *) echo "prefix_map_flags: '$2' is not an absolute path" >&2; return 1 ;; esac
   _pm_phys="$(CDPATH='' cd -P -- "$2" && pwd -P)" || { echo "prefix_map_flags: no directory '$2'" >&2; return 1; }
   _pm_log="$(CDPATH='' cd -L -- "$2" && pwd -L)" || return 1
+  # CMake splits these flags on whitespace, so a spelling that holds any cannot be mapped.
+  for _pm_s in "$_pm_phys" "$_pm_log"; do
+    [ "$(printf '%s' "$_pm_s" | tr -d ' \t\n')" = "$_pm_s" ] || {
+      echo "prefix_map_flags: '$_pm_s' holds whitespace, which a flag split on whitespace cannot carry" >&2; return 1; }
+  done
   case "$1" in
     c) echo "-ffile-prefix-map=$_pm_phys=/mavergreen-build -ffile-prefix-map=$_pm_log=/mavergreen-build" ;;
     swift) echo "-file-prefix-map;$_pm_phys=/mavergreen-build;-file-prefix-map;$_pm_log=/mavergreen-build" ;;
@@ -198,6 +211,19 @@ reuse_build_dir() {
   if [ "$(cat "$1/mavergreen-inputs.stamp" 2>/dev/null)" = "$2" ]; then return 0; fi
   echo "    removing $1: its host compiler, clang or builtins archive changed, or went unrecorded"
   rm -rf "$1"
+}
+
+# macho_links_none_under <macho> <dir> -- fails, listing them, when <macho> links a library under <dir>.
+# Fails too when otool cannot read <macho>'s libraries, or reads no libSystem, which every program links:
+# on OS X 10.9 without the Command Line Tools, /usr/bin/otool is a stub that prints nothing, and an empty
+# answer read as "nothing under <dir>" is a check that checked nothing.
+macho_links_none_under() {
+  _ml_out="$(otool -L "$1")" || { echo "FAIL: could not read the libraries $1 links (otool)" >&2; return 1; }
+  printf '%s\n' "$_ml_out" | grep -q '/usr/lib/libSystem\.B\.dylib' || {
+    echo "FAIL: otool read no libSystem from $1, so it read nothing $1 links" >&2; return 1; }
+  if printf '%s\n' "$_ml_out" | grep -F "$2"; then
+    echo "FAIL: $1 links a library from $2 (listed above)" >&2; return 1
+  fi
 }
 
 # runtime_patches_unlisted <dir> <number>... -- prints each <dir>/*.patch whose number (the name up to its

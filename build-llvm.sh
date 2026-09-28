@@ -81,9 +81,8 @@ fi
 ninja -C llvm-build llvm-tblgen llvm-min-tblgen clang-tblgen llvm-config \
       intrinsics_gen clang-tablegen-targets LLVMBitstreamReader lld
 [ -x llvm-build/bin/ld64.lld ] || { echo "FAIL: no llvm-build/bin/ld64.lld after building lld"; exit 1; }
-if otool -L llvm-build/bin/lld | grep -F /opt/pkg/; then
-  echo "FAIL: lld links a library from /opt/pkg (listed above)"; exit 1
-fi
+# lld links nothing from /opt/pkg; an otool that cannot read it fails this too (lib.sh).
+macho_links_none_under llvm-build/bin/lld /opt/pkg/ || exit 1
 
 echo "==> 3. install the relocatable subset"
 rm -rf "$OUT"; mkdir -p "$OUT"

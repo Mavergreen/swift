@@ -82,24 +82,27 @@ recipe on both, picking their inputs by host (shipyard's `mavericks_mode.sh`). S
 developed there: edit, build, gate.
 
 Once, install:
-- the runtime and toolchain packages of the newest release of the Swift version in `pins.env`
-  (`SWIFT_VERSION` 6.4.0: the newest `6.4.0-mavericks.N`; from `.7` on, the toolchain carries the
-  builtins archive the build links). `build.sh` prints the toolchain's release, and refuses one of
-  another Swift version;
+- Command Line Tools for Xcode 6.2, the last for 10.9: the build runs `otool`, `strings`, `xcrun` and
+  10.9's own `git`, which without them are stubs that offer to install them;
+- the toolchain package of the newest release of the Swift version in `pins.env` (`SWIFT_VERSION`
+  6.4.0: the newest `6.4.0-mavericks.N`; from `.7` on, it carries the builtins archive the build
+  links). `build.sh` prints the release it builds with, and refuses one of another Swift version. The
+  same release's runtime package runs the programs its `swiftc` builds; the gate below needs none;
 - mavericks-clang-22's native package (it compiles LLVM's TableGen and lld);
 - the shipyard package (`shipyard-cmake`).
 
 pkgsrc supplies `python3` (gyb, line-directive, LLVM's CMake), `ninja`, and a `git` newer than 10.9's
-own — needed only while `~/.gitconfig` uses options 10.9's git 1.9.5 rejects. Then, in a Terminal window
-(a login shell, so `/usr/local/mavergreen/bin` is on `PATH`), from the checkout:
+own — needed only while `~/.gitconfig` uses options 10.9's git 1.9.5 rejects. CMake picks gyb's python,
+and `build.sh` names it; 3.13 on 10.9, 3.14 in CI and 3.9 on a modern Mac have built the same runtime.
+Then, in a Terminal window (a login shell, so `/usr/local/mavergreen/bin` is on `PATH`), from the
+checkout:
 ```sh
-export MAVERICKS_BUILD_ROOT="$HOME/mm-build"   # local disk: not /tmp (a reboot wipes it), not the checkout
+export MAVERICKS_BUILD_ROOT="$HOME/mm-build"   # local disk: not /tmp (a reboot wipes it), not the checkout; no spaces
 ./build-llvm.sh     # LLVM build support and lld, with clang-22: about 28 min the first time
 ./build.sh          # the runtime, with the installed toolchain: about 5 min
-S="$MAVERICKS_BUILD_ROOT/swift"
-SWIFTC=/usr/local/mavergreen/bin/swiftc SWIFT_RUNTIME_PREFIX="$S/payload/runtime/usr/local/mavergreen/swift-runtime" \
-  DIST="$S/dist" sh make-selftest.sh
-( cd "$S/dist" && tar -xzf swift-runtime-selftest.tar.gz && sh swift-runtime-selftest/run-selftest.sh --gate )
+S="$MAVERICKS_BUILD_ROOT/swift"; R="$S/payload/runtime/usr/local/mavergreen/swift-runtime"
+SWIFTC=/usr/local/mavergreen/bin/swiftc SWIFT_RUNTIME_PREFIX="$R" DIST="$S/dist" sh make-selftest.sh
+( cd "$S/dist" && tar -xzf swift-runtime-selftest.tar.gz && SWIFT_RUNTIME_PREFIX="$R" sh swift-runtime-selftest/run-selftest.sh --gate )
 ```
 From nothing to a gated runtime takes about 35 minutes on a 6-core Mac Pro: `build-llvm.sh` is the
 long one-time step, now also building lld; each later runtime build is about 5 minutes. The first runs

@@ -4,7 +4,8 @@
 #   make-selftest.sh with SWIFTC= must invoke that compiler with nothing but -O|-Onone, the source and
 #   -o, and must skip every test marked `// requires: overlays`. With SWIFT_RUNTIME_PREFIX set too, each
 #   compile must also ask for header padding, and each binary's installed-runtime rpath must be replaced
-#   by the prefix's; a replacement that fails must fail the bundle. A fake compiler and a fake
+#   by the prefix's; a replacement that fails must fail the bundle, and a prefix that is relative or holds
+#   no libswiftCore.dylib is refused before anything is compiled. A fake compiler and a fake
 #   install_name_tool record their calls.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,6 +39,7 @@ tar -tzf "$tarball" | grep -q 'objc_interop_test' && fail "bundle holds a skippe
 echo "-- SWIFTC with SWIFT_RUNTIME_PREFIX: header padding, then the prefix's rpath replaces the installed one"
 rm -f "$T/calls"
 P="$T/staged/usr/local/mavergreen/swift-runtime"
+mkdir -p "$P/lib/swift"; : > "$P/lib/swift/libswiftCore.dylib"
 PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFIX="$P" DIST="$T/dist" sh "$REPO/make-selftest.sh" > /dev/null
 for src in "$REPO"/tests/*.swift; do
   n="$(basename "$src" .swift)"
@@ -55,4 +57,14 @@ if PATH="$T/bin:$PATH" FAKE_INT_RC=1 SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFI
      sh "$REPO/make-selftest.sh" > /dev/null 2>&1; then
   fail "make-selftest.sh succeeded although install_name_tool failed"
 fi
+echo "-- a prefix that is relative, or holds no runtime, is refused before any compile"
+rm -f "$T/calls"
+for bad in staged/usr/local/mavergreen/swift-runtime "$T/swift/payload/runtime/usr/local/mavergreen/swift-runtime"; do
+  if ( cd "$T" && PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFIX="$bad" DIST="$T/dist" \
+       sh "$REPO/make-selftest.sh" > /dev/null 2> "$T/err" ); then
+    fail "made a bundle with SWIFT_RUNTIME_PREFIX=$bad"
+  fi
+  grep -q 'SWIFT_RUNTIME_PREFIX' "$T/err" || fail "did not say why $bad was refused: $(cat "$T/err")"
+done
+[ ! -f "$T/calls" ] || fail "compiled before refusing the prefix: $(cat "$T/calls")"
 echo "PASS"

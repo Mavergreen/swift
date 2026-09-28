@@ -39,6 +39,9 @@ PYTHONHASHSEED=0; export PYTHONHASHSEED
 MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
 
 echo "==> 1. host build environment ($MODE: LLVM build support and lld built here, the pinned SDK fetched, a host compiler)"
+# Reported, not required: CMake finds gyb's python itself (step 4 names the one it found), and 3.14
+# (CI), 3.13 (OS X 10.9, pkgsrc) and 3.9 (a modern Mac's Command Line Tools) have built the same runtime.
+echo "    python3 on PATH: $(if command -v python3 >/dev/null 2>&1; then python3 --version 2>&1; else echo none; fi)"
 [ -d "$LLVMB/lib/cmake/llvm" ] || { echo "FAIL: no LLVM build support at $LLVMB -- run ./build-llvm.sh"; exit 1; }
 [ -x "$LLD" ] || { echo "FAIL: no $LLD -- run ./build-llvm.sh"; exit 1; }
 # An override that names no file is reported as such; each mode's own message is for its own archive.
@@ -183,6 +186,8 @@ shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
   -DSWIFT_NATIVE_SWIFT_TOOLS_PATH="$TC/bin" -DSWIFT_NATIVE_CLANG_TOOLS_PATH="$TC/bin" \
   -DSWIFT_EXPERIMENTAL_EXTRA_FLAGS="$PM_SWIFT;-Xfrontend;-disable-availability-checking"
 printf '%s\n' "$STAMP" > "$ROOT/stdlib-build/mavergreen-inputs.stamp"
+PY="$(sed -n 's/^_Python3_EXECUTABLE:INTERNAL=//p' "$ROOT/stdlib-build/CMakeCache.txt")"
+if [ -n "$PY" ]; then echo "    gyb runs $PY: $("$PY" --version 2>&1 || :)"; else echo "    CMake's cache names no python for gyb"; fi
 
 echo "==> 5. build libswiftCore (+ SwiftOnoneSupport)"
 ninja -C "$ROOT/stdlib-build" swiftCore-macosx-$ARCH swiftSwiftOnoneSupport-macosx-$ARCH

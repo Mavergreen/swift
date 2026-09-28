@@ -64,6 +64,23 @@ if native_host_shim "$H" "$T/host" 2> "$T/err"; then fail "accepted a toolchain 
 grep -q 'bin/clang' "$T/err" || fail "did not name the missing clang: $(cat "$T/err")"
 [ -d "$T/host/stale" ] || fail "removed the dir before refusing"
 if native_host_shim toolchain "$T/host" 2>/dev/null; then fail "accepted a relative toolchain prefix"; fi
+echo "-- lib.sh's build root: a relative one made absolute, before anything cds; one with whitespace refused"
+mkdir -p "$T/cwd"
+got="$(cd "$T/cwd" && MAVERICKS_BUILD_ROOT=rel sh -c '. "$1/lib.sh" && echo "$MAVERICKS_BUILD_ROOT $SWIFT_BUILD"' sh "$REPO")"
+[ "$got" = "$T/cwd/rel $T/cwd/rel/swift" ] || fail "a relative root read as: $got"
+TAB="$(printf '\t')"
+for bad in "$T/a b" "$T/a${TAB}b"; do
+  if MAVERICKS_BUILD_ROOT="$bad" sh -c '. "$1/lib.sh" && echo sourced' sh "$REPO" > "$T/out" 2> "$T/err"; then
+    fail "sourced lib.sh with the root '$bad': $(cat "$T/out")"
+  fi
+  grep -q 'whitespace' "$T/err" || fail "did not say why '$bad' was refused: $(cat "$T/err")"
+done
+
+echo "-- prefix_map_flags: refuses a root with whitespace in either spelling"
+mkdir -p "$T/sp ace"; ln -s "sp ace" "$T/nospace"
+if prefix_map_flags c "$T/sp ace" > /dev/null 2>&1; then fail "mapped a root holding a space"; fi
+if prefix_map_flags swift "$T/nospace" > /dev/null 2>&1; then fail "mapped a link whose physical spelling holds a space"; fi
+
 echo "-- host_inputs_stamp: the three inputs' sha256s by role; one it cannot hash is refused"
 printf a > "$T/fe"; printf b > "$T/cl"; printf c > "$T/bi"
 s1="$(host_inputs_stamp "$T/fe" "$T/cl" "$T/bi")" || fail "host_inputs_stamp failed"
@@ -88,6 +105,22 @@ grep -q 'removing' "$T/out" || fail "removed the dir without saying so"
 mkdir -p "$T/sb"
 if reuse_build_dir "$T/sb" "" 2>/dev/null; then fail "accepted an empty stamp"; fi
 [ -d "$T/sb" ] || fail "removed the dir before refusing an empty stamp"
+
+echo "-- macho_links_none_under: fails on a library under the dir, and on an otool that read nothing"
+mkdir -p "$T/fakebin"
+printf '#!/bin/sh\nprintf "%%s" "$FAKE_OTOOL_OUT"\nexit "${FAKE_OTOOL_RC:-0}"\n' > "$T/fakebin/otool"; chmod +x "$T/fakebin/otool"
+LIBS="$T/lld:
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1345.0.0)
+	/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1900.0.0)"
+( export PATH="$T/fakebin:$PATH" FAKE_OTOOL_OUT="$LIBS"; macho_links_none_under "$T/lld" /opt/pkg/ ) > /dev/null || fail "refused a clean lld"
+( export PATH="$T/fakebin:$PATH" FAKE_OTOOL_OUT="$LIBS
+	/opt/pkg/lib/libz.1.dylib (compatibility version 1.0.0)"; macho_links_none_under "$T/lld" /opt/pkg/ ) > "$T/out" 2>&1 \
+  && fail "accepted an lld linking /opt/pkg"
+grep -q '/opt/pkg/lib/libz.1.dylib' "$T/out" || fail "did not list the /opt/pkg library: $(cat "$T/out")"
+( export PATH="$T/fakebin:$PATH" FAKE_OTOOL_OUT="" FAKE_OTOOL_RC=1; macho_links_none_under "$T/lld" /opt/pkg/ ) > /dev/null 2>&1 \
+  && fail "passed although otool failed"
+( export PATH="$T/fakebin:$PATH" FAKE_OTOOL_OUT=""; macho_links_none_under "$T/lld" /opt/pkg/ ) > /dev/null 2>&1 \
+  && fail "passed although otool printed nothing (10.9's stub, without the Command Line Tools)"
 
 echo "-- host_toolchain_release: the receipt's release, of SWIFT_VERSION, whatever the pkg id"
 SWIFT_VERSION=6.4.0; mkdir -p "$T/fakebin"
