@@ -3,7 +3,10 @@
 # usage: sh tests/stage-toolchain-test.sh
 #   scripts/stage-toolchain.sh must lay out exactly the toolchain payload from a (fake) build, the
 #   builtins archive in clang's resource dir included, name a missing input, and refuse an empty
-#   out-dir, or / by any name, before writing anything.
+#   out-dir, or / by any name, or an unknown STAGE_HOST, before writing anything; bare clang's
+#   clang.cfg and clang++.cfg are toolchain/clang.cfg. With STAGE_HOST=arm64 it must lay out the cross
+#   toolchain from the arm64 build dirs: the same files, the same bytes but for what each LLVM and
+#   Swift build makes itself (the three binaries, clang's headers, the helper outputs).
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -52,7 +55,7 @@ mkdir -p "$T/out/usr/stale" "$T/out/Library/keep"
 SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out"
 P=usr/local/mavergreen/swift-toolchain
 got="$(cd "$T/out" && find usr Library -type f | sort)"
-want="$(printf '%s\n' "$P/bin/clang" "$P/bin/ld64.lld" "$P/bin/swift-frontend" "$P/bin/swiftc" \
+want="$(printf '%s\n' "$P/bin/clang" "$P/bin/clang.cfg" "$P/bin/clang++.cfg" "$P/bin/ld64.lld" "$P/bin/swift-frontend" "$P/bin/swiftc" \
   "$P/lib/clang/21/include/stdint.h" "$P/lib/clang/21/lib/darwin/libclang_rt.osx.a" \
   "$P/lib/swift/macosx/SwiftOnoneSupport.swiftmodule/x86_64-apple-macos.swiftmodule" \
   "$P/lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule" "$P/lib/swift/macosx/layouts-x86_64.yaml" \
@@ -71,4 +74,37 @@ $want"
 [ "$(cat "$T/out/$P/lib/clang/21/lib/darwin/libclang_rt.osx.a")" = builtins-x86/lib/darwin/libclang_rt.osx.a ] \
   || fail "lib/clang/21/lib/darwin/libclang_rt.osx.a is not build-builtins.sh's archive"
 [ "$(readlink "$T/out/$P/bin/clang++")" = clang ] || fail "bin/clang++ is not a link to clang"
+for c in clang.cfg clang++.cfg; do
+  cmp -s "$REPO/toolchain/clang.cfg" "$T/out/$P/bin/$c" || fail "bin/$c is not toolchain/clang.cfg"
+done
+
+echo "-- refuses an unknown STAGE_HOST before writing anything"
+rc=0; STAGE_HOST=x86 SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/bad" 2> "$T/err" || rc=$?
+[ "$rc" -eq 2 ] || fail "STAGE_HOST=x86: exit $rc, not 2"
+[ ! -e "$T/bad" ] || fail "STAGE_HOST=x86 wrote $T/bad before refusing"
+grep -q "not 'x86'" "$T/err" || fail "did not name the bad host: $(cat "$T/err")"
+
+echo "-- STAGE_HOST=arm64: the cross toolchain, from the arm64 build, with the native payload's stdlib, wrappers and cfgs"
+fake_toolchain_build "$W" arm64
+STAGE_HOST=arm64 SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/xout"
+X=usr/local/mavergreen/swift-toolchain-cross
+got="$(cd "$T/xout" && find usr -type f | sort)"
+xwant="$(printf '%s\n' "$want" | sed "s|^$P/|$X/|" | sort)"
+[ "$got" = "$xwant" ] || fail "cross payload is
+$got
+wanted
+$xwant"
+for f in bin/swift-frontend:swift-arm64/bin/swift-frontend bin/ld64.lld:llvm-arm64/bin/lld bin/clang:llvm-arm64/bin/clang \
+         share/swift/compatibility-symbols:swift-arm64/share/swift/compatibility-symbols \
+         share/swift/diagnostics/en.db:swift-arm64/share/swift/diagnostics/en.db; do
+  [ "$(cat "$T/xout/$X/${f%%:*}")" = "${f#*:}" ] || fail "cross $X/${f%%:*} is not ${f#*:}"
+done
+# Everything else is the native payload's bytes: one stdlib build, one builtins archive, one set of wrappers.
+( cd "$T/out/$P" && find . -type f ) | while IFS= read -r f; do
+  case "$f" in ./bin/swift-frontend|./bin/ld64.lld|./bin/clang|./share/swift/*|./lib/clang/*/include/*) continue ;; esac
+  cmp -s "$T/out/$P/$f" "$T/xout/$X/$f" || fail "cross $f differs from the native payload's"
+done
+[ "$(readlink "$T/xout/$X/lib/swift/clang")" = ../clang/21 ] || fail "cross lib/swift/clang is not a link to ../clang/21"
+[ "$(readlink "$T/xout/$X/bin/clang++")" = clang ] || fail "cross bin/clang++ is not a link to clang"
+[ -x "$T/xout/$X/bin/swiftc" ] || fail "cross swiftc not executable"
 echo "PASS"

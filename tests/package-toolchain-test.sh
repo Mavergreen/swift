@@ -78,7 +78,7 @@ pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$M" 2>/dev/null; }
 [ "$(pb group)" = swift ] || fail "the manifest's group is '$(pb group)', not swift"
 [ "$(pb appcast)" = "$FEED" ] || fail "the manifest's appcast is '$(pb appcast)'"
 ex=""; i=0; while e="$(pb "exports-exclude:$i")"; do ex="$ex$e "; i=$((i + 1)); done
-[ "$ex" = "bin/swift-frontend bin/ld64.lld bin/clang bin/clang++ " ] || fail "the manifest excludes [$ex]"
+[ "$ex" = "bin/swift-frontend bin/ld64.lld bin/clang bin/clang++ bin/clang.cfg bin/clang++.cfg " ] || fail "the manifest excludes [$ex]"
 
 echo "-- beside an installed clang22, linking exports swiftc alone and takes none of clang22's names"
 C="$T/c22"; mkdir -p "$C/usr/local/mavergreen/clang22/bin"

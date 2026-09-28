@@ -1,5 +1,6 @@
 #!/bin/sh
-# platform: macOS-only -- runs this toolchain's swift-frontend, an OS X 10.9 x86_64 program
+# platform: macOS-only -- runs this toolchain's swift-frontend: an x86_64 program on OS X 10.9 (swift-toolchain),
+#           or an arm64 one on an Apple-silicon Mac (swift-toolchain-cross)
 #   usage: swiftc [swiftc arguments]
 #          Swift for Mavericks: the Swift compiler driver with this toolchain's OS X 10.9 defaults
 #          (target, SDK, linker, runtime location). Your arguments follow the defaults, so yours win

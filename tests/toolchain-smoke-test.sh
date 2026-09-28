@@ -66,11 +66,9 @@ echo "-- the staged clang links C that uses @available (its builtins archive, wh
 printf '%s\n' '#include <stdio.h>' 'int main(void) {' \
   '  if (__builtin_available(macOS 10.12, *)) puts("10.12 or later"); else puts("before 10.12");' \
   '  return 0;' '}' > "$T/avail.c"
-# The archive's os_version_check.o weak-imports _availability_version_check (macOS 10.15 and later; on
-# 10.9 it falls back to reading SystemVersion.plist), which the 10.9 SDK's libSystem does not declare, so
-# ld64.lld refuses the link unless told the symbol may stay undefined. clang22 puts this flag in its
-# clang.cfg; until this toolchain's clang does the same, a C program that uses @available passes it.
-"$T/tc/bin/clang" -isysroot "$SDKROOT" -fuse-ld=lld -Wl,-U,__availability_version_check "$T/avail.c" -o "$T/avail" \
+# No -Wl,-U here: the staged bin/clang.cfg (toolchain/clang.cfg) lets compiler-rt's weak reference to
+# _availability_version_check, which the 10.9 SDK does not declare, stay undefined.
+"$T/tc/bin/clang" -isysroot "$SDKROOT" -fuse-ld=lld "$T/avail.c" -o "$T/avail" \
   || fail "the staged clang could not link C that uses @available"
 nm "$T/avail" | grep -q ' [Tt] ___isPlatformVersionAtLeast$' \
   || fail "___isPlatformVersionAtLeast did not come from the staged builtins archive"
