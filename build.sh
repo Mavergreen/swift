@@ -17,8 +17,9 @@
 #   $SWIFT_BUILD/work), SWIFT_RUNTIME_OUT (the staged payload, default $SWIFT_BUILD/payload/runtime),
 #   MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_BUILTINS (a libclang_rt.osx.a to link instead of the
 #   mode's own), NM (native mode's nm), MAVERICKS_SDK_CACHE (fetch_sdk.sh's cache).
-# Host: cmake through shipyard-cmake, ninja, git, python3 (gyb); see docs/superpowers/PKGSRC-LEDGER.md
-# for what the 10.9 box takes from pkgsrc.
+# Host: cmake through shipyard-cmake, ninja, git, python3 (gyb). On OS X 10.9 pkgsrc supplies python3
+# (gyb, line-directive, LLVM's CMake), ninja, and git (while ~/.gitconfig uses options that git 1.9.5
+# rejects); see README's "Developing on OS X 10.9".
 # Output: $SWIFT_RUNTIME_OUT, in scripts/stage-runtime.sh's layout, for package.sh.
 set -eu
 
@@ -39,6 +40,9 @@ MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
 echo "==> 1. host build environment ($MODE: LLVM build support and lld built here, the pinned SDK fetched, a host compiler)"
 [ -d "$LLVMB/lib/cmake/llvm" ] || { echo "FAIL: no LLVM build support at $LLVMB -- run ./build-llvm.sh"; exit 1; }
 [ -x "$LLD" ] || { echo "FAIL: no $LLD -- run ./build-llvm.sh"; exit 1; }
+# An override that names no file is reported as such; each mode's own message is for its own archive.
+[ -z "${SWIFT_BUILTINS:-}" ] || [ -f "$SWIFT_BUILTINS" ] || {
+  echo "FAIL: SWIFT_BUILTINS names no file: $SWIFT_BUILTINS"; exit 1; }
 case "$MODE" in
   cross)
     PKG="$SWIFT_BUILD/cache/$TOOLCHAIN_ASSET"
@@ -191,15 +195,28 @@ fi
 if printf '%s\n' "$IMPORTS_OUT" | grep 'objc_readClassPair' | grep -qv '\[weak-import\]'; then
   echo "FAIL: objc_readClassPair is a HARD import"; exit 1
 fi
+# The strings checks below capture strings' output first, as above: a dylib strings could not read
+# would otherwise read as "no MAV_, no paths".
 # release build must carry no debug-logging leftovers.
-if strings "$CORE" | grep -q 'MAV_'; then
+[ -f "$CORE" ] || { echo "FAIL: no $CORE to check"; exit 1; }
+CORE_S="$(strings "$CORE")" || { echo "FAIL: could not read $CORE's strings"; exit 1; }
+if printf '%s\n' "$CORE_S" | grep -q 'MAV_'; then
   echo "FAIL: debug (MAV_) strings present in shipped dylib"; exit 1
 fi
-# No path of this machine's build root survives (the prefix maps above), in any spelling.
+# No path of this machine's work tree survives (the prefix maps above), in any spelling; nor any other
+# absolute path (a foreign machine's, through a linked archive, say) beyond the mapped root and the OS's.
+# An absolute path here is a / then a name of two or more characters then a /: strings -a also finds
+# code bytes that start with / (such as "/h/h/", "/fff."), and a bare ^/ would fail on those.
 RP="$(CDPATH='' cd -P -- "$ROOT" && pwd -P)"; LP="$(CDPATH='' cd -L -- "$ROOT" && pwd -L)"
 for lib in "$CORE" "$(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib"; do
-  if strings -a "$lib" | grep -F -e "$ROOT" -e "$RP" -e "$LP"; then
+  [ -f "$lib" ] || { echo "FAIL: no $lib to check"; exit 1; }
+  S="$(strings -a "$lib")" || { echo "FAIL: could not read $lib's strings"; exit 1; }
+  if printf '%s\n' "$S" | grep -F -e "$ROOT" -e "$RP" -e "$LP"; then
     echo "FAIL: $lib carries the build root's path (listed above)"; exit 1
+  fi
+  FOREIGN="$(printf '%s\n' "$S" | grep -E '^/[A-Za-z][A-Za-z0-9._-]+/' | grep -v -e '^/mavergreen-build/' -e '^/usr/lib/' -e '^/System/' || :)"
+  if [ -n "$FOREIGN" ]; then
+    printf '%s\n' "$FOREIGN"; echo "FAIL: $lib carries an absolute path outside /mavergreen-build, /usr/lib and /System (listed above)"; exit 1
   fi
 done
 echo "OK: no os_unfair_lock; objc_readClassPair weak-guarded; no debug strings; no build paths; staged in $OUT"

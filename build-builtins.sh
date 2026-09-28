@@ -66,13 +66,15 @@ MAVERICKS_DEVIATIONS_ROOT="$HERE" sh "$HERE/scripts/guard.sh" "$A"
 for s in ___isPlatformVersionAtLeast ___isPlatformOrVariantPlatformVersionAtLeast ___divti3 ___modti3 ___udivti3 ___umodti3; do
   nm "$A" | grep -q " T $s\$" || { echo "FAIL: $A does not define $s"; exit 1; }
 done
-# Neither spelling of the build root survives (the prefix maps above); a leak names its members.
+# No spelling of the build root survives (the prefix maps above); a leak names its members. An archive
+# grep cannot read FAILs (grep's 2), rather than reading as "no paths".
 RP="$(CDPATH='' cd -P -- "$W" && pwd -P)"; LP="$(CDPATH='' cd -L -- "$W" && pwd -L)"
-if [ "$(grep -caF -e "$RP" -e "$LP" "$A")" -ne 0 ]; then
+N="$(grep -caF -e "$W" -e "$RP" -e "$LP" "$A" || [ $? -eq 1 ])" || { echo "FAIL: could not read $A"; exit 1; }
+if [ "$N" -ne 0 ]; then
   # platform: the archive is fat (one slice); ar reads only a thin one.
   lipo -thin "$ARCH" "$A" -output "$B/thin.a"
   for m in $(ar t "$B/thin.a" | grep -v '^__\.SYMDEF'); do
-    ar p "$B/thin.a" "$m" | grep -aqF -e "$RP" -e "$LP" && echo "  $m"
+    ar p "$B/thin.a" "$m" | grep -aqF -e "$W" -e "$RP" -e "$LP" && echo "  $m"
   done
   echo "FAIL: $A carries the build root's path, in the members listed above"; exit 1
 fi
