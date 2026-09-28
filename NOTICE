@@ -62,4 +62,7 @@ LLVM's clang and lld (clang, ld64.lld; Apache-2.0 WITH LLVM-exception), built fr
 swiftlang/llvm-project with the patches in ./patches/llvm, and compiler-rt's
 builtins library (lib/clang/<version>/lib/darwin/libclang_rt.osx.a; the same
 license), built from the same source; LLVM's license ships beside them as
-share/doc/LICENSE-LLVM.txt.
+share/doc/LICENSE-LLVM.txt. Of those patches, 0004 changes only compiler-rt's
+build: it passes extra compiler flags to the Darwin builtins (whose build
+otherwise drops them), so that the archive, and the runtime that links part of
+it, carry no path from the machine that built them.

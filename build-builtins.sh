@@ -18,11 +18,18 @@ W="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$W"; cd "$W"
   echo "FAIL: build-builtins.sh runs on a modern Mac (its compiler is arm64); on OS X 10.9 build.sh links the installed toolchain's archive"; exit 1; }
 test "$(git -C llvm-project rev-parse HEAD 2>/dev/null)" = "$LLVM_SHA" \
   && grep -q "swiftlang's fork refuses every Apple-platform input" llvm-project/lld/MachO/InputFiles.cpp \
+  && grep -q 'Mavergreen: extra flags for the Darwin builtins' llvm-project/compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake \
   || { echo "FAIL: no patched llvm-project at $LLVM_SHA in $W -- run ./build-llvm.sh"; exit 1; }
 X="$(sh "$HERE/fetch-clang22.sh")/bin"
 SDK109="$(sh "$SHIPYARD/fetch_sdk.sh")"
 B="$W/builtins-x86"
 A="$B/lib/darwin/libclang_rt.osx.a"
+# The build root, by both its spellings, is mapped to /mavergreen-build in every compile: the runtime
+# links os_version_check.o, so that member's __FILE__ (an assert's) lands in libswiftCore, and on OS X
+# 10.9 build.sh links CI's copy of this archive. An unmapped path here is CI's path in every runtime.
+# The flags go through COMPILER_RT_DARWIN_BUILTIN_EXTRA_CFLAGS (patches/llvm 0004): compiler-rt's
+# darwin_add_builtin_libraries clears CMAKE_C_FLAGS and CMAKE_ASM_FLAGS, so those never reach a compile.
+PM="$(prefix_map_flags c "$W")" || { echo "FAIL: no prefix maps for $W"; exit 1; }
 
 echo "==> 1. configure compiler-rt's builtins alone, x86_64 / $DEPLOYMENT, against the $DEPLOYMENT SDK (cross compiler: $X)"
 # Configured from scratch every run: it takes seconds, and a reused cache would hide a changed knob.
@@ -34,6 +41,7 @@ rm -rf "$B"
 #   -mmacosx-version-min=10.7 compiler-rt hard-codes (clang warns -Woverriding-option; minOS 10.9 ships).
 # LLVM_ENABLE_LIBXML2=OFF and CMAKE_IGNORE_PREFIX_PATH=/opt/pkg: hygiene, as in build-llvm.sh.
 shipyard-cmake -G Ninja -S llvm-project/compiler-rt -B "$B" \
+  -DCOMPILER_RT_DARWIN_BUILTIN_EXTRA_CFLAGS="$PM" \
   -DCMAKE_C_COMPILER="$X/clang" -DCMAKE_CXX_COMPILER="$X/clang++" -DCMAKE_ASM_COMPILER="$X/clang" \
   -DCMAKE_OSX_SYSROOT="$SDK109" -DCMAKE_OSX_ARCHITECTURES="$ARCH" -DCMAKE_OSX_DEPLOYMENT_TARGET="$DEPLOYMENT" \
   -DCMAKE_IGNORE_PREFIX_PATH=/opt/pkg -DLLVM_ENABLE_LIBXML2=OFF \
@@ -58,4 +66,14 @@ MAVERICKS_DEVIATIONS_ROOT="$HERE" sh "$HERE/scripts/guard.sh" "$A"
 for s in ___isPlatformVersionAtLeast ___isPlatformOrVariantPlatformVersionAtLeast ___divti3 ___modti3 ___udivti3 ___umodti3; do
   nm "$A" | grep -q " T $s\$" || { echo "FAIL: $A does not define $s"; exit 1; }
 done
+# Neither spelling of the build root survives (the prefix maps above); a leak names its members.
+RP="$(CDPATH='' cd -P -- "$W" && pwd -P)"; LP="$(CDPATH='' cd -L -- "$W" && pwd -L)"
+if [ "$(grep -caF -e "$RP" -e "$LP" "$A")" -ne 0 ]; then
+  # platform: the archive is fat (one slice); ar reads only a thin one.
+  lipo -thin "$ARCH" "$A" -output "$B/thin.a"
+  for m in $(ar t "$B/thin.a" | grep -v '^__\.SYMDEF'); do
+    ar p "$B/thin.a" "$m" | grep -aqF -e "$RP" -e "$LP" && echo "  $m"
+  done
+  echo "FAIL: $A carries the build root's path, in the members listed above"; exit 1
+fi
 echo "OK: $A ($(wc -c < "$A" | tr -d ' ') bytes)"

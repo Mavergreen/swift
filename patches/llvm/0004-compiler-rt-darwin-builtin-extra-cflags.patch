@@ -1,0 +1,14 @@
+diff --git compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake
+--- compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake
++++ compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake
+@@ -408,6 +408,10 @@ macro(darwin_add_builtin_libraries)
+   set(DARWIN_EXCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Darwin-excludes)
+ 
+   set(CFLAGS -fPIC -O3 -fvisibility=hidden -DVISIBILITY_HIDDEN -Wall -fomit-frame-pointer)
++  # Mavergreen: extra flags for the Darwin builtins (this macro clears CMAKE_C_FLAGS), such as the
++  # -ffile-prefix-map flags that keep the build machine's paths out of the archive.
++  separate_arguments(_mavergreen_extra_cflags UNIX_COMMAND "${COMPILER_RT_DARWIN_BUILTIN_EXTRA_CFLAGS}")
++  list(APPEND CFLAGS ${_mavergreen_extra_cflags})
+   set(CMAKE_C_FLAGS "")
+   set(CMAKE_CXX_FLAGS "")
+   set(CMAKE_ASM_FLAGS "")
