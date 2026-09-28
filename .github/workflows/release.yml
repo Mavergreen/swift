@@ -5,8 +5,9 @@ name: release
 # Sparkle updater, sign both, and attach the .pkgs + signed appcasts to one GitHub Release. Tags ARE
 # the version -- no `v` prefix; see VERSION.
 #
-# The host build environment is built here too: build-llvm.sh (swiftlang LLVM build support) and
-# mirror-toolchain.sh (the swift.org compiler, signer-verified), both pinned in pins.env.
+# The host build environment is built here too: build-llvm.sh (swiftlang LLVM build support, and the
+# lld that links the runtime), build-builtins.sh (compiler-rt's builtins for 10.9) and
+# mirror-toolchain.sh (the swift.org compiler, signer-verified), all pinned in pins.env.
 #
 # RELEASE GATING: CI proves the build succeeds and the compat guard passes -- necessary hygiene, but
 # a macOS 26 runner is structurally blind to the 10.9-only behaviour this runtime exists to fix (it
@@ -144,11 +145,14 @@ jobs:
 
       # Only build-toolchain.sh compiles through ccache; these steps build cold every run. Every input
       # is pinned and verified, so correctness never depends on cache state.
-      - name: Build the LLVM build support (TableGen + CMake package; nothing links LLVM)
+      - name: Build the LLVM build support and lld (TableGen + CMake package; lld links the runtime)
         run: ./build-llvm.sh
 
       - name: Fetch the swift.org compiler (verbatim; signer must match pins.env)
         run: ./mirror-toolchain.sh
+
+      - name: Build compiler-rt's builtins (x86_64, 10.9; the runtime links them, the toolchain ships them)
+        run: ./build-builtins.sh
 
       - name: Build the runtime (patched stdlib, 10.9 / x86_64)
         run: ./build.sh
@@ -209,6 +213,8 @@ jobs:
           n="$(wc -l < "$RUNNER_TEMP/toolchain-machos" | tr -d ' ')"
           [ "$n" -eq 5 ] || { echo "::error::the toolchain payload holds $n Mach-O files, not 5 (swift-frontend, ld64.lld, clang, 2 stdlib dylibs)"; exit 1; }
           xargs ./scripts/guard.sh < "$RUNNER_TEMP/toolchain-machos"
+          # The builtins archive is not executable, so the list above misses it; guard it by name.
+          ./scripts/guard.sh "$SWIFT_BUILD"/payload/toolchain/usr/local/mavergreen/swift-toolchain/lib/clang/*/lib/darwin/libclang_rt.osx.a
 
       # INGREDIENTS.md declares this: rosetta:.github/workflows/release.yml. The runner is arm64 and the
       # toolchain x86_64, so the smoke below runs its compiler and linker translated.

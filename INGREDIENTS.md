@@ -12,11 +12,12 @@ the LLVM build support this repo consumed, was merged in and archived (2026-09).
 | Swift release (own upstream) | `SWIFT_VERSION` + `SWIFT_SHA` in `pins.env` | ✅ `github-tags` on `swiftlang/swift`, grouped with llvm-project; minor/major held for a human (below) | auto-cuts `<upstream>-mavericks.1` on the push to main |
 | swiftlang/llvm-project commit | `LLVM_SWIFT_RELEASE` + `LLVM_SHA` in `pins.env` | ✅ `github-tags` on `swiftlang/llvm-project`, in the same "Swift release" PR | moves only WITH the Swift pin: `build-llvm.sh` fails unless `LLVM_SWIFT_RELEASE` equals `SWIFT_VERSION` and `LLVM_SHA` is llvm-project's `swift-<SWIFT_VERSION>-RELEASE` |
 | swiftlang/swift-cmark commit | `CMARK_SWIFT_RELEASE` + `CMARK_SHA` in `pins.env` | ✅ `github-tags` on `swiftlang/swift-cmark`, in the same "Swift release" PR | moves only WITH the Swift pin: `build-toolchain.sh` runs `check_release_pin` on it |
-| mavericks-clang-22 cross toolchain (compiles the 10.9-hosted toolchain) | `CLANG22_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/clang-22`, `-mavericks.N` versioning | auto-repackages `-mavericks.(N+1)` |
+| mavericks-clang-22 cross toolchain (compiles the 10.9-hosted toolchain and compiler-rt's builtins) | `CLANG22_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/clang-22`, `-mavericks.N` versioning | auto-repackages `-mavericks.(N+1)` |
 | LLVM and compiler source patches (`patches/llvm/`, `patches/compiler/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | swift.org toolchain `.pkg` (the host compiler that builds the stdlib) | `TOOLCHAIN_URL`, derived from `SWIFT_VERSION` | ✅ moves with the Swift pin | verified by **signer identity**, not a hash (below) |
 | Runtime source patches (`patches/runtime/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | Sparkle framework, MacOSX10.9 SDK | `Mavergreen/shipyard@v1` | ✅ github-actions manager tracks the tag | `@v1` is a moving tag; nothing auto-repackages |
+| MacOSX11.3.sdk, the pinned modern SDK the runtime builds against (CI and OS X 10.9 alike) | `Mavergreen/shipyard@v1` (`sdk-pins.sh`'s arm64 pin, fetched by `fetch_sdk.sh --arch arm64`) | ✅ github-actions manager tracks the tag | `@v1` is a moving tag; nothing auto-repackages |
 
 ## How a bump reaches a release
 
@@ -69,7 +70,7 @@ each is scoped to the artifact it concerns: the first two to the stdlib dylibs (
 and the same bytes in the toolchain pkg), the next ones to the swift.org mirror attached to
 `-mavericks.1` releases, and the two `rosetta` entries, last, to CI's toolchain smoke.
 
-- sdk-pin:*/swift-runtime/lib/swift/*.dylib: the Swift runtime cannot be built against the 10.9 SDK, which has no libc++ headers at all (only libstdc++ 4.2.1) while Swift 6.4 requires C++17, and which lacks declarations of post-10.9 APIs the runtime calls behind availability checks. Its build uses a modern SDK: today the CI runner's Xcode SDK, unpinned; the swift T2 decision (2026-09-25) replaces that with one pinned modern SDK used by CI and on 10.9. minos stays 10.9, and the real-10.9 gate is its acceptance. Revisit if the gate gains per-product pins.
+- sdk-pin:*/swift-runtime/lib/swift/*.dylib: the Swift runtime cannot be built against the 10.9 SDK, which has no libc++ headers at all (only libstdc++ 4.2.1) while Swift 6.4 requires C++17, and which lacks declarations of post-10.9 APIs the runtime calls behind availability checks. Its build uses a modern SDK, pinned: MacOSX11.3.sdk, shipyard's arm64 pin (`fetch_sdk.sh --arch arm64`), the same in CI and on 10.9, so a runtime built on 10.9 is byte-identical to CI's. It records sdk 11.3; its libc++ imports are all exported by 10.9's `/usr/lib/libc++.1.dylib`. minos stays 10.9, and the real-10.9 gate is its acceptance. Revisit if the gate gains per-product pins.
 - sdk-pin:*/swift-toolchain/lib/swift/macosx/*.dylib: the toolchain's stdlib dylibs are the runtime's own bytes, staged from the one stdlib build (scripts/stage-toolchain.sh), so the runtime's reason above applies verbatim. The compiler, lld and clang beside them record the pinned 10.9 SDK and take no exemption.
 - version:upstream-swift-*.pkg: mirrored verbatim from swift.org, so its version is upstream's own
   (`6.4.20260913101` for 6.4.0). Rewriting it would break the correspondence with download.swift.org
