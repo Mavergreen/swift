@@ -1,8 +1,9 @@
 #!/bin/sh
 # platform: host-agnostic
 # usage: sh tests/stage-toolchain-test.sh
-#   scripts/stage-toolchain.sh must lay out exactly the toolchain payload from a (fake) build, name a
-#   missing input, and refuse an empty out-dir, or / by any name, before writing anything.
+#   scripts/stage-toolchain.sh must lay out exactly the toolchain payload from a (fake) build, the
+#   builtins archive in clang's resource dir included, name a missing input, and refuse an empty
+#   out-dir, or / by any name, before writing anything.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -29,10 +30,12 @@ for bad in "" // /. /tmp/.. "$T/rootchild/.."; do
 done
 
 echo "-- names a missing input"
-mv "$W/llvm-x86/bin/lld" "$T/lld.away"
-if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out" 2> "$T/err"; then fail "staged without lld"; fi
-grep -q 'llvm-x86/bin/lld' "$T/err" || fail "did not name the missing lld: $(cat "$T/err")"
-mv "$T/lld.away" "$W/llvm-x86/bin/lld"
+for f in llvm-x86/bin/lld builtins-x86/lib/darwin/libclang_rt.osx.a; do
+  mv "$W/$f" "$T/away"
+  if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out" 2> "$T/err"; then fail "staged without $f"; fi
+  grep -q "$f" "$T/err" || fail "did not name the missing $f: $(cat "$T/err")"
+  mv "$T/away" "$W/$f"
+done
 
 echo "-- refuses, naming them, when a reused build root holds more than one clang resource dir"
 mkdir -p "$W/llvm-x86/lib/clang/22/include"
@@ -50,7 +53,8 @@ SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out"
 P=usr/local/mavergreen/swift-toolchain
 got="$(cd "$T/out" && find usr Library -type f | sort)"
 want="$(printf '%s\n' "$P/bin/clang" "$P/bin/ld64.lld" "$P/bin/swift-frontend" "$P/bin/swiftc" \
-  "$P/lib/clang/21/include/stdint.h" "$P/lib/swift/macosx/SwiftOnoneSupport.swiftmodule/x86_64-apple-macos.swiftmodule" \
+  "$P/lib/clang/21/include/stdint.h" "$P/lib/clang/21/lib/darwin/libclang_rt.osx.a" \
+  "$P/lib/swift/macosx/SwiftOnoneSupport.swiftmodule/x86_64-apple-macos.swiftmodule" \
   "$P/lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule" "$P/lib/swift/macosx/layouts-x86_64.yaml" \
   "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib" \
   "$P/lib/swift/shims/module.modulemap" "$P/libexec/mavergreen-swift/fetch_sdk.sh" "$P/libexec/mavergreen-swift/ld" \
@@ -64,5 +68,7 @@ $want"
 [ -d "$T/out/Library/keep" ] || fail "removed Library/, which is package-toolchain.sh's"
 [ -x "$T/out/$P/bin/swiftc" ] && [ -x "$T/out/$P/libexec/mavergreen-swift/ld" ] || fail "wrappers not executable"
 [ "$(readlink "$T/out/$P/lib/swift/clang")" = ../clang/21 ] || fail "lib/swift/clang is not a link to ../clang/21"
+[ "$(cat "$T/out/$P/lib/clang/21/lib/darwin/libclang_rt.osx.a")" = builtins-x86/lib/darwin/libclang_rt.osx.a ] \
+  || fail "lib/clang/21/lib/darwin/libclang_rt.osx.a is not build-builtins.sh's archive"
 [ "$(readlink "$T/out/$P/bin/clang++")" = clang ] || fail "bin/clang++ is not a link to clang"
 echo "PASS"

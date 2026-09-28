@@ -4,7 +4,8 @@
 #   CI's one run of the toolchain it ships. The STAGED bin/swiftc (scripts/stage-toolchain.sh's payload)
 #   compiles and links a hello world whose load commands record minOS 10.9 and SDK 10.9 and whose one
 #   rpath is the installed runtime's, then builds the gate corpus through make-selftest.sh's SWIFTC=
-#   mode. Nothing it builds is run: the runtime is not installed here, and running them is the real-10.9
+#   mode, and its clang links C that uses @available (its builtins archive is where the driver looks).
+#   Nothing it builds is run: the runtime is not installed here, and running them is the real-10.9
 #   gate's job. The compiler and linker are x86_64, so on an arm64 host every one of their processes
 #   runs translated (INGREDIENTS.md declares it: rosetta:tests/toolchain-smoke-test.sh). SKIPs (77) when
 #   nothing is staged or x86_64 code cannot run here; release.yml fails its step on that SKIP. It runs a
@@ -60,4 +61,15 @@ ls "$T/swift-runtime-selftest/bin"
 for b in thorough_test thorough_test-Onone; do
   [ -f "$T/swift-runtime-selftest/bin/$b" ] || fail "make-selftest.sh built no bin/$b"
 done
+
+echo "-- the staged clang links C that uses @available (its builtins archive, where the driver looks)"
+printf '%s\n' '#include <stdio.h>' 'int main(void) {' \
+  '  if (__builtin_available(macOS 10.12, *)) puts("10.12 or later"); else puts("before 10.12");' \
+  '  return 0;' '}' > "$T/avail.c"
+"$T/tc/bin/clang" -isysroot "$SDKROOT" -fuse-ld=lld "$T/avail.c" -o "$T/avail" \
+  || fail "the staged clang could not link C that uses @available"
+nm "$T/avail" | grep -q ' [Tt] ___isPlatformVersionAtLeast$' \
+  || fail "___isPlatformVersionAtLeast did not come from the staged builtins archive"
+plat="$(dyld_info -platform "$T/avail" | awk '$1 == "macOS" { print $2, $3 }')"
+[ "$plat" = "10.9 10.9" ] || fail "the C program records minOS and SDK '$plat', not '10.9 10.9'"
 echo "PASS"
