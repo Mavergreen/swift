@@ -84,8 +84,9 @@ sudo installer -pkg swift-toolchain-cross-<version>.pkg -target /
 Installs the same compiler, standard library, `ld64.lld` and `clang`, built to run on an Apple-silicon
 Mac with macOS 11 or later, into `/usr/local/mavergreen/swift-toolchain-cross/`. New Terminal windows
 find `swiftc-cross` on their `PATH`, and `swiftc` as well (see below). It builds for OS X 10.9 by
-default, with the 10.9 toolchain's defaults, so the same source compiled by either is the same
-program, byte for byte:
+default, with the 10.9 toolchain's defaults, so the same Swift source compiled by either is the same
+program, byte for byte (C too, when both link against the same SDK bytes: the 10.9 SDK fetched on a
+modern Mac is converted to `.tbd` stubs, which can reorder a C program's imports):
 ```sh
 swiftc hello.swift -o hello    # an x86_64 program for OS X 10.9
 ```
