@@ -229,8 +229,9 @@ jobs:
           sh scripts/stage-toolchain.sh "$SWIFT_BUILD/payload/toolchain"
           du -sh "$SWIFT_BUILD/payload/toolchain"; df -h "$RUNNER_TEMP" | tail -1
 
-      # collect compares this with build-cross's: the two toolchain pkgs must carry the same stdlib and
-      # builtins archive, byte for byte, since both are built from one source at one pin.
+      # collect compares this with build-cross's: the two toolchain pkgs must carry the same stdlib (its
+      # dylibs, the swiftmodules whose inlinable code lands in every program, the shims) and builtins
+      # archive, byte for byte, since both are built from one source at one pin, in two jobs.
       - name: Digest the stdlib and builtins the native toolchain ships
         id: digest
         run: |

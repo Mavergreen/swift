@@ -4,8 +4,9 @@
 #          Lays out a toolchain .pkg's payload under <out-dir>/usr/local/mavergreen/<product> from this
 #          build: build-toolchain.sh --host $STAGE_HOST's compiler, lld, clang, clang's headers and
 #          helper outputs; build-builtins.sh's compiler-rt builtins, where that clang looks for them (the
-#          archive the runtime was linked with); build.sh's stdlib build (the one the runtime .pkg is
-#          staged from); the swiftc and ld wrappers; shipyard's SDK fetcher and the two scripts it
+#          archive the runtime was linked with); build.sh's stdlib build in the same build root (in
+#          CI's build job, the one the runtime .pkg is staged from; build-cross runs its own, and collect
+#          checks the two are the same bytes); the swiftc and ld wrappers; shipyard's SDK fetcher and the two scripts it
 #          sources; clang's clang.cfg and clang++.cfg. STAGE_HOST x86_64 (the default) is the native
 #          toolchain, swift-toolchain; arm64 the cross toolchain, swift-toolchain-cross. Everything but
 #          what each host's build makes itself (the three binaries, clang's headers, the helper outputs)

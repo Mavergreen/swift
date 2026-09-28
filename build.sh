@@ -148,8 +148,8 @@ echo "==> 4. Swift STDLIB-ONLY configure (prebuilt toolchain as native tools)"
 PM_C="$(prefix_map_flags c "$ROOT")"
 PM_SWIFT="$(prefix_map_flags swift "$ROOT")"
 LINK="-fuse-ld=lld --ld-path=$LLD"
-# A reused stdlib-build is kept only while the host compiler, clang and builtins archive are the bytes it
-# was configured with: ninja cannot see them change (a toolchain update, say), and would keep the objects
+# A reused stdlib-build is kept only while the host compiler, clang, clang's cfgs and builtins archive are
+# the bytes it was configured with: ninja cannot see them change (a toolchain update, say), and would keep the objects
 # the previous ones built.
 STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS")" || { echo "FAIL: could not stamp the host inputs"; exit 1; }
 reuse_build_dir "$ROOT/stdlib-build" "$STAMP" || exit 1

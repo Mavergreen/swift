@@ -9,7 +9,8 @@
 #   ld64.lld; REQUIRE_UPDATER=1 refuses without the updater; and the pkg passes artifact conformance.
 #   Then the same for STAGE_HOST=arm64's swift-toolchain-cross: an arm64 macOS 11.0 floor; the manifest's
 #   group swift and line cross; beside clang22-cross and a native toolchain linked first, it exports
-#   swiftc-cross alone until `mavergreen select swift swift-toolchain-cross` gives it swiftc too; and
+#   swiftc-cross alone until `mavergreen select swift swift-toolchain-cross` gives it swiftc too; linked
+#   alone, it exports both, and so it does once a native toolchain linked first is uninstalled; and
 #   conformance passes by its declared floor and sdk-pin deviations.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -178,14 +179,31 @@ F="$XV/usr/local/mavergreen/bin"
 for n in clang clang++ ld64.lld; do
   [ "$(readlink "$F/$n")" = "../clang22-cross/bin/$n" ] || fail "bin/$n links to '$(readlink "$F/$n")', not clang22-cross's"
 done
-xexported() {
-  ( cd "$XV/usr/local/mavergreen" && find . -path ./swift-toolchain-cross -prune -o -type l -print | sort \
+xexported() {  # [volume], $XV by default
+  ( cd "${1:-$XV}/usr/local/mavergreen" && find . -path ./swift-toolchain-cross -prune -o -type l -print | sort \
     | while IFS= read -r l; do case "$(readlink "$l")" in (*swift-toolchain-cross/*) echo "$l" ;; esac; done ) | tr '\n' ' '
 }
 [ "$(xexported)" = "./bin/swiftc-cross " ] || fail "unselected, the cross toolchain exported [$(xexported)], not ./bin/swiftc-cross alone"
 sh "$MG" --root "$XV" select swift swift-toolchain-cross || fail "could not select swift-toolchain-cross"
 [ "$(readlink "$F/swiftc")" = ../swift-toolchain-cross/bin/swiftc ] || fail "selected, bin/swiftc links to '$(readlink "$F/swiftc")'"
 [ "$(xexported)" = "./bin/swiftc ./bin/swiftc-cross " ] || fail "selected, the cross toolchain exported [$(xexported)]"
+
+echo "-- linked alone, the cross toolchain exports swiftc too; so it does once the native one, linked first, is uninstalled"
+XA="$T/xvol-alone"; mkdir -p "$XA"; tar -xf "$xcomp/Payload" -C "$XA" || fail "cannot extract the cross payload"
+sh "$MG" --root "$XA" link swift-toolchain-cross 2> "$T/xlink-alone.err" \
+  || fail "linking swift-toolchain-cross alone was refused: $(cat "$T/xlink-alone.err")"
+[ "$(xexported "$XA")" = "./bin/swiftc ./bin/swiftc-cross " ] \
+  || fail "linked alone, the cross toolchain exported [$(xexported "$XA")], not ./bin/swiftc and ./bin/swiftc-cross"
+XH="$T/xvol-handoff"; mkdir -p "$XH"; tar -xf "$xcomp/Payload" -C "$XH" || fail "cannot extract the cross payload"
+cp -R "$V/usr/local/mavergreen/swift-toolchain" "$XH/usr/local/mavergreen/"
+sh "$MG" --root "$XH" link swift-toolchain || fail "could not link the native toolchain"
+sh "$MG" --root "$XH" link swift-toolchain-cross || fail "could not link swift-toolchain-cross after the native toolchain"
+[ "$(xexported "$XH")" = "./bin/swiftc-cross " ] || fail "linked second, the cross toolchain exported [$(xexported "$XH")]"
+sh "$MG" --root "$XH" uninstall swift-toolchain 2> "$T/xuninstall.err" \
+  || fail "could not uninstall the native toolchain: $(cat "$T/xuninstall.err")"
+[ ! -e "$XH/usr/local/mavergreen/swift-toolchain" ] || fail "uninstall left usr/local/mavergreen/swift-toolchain"
+[ "$(xexported "$XH")" = "./bin/swiftc ./bin/swiftc-cross " ] \
+  || fail "once the native toolchain was uninstalled, the cross toolchain exported [$(xexported "$XH")], not ./bin/swiftc and ./bin/swiftc-cross"
 
 echo "-- the cross pkg passes artifact conformance (its floor and stdlib dylibs by their declared deviations)"
 for n in Core SwiftOnoneSupport; do

@@ -4,7 +4,9 @@
 standard library, the <code>ld64.lld</code> linker and a matching <code>clang</code>, built from
 <a href="https://github.com/swiftlang/swift">swiftlang/swift</a> source — into
 <code>/usr/local/mavergreen/swift-toolchain/</code>. New Terminal windows find <code>swiftc</code> on
-their <code>PATH</code>.</p>
+their <code>PATH</code>, unless the cross toolchain package is installed here too and was installed first.</p>
+<p><b>On an Apple-silicon Mac, install swift-toolchain-cross instead</b>: this compiler runs on OS X 10.9,
+not on a modern macOS.</p>
 <p>Programs it builds need the <b>Mavericks Swift Runtime</b> package from the same release. The first
 compile fetches the Mac OS X 10.9 SDK into <code>~/Library/Caches/mavericks-sdk</code>.</p>
 <p>Licensed Apache&nbsp;2.0 (Swift, with the Runtime Library Exception; LLVM, with the LLVM exception).</p>

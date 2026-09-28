@@ -90,15 +90,17 @@ Installs the same compiler, standard library, `ld64.lld` and `clang`, built to r
 Mac with macOS 11 or later, into `/usr/local/mavergreen/swift-toolchain-cross/`. New Terminal windows
 find `swiftc-cross` on their `PATH`, and `swiftc` as well (see below). It builds for OS X 10.9 by
 default, with the 10.9 toolchain's defaults, so the same Swift source compiled by either is the same
-program, byte for byte (C too, when both link against the same SDK bytes: the 10.9 SDK fetched on a
-modern Mac is converted to `.tbd` stubs, which can reorder a C program's imports):
+program, byte for byte (C too, when both link with the toolchain's own `ld64.lld`, through
+`-fuse-ld=lld`, against the same SDK bytes: the 10.9 SDK fetched on a modern Mac is converted to `.tbd`
+stubs, which can reorder a C program's imports):
 ```sh
 swiftc hello.swift -o hello    # an x86_64 program for OS X 10.9
 ```
 Copy `hello` to a 10.9 Mac with the runtime package from the same release, and run it there; it does
 not run on the Mac that built it. The first compile fetches the 10.9 SDK into
-`~/Library/Caches/mavericks-sdk`. Its `clang` builds for 10.9 too, with no flags; to link, name the SDK
-and the toolchain's linker:
+`~/Library/Caches/mavericks-sdk`. Its `clang` builds for 10.9 too, with no flags for the target; it
+needs the SDK named (`-isysroot "$SDK"` or `$SDKROOT`) for anything that includes a header, and
+`-fuse-ld=lld` to link with the toolchain's own linker rather than the Mac's `/usr/bin/ld`:
 ```sh
 SDK="$(sh /usr/local/mavergreen/swift-toolchain-cross/libexec/mavergreen-swift/fetch_sdk.sh)"
 /usr/local/mavergreen/swift-toolchain-cross/bin/clang -isysroot "$SDK" -fuse-ld=lld hello.c -o hello
@@ -146,11 +148,11 @@ pin and applies `patches/runtime/` every run, so a change to the runtime is a pa
 also needs its number in `build.sh`'s `RUNTIME_PATCHES` and a marker grep after the list (`build.sh`
 refuses a patch file the list lacks). After one, rerun `./build.sh` and the last three commands. A
 reused build root keeps CMake's cached probe results across a rebuild. `build.sh` starts
-`$MAVERICKS_BUILD_ROOT/swift/work/stdlib-build` afresh by itself when the host compiler, its clang or
-the builtins archive changed (a toolchain update, say); after changing any other compiler or linker
-setting, remove that directory first, so `build.sh` reconfigures from scratch. The
-self-test binaries load the runtime just built, not the installed one (`DYLD_PRINT_LIBRARIES=1` shows
-it). `--gate` runs each 500 times, then 10 more under Guard Malloc.
+`$MAVERICKS_BUILD_ROOT/swift/work/stdlib-build` afresh by itself when the host compiler, its clang,
+the `clang.cfg` beside it or the builtins archive changed (a toolchain update, say); after changing
+any other compiler or linker setting, remove that directory first, so `build.sh` reconfigures from
+scratch. The self-test binaries load the runtime just built, not the installed one
+(`DYLD_PRINT_LIBRARIES=1` shows it). `--gate` runs each 500 times, then 10 more under Guard Malloc.
 
 ## How it's built
 

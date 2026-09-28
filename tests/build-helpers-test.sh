@@ -81,11 +81,20 @@ mkdir -p "$T/sp ace"; ln -s "sp ace" "$T/nospace"
 if prefix_map_flags c "$T/sp ace" > /dev/null 2>&1; then fail "mapped a root holding a space"; fi
 if prefix_map_flags swift "$T/nospace" > /dev/null 2>&1; then fail "mapped a link whose physical spelling holds a space"; fi
 
-echo "-- host_inputs_stamp: the three inputs' sha256s by role; one it cannot hash is refused"
+echo "-- host_inputs_stamp: the inputs' sha256s by role, clang's cfgs beside its real binary; one it cannot hash is refused"
 printf a > "$T/fe"; printf b > "$T/cl"; printf c > "$T/bi"
 s1="$(host_inputs_stamp "$T/fe" "$T/cl" "$T/bi")" || fail "host_inputs_stamp failed"
 [ "$(printf '%s\n' "$s1" | sed -n 1p)" = "swift-frontend ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb" ] || fail "stamp line 1: $s1"
-[ "$(printf '%s\n' "$s1" | awk '{ print $1 }' | tr '\n' ' ')" = "swift-frontend clang builtins " ] || fail "stamp roles: $s1"
+[ "$(printf '%s\n' "$s1" | awk '{ print $1 }' | tr '\n' ' ')" = "swift-frontend clang clang.cfg clang++.cfg builtins " ] || fail "stamp roles: $s1"
+[ "$(printf '%s\n' "$s1" | sed -n '3,4p' | tr '\n' ' ')" = "clang.cfg none clang++.cfg none " ] || fail "no cfgs beside clang, yet: $s1"
+# The native host shim links its clang, and clang reads <driver>.cfg from its real binary's directory.
+mkdir -p "$T/tc/bin" "$T/shim"; printf b > "$T/tc/bin/clang"; printf d > "$T/tc/bin/clang.cfg"; printf e > "$T/tc/bin/clang++.cfg"
+ln -s "$T/tc/bin/clang" "$T/shim/clang"
+s3="$(host_inputs_stamp "$T/fe" "$T/shim/clang" "$T/bi")" || fail "host_inputs_stamp failed on a linked clang"
+[ "$(printf '%s\n' "$s3" | sed -n 3p)" = "clang.cfg 18ac3e7343f016890c510e93f935261169d9e3f565436429830faf0934f4f8e4" ] || fail "the linked clang's clang.cfg: $s3"
+[ "$(printf '%s\n' "$s3" | sed -n 4p)" = "clang++.cfg 3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea" ] || fail "the linked clang's clang++.cfg: $s3"
+printf D > "$T/tc/bin/clang.cfg"; s4="$(host_inputs_stamp "$T/fe" "$T/shim/clang" "$T/bi")"
+[ "$s4" != "$s3" ] || fail "a changed clang.cfg left the stamp as it was"
 if host_inputs_stamp "$T/fe" "$T/absent" "$T/bi" > /dev/null 2> "$T/err"; then fail "stamped a missing clang"; fi
 grep -q "$T/absent" "$T/err" || fail "did not name the missing input: $(cat "$T/err")"
 printf B > "$T/cl"; s2="$(host_inputs_stamp "$T/fe" "$T/cl" "$T/bi")"

@@ -5,7 +5,8 @@
 <code>clang</code>, built from <a href="https://github.com/swiftlang/swift">swiftlang/swift</a> source — into
 <code>/usr/local/mavergreen/swift-toolchain-cross/</code>. New Terminal windows find <code>swiftc-cross</code>
 on their <code>PATH</code>, and <code>swiftc</code> as well unless the 10.9 toolchain package is installed
-here too and was installed first.</p>
+here too and was installed first; then <code>mavergreen select swift swift-toolchain-cross</code> gives
+<code>swiftc</code> to this one.</p>
 <p>What it builds runs on a 10.9 Mac with the <b>Mavericks Swift Runtime</b> package from the same release.
 The first compile fetches the Mac OS X 10.9 SDK into <code>~/Library/Caches/mavericks-sdk</code>.</p>
 <p>Licensed Apache&nbsp;2.0 (Swift, with the Runtime Library Exception; LLVM, with the LLVM exception).</p>

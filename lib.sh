@@ -186,14 +186,28 @@ host_toolchain_release() {
   printf '%s (%s)\n' "$_hr_v" "$_hr_how"
 }
 
-# host_inputs_stamp <swift-frontend> <clang> <builtins-archive> -- three lines, `<role> <sha256>`, for the
-# host compiler, the host clang and the builtins archive a stdlib build is configured with. Their bytes
-# reach the runtime, yet the build cannot see them change: nothing in the stdlib's CMake depends on an
-# external SWIFT_NATIVE_SWIFT_TOOLS_PATH compiler, no C++ object on its compiler's bytes, and no link on
-# the archive -resource-dir names. Fails, naming it, when one cannot be hashed.
+# host_inputs_stamp <swift-frontend> <clang> <builtins-archive> -- five lines, `<role> <sha256>`, for the
+# host compiler, the host clang, the clang.cfg and clang++.cfg that clang reads (`<role> none` for one
+# that is absent) and the builtins archive a stdlib build is configured with. Their bytes reach the
+# runtime, yet the build cannot see them change: nothing in the stdlib's CMake depends on an external
+# SWIFT_NATIVE_SWIFT_TOOLS_PATH compiler, no C++ object on its compiler's bytes or flags from a cfg, and
+# no link on the archive -resource-dir names. clang reads <driver>.cfg from its real binary's directory,
+# links resolved (the native host shim links the toolchain's clang), so the cfgs are looked for there.
+# Fails, naming it, when one cannot be hashed.
 host_inputs_stamp() {
-  for _hs_r in swift-frontend:"$1" clang:"$2" builtins:"$3"; do
+  _hs_c="$2"; _hs_n=0
+  while [ -L "$_hs_c" ]; do
+    _hs_n=$((_hs_n + 1))
+    [ "$_hs_n" -le 20 ] || { echo "host_inputs_stamp: too many links from $2" >&2; return 1; }
+    _hs_l="$(readlink "$_hs_c")" || { echo "host_inputs_stamp: could not read the link $_hs_c" >&2; return 1; }
+    case "$_hs_l" in /*) _hs_c="$_hs_l" ;; *) _hs_c="$(dirname "$_hs_c")/$_hs_l" ;; esac
+  done
+  _hs_d="$(dirname "$_hs_c")"
+  for _hs_r in swift-frontend:"$1" clang:"$2" clang.cfg:"$_hs_d/clang.cfg" clang++.cfg:"$_hs_d/clang++.cfg" builtins:"$3"; do
     _hs_f="${_hs_r#*:}"
+    case "${_hs_r%%:*}" in
+      *.cfg) if [ ! -e "$_hs_f" ] && [ ! -L "$_hs_f" ]; then printf '%s none\n' "${_hs_r%%:*}"; continue; fi ;;
+    esac
     [ -f "$_hs_f" ] || { echo "host_inputs_stamp: no $_hs_f" >&2; return 1; }
     _hs_s="$(shasum -a 256 < "$_hs_f" | awk '{ print $1 }')"
     [ "${#_hs_s}" -eq 64 ] || { echo "host_inputs_stamp: could not hash $_hs_f" >&2; return 1; }
@@ -209,7 +223,7 @@ reuse_build_dir() {
   [ -n "$2" ] || { echo "reuse_build_dir: an empty stamp for $1" >&2; return 1; }
   [ -d "$1" ] || return 0
   if [ "$(cat "$1/mavergreen-inputs.stamp" 2>/dev/null)" = "$2" ]; then return 0; fi
-  echo "    removing $1: its host compiler, clang or builtins archive changed, or went unrecorded"
+  echo "    removing $1: its host compiler, clang, clang.cfg or builtins archive changed, or went unrecorded"
   rm -rf "$1"
 }
 
@@ -303,34 +317,87 @@ compiler_patches() {
   [ "$_cp_n" -gt 0 ] || { echo "compiler_patches: no $1 patches in $2" >&2; return 1; }
 }
 
-# toolchain_digest <toolchain-prefix> -- one line, `<name>=<sha256>` for each file both toolchain pkgs
-# must carry byte for byte, because both are staged from the one stdlib build and the one builtins
-# archive: lib/swift/macosx/libswiftCore.dylib, lib/swift/macosx/libswiftSwiftOnoneSupport.dylib and
-# lib/clang/<v>/lib/darwin/libclang_rt.osx.a, in that order, space-separated. Fails, naming it, when a
-# file is missing: two jobs that each printed nothing must never compare equal.
+# toolchain_digest <toolchain-prefix> -- one line of `<path>=<sha256>` entries, one space apart, sorted by
+# <path> (relative to the prefix), for every file under lib/swift/macosx, lib/swift/shims and
+# lib/clang/<v>/lib: the stdlib's dylibs, the swiftmodules whose inlinable code lands in every program a
+# toolchain builds, the shims and the builtins archive. The two toolchain pkgs must carry them byte for
+# byte, and in CI two jobs build them, each from the same source with its own build.sh and
+# build-builtins.sh, which is why they are compared. Fails, naming it, when an anchor (the two dylibs,
+# Swift's swiftmodule, the shims' module.modulemap, the builtins archive) is missing, or a tree holds a
+# link, a path with a space, or a file that cannot be hashed: two jobs that each printed nothing, or less
+# than the whole trees, must never compare equal.
 toolchain_digest() {
   _td_inc="$(clang_resource_include "$1")" || return 1
-  _td_line=""
-  for _td_f in "$1/lib/swift/macosx/libswiftCore.dylib" "$1/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib" \
-               "${_td_inc%/include}/lib/darwin/libclang_rt.osx.a"; do
-    [ -f "$_td_f" ] || { echo "toolchain_digest: no $_td_f" >&2; return 1; }
-    _td_s="$(shasum -a 256 "$_td_f" | awk '{ print $1 }')"
-    [ "${#_td_s}" -eq 64 ] || { echo "toolchain_digest: could not hash $_td_f" >&2; return 1; }
-    _td_line="$_td_line${_td_line:+ }${_td_f##*/}=$_td_s"
+  _td_cl="lib/clang/$(basename "$(dirname "$_td_inc")")/lib"
+  for _td_f in lib/swift/macosx/libswiftCore.dylib lib/swift/macosx/libswiftSwiftOnoneSupport.dylib \
+               lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule lib/swift/shims/module.modulemap \
+               "$_td_cl/darwin/libclang_rt.osx.a"; do
+    [ -f "$1/$_td_f" ] || { echo "toolchain_digest: no $1/$_td_f" >&2; return 1; }
   done
+  _td_list="$(cd "$1" && find lib/swift/macosx lib/swift/shims "$_td_cl" ! -type d)" \
+    || { echo "toolchain_digest: could not list $1's stdlib, shims and builtins" >&2; return 1; }
+  _td_list="$(printf '%s\n' "$_td_list" | LC_ALL=C sort)"
+  _td_line=""
+  while IFS= read -r _td_f; do
+    case "$_td_f" in *[[:space:]]*) echo "toolchain_digest: '$1/$_td_f' holds a space" >&2; return 1 ;; esac
+    if [ -L "$1/$_td_f" ] || [ ! -f "$1/$_td_f" ]; then
+      echo "toolchain_digest: $1/$_td_f is not a plain file" >&2; return 1
+    fi
+    _td_s="$(shasum -a 256 < "$1/$_td_f" | awk '{ print $1 }')"
+    [ "${#_td_s}" -eq 64 ] || { echo "toolchain_digest: could not hash $1/$_td_f" >&2; return 1; }
+    _td_line="$_td_line${_td_line:+ }$_td_f=$_td_s"
+  done <<EOF
+$_td_list
+EOF
   printf '%s\n' "$_td_line"
 }
 
-# toolchain_digests_agree <digest> <digest> -- 0 when two toolchain_digest lines are the same complete
-# line; otherwise 1, saying why. An empty or partial line never agrees, not even with itself.
-toolchain_digests_agree() {
-  for _ta_d in "$1" "$2"; do
-    case "$_ta_d" in
-      libswiftCore.dylib=?*' 'libswiftSwiftOnoneSupport.dylib=?*' 'libclang_rt.osx.a=?*) ;;
-      *) echo "toolchain_digests_agree: '$_ta_d' is not a whole toolchain_digest line" >&2; return 1 ;;
+# toolchain_digest_whole <line> -- 0 when <line> is a whole toolchain_digest line: `lib/<path>=<sha256>`
+# entries one space apart, holding each anchor; otherwise 1, saying why.
+toolchain_digest_whole() {
+  [ -n "$1" ] || { echo "toolchain_digest: the line is empty" >&2; return 1; }
+  case "$1" in
+    ' '*|*' '|*'  '*) echo "toolchain_digest: the line holds an empty entry" >&2; return 1 ;;
+  esac
+  _tw_core=""; _tw_onone=""; _tw_mod=""; _tw_map=""; _tw_rt=""
+  while IFS= read -r _tw_e; do
+    _tw_h="${_tw_e#*=}"
+    case "$_tw_e" in lib/?*=*) _tw_ok=1 ;; *) _tw_ok="" ;; esac
+    case "$_tw_h" in *[!0-9a-f]*) _tw_ok="" ;; esac
+    [ "${#_tw_h}" -eq 64 ] || _tw_ok=""
+    [ -n "$_tw_ok" ] || { echo "toolchain_digest: '$_tw_e' is not a lib/<path>=<sha256> entry" >&2; return 1; }
+    case "${_tw_e%%=*}" in
+      lib/swift/macosx/libswiftCore.dylib) _tw_core=1 ;;
+      lib/swift/macosx/libswiftSwiftOnoneSupport.dylib) _tw_onone=1 ;;
+      lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_mod=1 ;;
+      lib/swift/shims/module.modulemap) _tw_map=1 ;;
+      lib/clang/*/lib/darwin/libclang_rt.osx.a) _tw_rt=1 ;;
     esac
-  done
-  [ "$1" = "$2" ] || { echo "toolchain_digests_agree: they differ:
-  $1
-  $2" >&2; return 1; }
+  done <<EOF
+$(printf '%s\n' "$1" | tr ' ' '\n')
+EOF
+  _tw_miss=""
+  [ -n "$_tw_core" ] || _tw_miss="$_tw_miss lib/swift/macosx/libswiftCore.dylib"
+  [ -n "$_tw_onone" ] || _tw_miss="$_tw_miss lib/swift/macosx/libswiftSwiftOnoneSupport.dylib"
+  [ -n "$_tw_mod" ] || _tw_miss="$_tw_miss lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule"
+  [ -n "$_tw_map" ] || _tw_miss="$_tw_miss lib/swift/shims/module.modulemap"
+  [ -n "$_tw_rt" ] || _tw_miss="$_tw_miss lib/clang/<v>/lib/darwin/libclang_rt.osx.a"
+  [ -z "$_tw_miss" ] || { echo "toolchain_digest: the line has no entry for:$_tw_miss" >&2; return 1; }
+}
+
+# toolchain_digests_agree <digest> <digest> -- 0 when two toolchain_digest lines are the same whole line;
+# otherwise 1, saying why, and listing the entries that differ (`<` only in the first, `>` only in the
+# second). An empty or partial line never agrees, not even with itself.
+toolchain_digests_agree() {
+  toolchain_digest_whole "$1" || { echo "toolchain_digests_agree: the first line is not a whole toolchain_digest line" >&2; return 1; }
+  toolchain_digest_whole "$2" || { echo "toolchain_digests_agree: the second line is not a whole toolchain_digest line" >&2; return 1; }
+  [ "$1" != "$2" ] || return 0
+  echo "toolchain_digests_agree: they differ:" >&2
+  awk -v a="$1" -v b="$2" 'BEGIN {
+    n = split(a, x, " "); for (i = 1; i <= n; i++) inA[x[i]] = 1
+    m = split(b, y, " "); for (i = 1; i <= m; i++) inB[y[i]] = 1
+    for (i = 1; i <= n; i++) if (!(x[i] in inB)) print "  < " x[i]
+    for (i = 1; i <= m; i++) if (!(y[i] in inA)) print "  > " y[i]
+  }' >&2
+  return 1
 }
