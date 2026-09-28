@@ -1,8 +1,8 @@
 # swift
 
 **Swift for OS X 10.9 "Mavericks"** (Intel x86_64), built from source. Every release ships the
-**Swift runtime** and a **Swift toolchain that runs on 10.9**; one for modern Macs that targets 10.9
-comes next, from the same release.
+**Swift runtime**, a **Swift toolchain that runs on 10.9**, and a **cross toolchain that runs on an
+Apple-silicon Mac** and builds the same programs for 10.9.
 
 Modern Swift (6.x) assumes an Objective-C runtime and Swift ABI machinery that first shipped in
 macOS 10.14.4. This repo builds `libswiftCore` from unmodified
@@ -20,13 +20,15 @@ and `if #available`. Enough for **command-line / computational Swift**.
 
 ## Scope / bounds — read before using
 
-- **Intel x86_64, OS X 10.9 only.**
+- **Programs for Intel x86_64, OS X 10.9 only.** The cross toolchain runs on an Apple-silicon Mac;
+  what it builds runs on 10.9.
 - **Core runtime only.** Ships `libswiftCore` (+ `libswiftSwiftOnoneSupport` for `-Onone`). The
   Foundation / AppKit *overlays* — needed for most apps, and for GUI — are later roadmap increments.
 - **Framework ceiling untouched.** Swift running does not bring back APIs absent from 10.9 (modern
   WKWebView, CryptoKit, Network.framework, …). Those are separate work.
-- **Compile on the 10.9 Mac** with the toolchain package (below), or on a modern Mac with the swift.org
-  toolchain (Install). Neither has macros, Swift Concurrency or the Darwin/ObjectiveC overlays yet.
+- **Compile on the 10.9 Mac** with the toolchain package, or on an Apple-silicon Mac with the cross
+  toolchain package (both below); on an Intel Mac with a modern macOS, with the swift.org toolchain
+  (Install). None has macros, Swift Concurrency or the Darwin/ObjectiveC overlays yet.
 - Running on an OS with no security updates is your own risk.
 
 ## Install
@@ -38,9 +40,9 @@ Installs the runtime into `/usr/local/mavergreen/swift-runtime/lib/swift/` and i
 `/usr/local/mavergreen/swift-runtime/share/doc/`. A program finds the runtime through an rpath
 naming that directory.
 
-**Building a program for 10.9 on a modern Mac.** Use the swift.org toolchain of the Swift release
-this runtime is built from, with the SDK `xcrun` finds. (On an Apple-silicon Mac, the `swiftc` in
-Command Line Tools 27 cannot link this target: its `libswiftCompatibility*.a` are arm64-only.)
+**Building a program for 10.9 on an Intel Mac with a modern macOS.** (On an Apple-silicon Mac, use the
+cross toolchain package, below.) Use the swift.org toolchain of the Swift release this runtime is
+built from, with the SDK `xcrun` finds.
 `swiftc` adds an rpath of `/usr/lib/swift`; replace it with the runtime's:
 ```sh
 <swift.org toolchain>/usr/bin/swiftc -sdk "$(xcrun --show-sdk-path)" \
@@ -73,6 +75,33 @@ swiftc hello.swift -o hello && ./hello
 use; `$SDKROOT` overrides it), its own linker and the runtime's rpath. Your arguments come after
 those, so yours win. Programs it builds need only the runtime package. Not yet: macros, Swift
 Concurrency, the Darwin and ObjectiveC overlays (`import Darwin` works, through the SDK's C module).
+
+## The cross toolchain: `swiftc` on an Apple-silicon Mac
+
+```sh
+sudo installer -pkg swift-toolchain-cross-<version>.pkg -target /
+```
+Installs the same compiler, standard library, `ld64.lld` and `clang`, built to run on an Apple-silicon
+Mac with macOS 11 or later, into `/usr/local/mavergreen/swift-toolchain-cross/`. New Terminal windows
+find `swiftc-cross` on their `PATH`, and `swiftc` as well (see below). It builds for OS X 10.9 by
+default, with the 10.9 toolchain's defaults, so the same source compiled by either is the same
+program, byte for byte:
+```sh
+swiftc hello.swift -o hello    # an x86_64 program for OS X 10.9
+```
+Copy `hello` to a 10.9 Mac with the runtime package from the same release, and run it there; it does
+not run on the Mac that built it. The first compile fetches the 10.9 SDK into
+`~/Library/Caches/mavericks-sdk`. Its `clang` builds for 10.9 too, with no flags; to link, name the SDK
+and the toolchain's linker:
+```sh
+SDK="$(sh /usr/local/mavergreen/swift-toolchain-cross/libexec/mavergreen-swift/fetch_sdk.sh)"
+/usr/local/mavergreen/swift-toolchain-cross/bin/clang -isysroot "$SDK" -fuse-ld=lld hello.c -o hello
+```
+The two toolchain packages share the name `swiftc`: the one installed first owns it. The 10.9
+toolchain's compiler does not run on a modern macOS, so if that package was installed on this Mac
+first, `swiftc-cross` still works, and `mavergreen select swift swift-toolchain-cross` gives `swiftc`
+to the cross toolchain. An Intel Mac with a modern macOS has neither yet: the cross package is for
+Apple silicon, and the 10.9 one's compiler does not run there (use the swift.org route under Install).
 
 ## Developing on OS X 10.9
 
@@ -127,7 +156,12 @@ MacOSX11.3.sdk, with `patches/runtime/` applied, then its own self pre-flight), 
 for the toolchain, `./build-toolchain.sh` (LLVM, clang and
 lld for an x86_64/10.9 host with mavericks-clang-22's cross compiler, cmark, and `swift-frontend`, with
 `patches/llvm/` and `patches/compiler/`), `sh scripts/stage-toolchain.sh "$SWIFT_BUILD/payload/toolchain"`,
-`./package-toolchain.sh`. CI runs the compat guard (`scripts/guard.sh`) after each build.
+`./package-toolchain.sh`; and for the cross toolchain, `./build-toolchain.sh --host arm64` (the same
+LLVM, clang, lld and `swift-frontend` for an arm64 / macOS 11 host, with Apple's clang and the pinned
+MacOSX11.3.sdk, and nothing cross-compiled), `STAGE_HOST=arm64 sh scripts/stage-toolchain.sh
+"$SWIFT_BUILD/payload/toolchain-cross"`, `STAGE_HOST=arm64 ./package-toolchain.sh`. CI runs the compat
+guard (`scripts/guard.sh`) after each build, builds the two toolchains in parallel jobs, and refuses a
+release whose two toolchains' standard library or builtins archive differ by a byte.
 Every source, tool and compiler input is pinned in `pins.env`, and both SDKs in shipyard (see
 `INGREDIENTS.md`). CI does the same on a `macos-26` runner and attaches the `.pkg`s to a GitHub
 Release (see `.github/workflows/release.yml`). The same `build-llvm.sh` and `build.sh` also run on
