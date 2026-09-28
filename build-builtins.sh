@@ -4,7 +4,8 @@
 # 10.9 SDK), from the pinned llvm-project that build-llvm.sh checked out and patched. The runtime links
 # it (build.sh, through a -resource-dir, so the driver puts it last) for __isPlatformVersionAtLeast,
 # which `#available` calls; the toolchain pkg ships it where its clang looks (scripts/stage-toolchain.sh),
-# so C `@available` compiled by that clang links, and so build.sh on OS X 10.9 links the runtime with
+# so C `@available` compiled by that clang links (with -Wl,-U,__availability_version_check: see
+# tests/toolchain-smoke-test.sh), and so build.sh on OS X 10.9 links the runtime with
 # the same bytes CI did. Why each knob: docs/superpowers/spikes/2026-09-27-rt-builtins-FINDINGS.md.
 # Run after build-llvm.sh, on a modern Mac only. Output: $SWIFT_WORK/builtins-x86/lib/darwin/libclang_rt.osx.a.
 # Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, MAVERICKS_MODE.

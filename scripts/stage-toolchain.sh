@@ -49,7 +49,8 @@ cp "$STDLIB/macosx/layouts-x86_64.yaml" "$STDLIB/macosx/x86_64/libswiftCore.dyli
 cp -R "$STDLIB/shims" "$P/lib/swift/shims"
 # clang finds its resource headers at <bin>/../lib/clang/<v>; Swift at lib/swift/clang, as in swift.org toolchains.
 cp -R "$CLANG_INC" "$P/lib/clang/$CLANG_V/include"
-# ...and its builtins at <resource dir>/lib/darwin, where clang's driver looks (so C's @available links),
+# ...and its builtins at <resource dir>/lib/darwin, where clang's driver looks (so C's @available links,
+# given -Wl,-U,__availability_version_check: see tests/toolchain-smoke-test.sh),
 # and where swiftc's does, through lib/swift/clang, linking it into every program as swift.org's does.
 # build.sh on OS X 10.9 links the runtime with these same bytes.
 cp "$BUILTINS" "$P/lib/clang/$CLANG_V/lib/darwin/libclang_rt.osx.a"
