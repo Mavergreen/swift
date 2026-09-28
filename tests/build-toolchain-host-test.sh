@@ -60,7 +60,10 @@ printf '%s [%s]:\n' "$2" "${FAKE_ARCH:-x86_64}"
 case "$1" in
   -platform) printf '    -platform:\n        platform     minOS      sdk\n          macOS      %s\n' "${FAKE_PLATFORM:-10.9      10.9}" ;;
   -rpaths) printf '    -rpaths:\n        %s\n' "${FAKE_RPATH:-@loader_path/../lib/swift/macosx}" ;;
-  -dependents) printf '    -linked_dylibs:\n        attributes       load path\n                         %s\n' "${FAKE_CORE:-/usr/lib/swift/libswiftCore.dylib}" ;;
+  -dependents) printf '    -linked_dylibs:\n        attributes       load path\n'
+     printf '%s\n' "${FAKE_CORE:-/usr/lib/swift/libswiftCore.dylib}" | while IFS= read -r _dep; do
+       printf '                         %s\n' "$_dep"
+     done ;;
 esac
 F
 chmod +x "$T/bin/"* "$T/shipyard/"* "$R/fetch-clang22.sh" "$R/scripts/guard.sh"
@@ -105,6 +108,10 @@ has arm64 "  -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"
 has arm64 "  -DCMAKE_OSX_ARCHITECTURES=arm64"
 has arm64 "  -DLLVM_DEFAULT_TARGET_TRIPLE=x86_64-apple-macosx10.9"
 has arm64 "  -DLLVM_TARGETS_TO_BUILD=X86"
+has arm64 "  -DCMAKE_IGNORE_PREFIX_PATH=/opt/pkg;/opt/homebrew;/usr/local;/opt/local;/sw"
+has arm64 "  -DLLVM_TABLEGEN=<T>/w/llvm-build/bin/llvm-tblgen"
+has arm64 "  -DCLANG_TABLEGEN=<T>/w/llvm-build/bin/clang-tblgen"
+has arm64 "  -DLLVM_NATIVE_TOOL_DIR=<T>/w/llvm-build/bin"
 has arm64 "  -DSWIFT_COMPILER_SOURCES_SDK_FLAGS=-sdk;<T>/sdk/MacOSX11.3.sdk;-Xcc;-D_LIBCPP_DISABLE_AVAILABILITY;-Xfrontend;-strict-implicit-module-context"
 has arm64 "  <T>/w/llvm-arm64"
 has arm64 "  <T>/w/cmark-arm64"
@@ -120,12 +127,15 @@ grep -qx 'OK: swift-frontend, lld and clang for arm64 / macOS 11.0, targeting x8
   || fail "arm64 did not finish OK: $(cat "$T/arm64.out")"
 
 echo "-- arm64's check refuses a frontend on the package's own stdlib, or one the audit fails"
-# platform: macOS's /bin/sh (bash 3.2) leaks a VAR=val prefix on a shell-FUNCTION call past that call
-#           (unlike a real POSIX shell, or bash 4+); a subshell confines each override to its own case.
+# platform: POSIX leaves unspecified whether a VAR=val prefix on a function call outlives the call,
+#           and macOS's /bin/sh (bash 3.2) keeps it; a subshell confines each override to its own case.
 if (FAKE_RPATH=@loader_path/../lib/swift/macosx run rp --host arm64); then fail "passed a frontend with rpath @loader_path/../lib/swift/macosx"; fi
 grep -q "^FAIL: swift-frontend's rpaths are \[@loader_path/../lib/swift/macosx\]" "$T/rp.out" || fail "rpath: $(cat "$T/rp.out")"
 if (FAKE_CORE=@rpath/libswiftCore.dylib run core --host arm64); then fail "passed a frontend loading @rpath/libswiftCore.dylib"; fi
 grep -q "^FAIL: swift-frontend does not load the OS's /usr/lib/swift/libswiftCore.dylib" "$T/core.out" || fail "core: $(cat "$T/core.out")"
+if (FAKE_CORE='/usr/lib/swift/libswiftCore.dylib
+@rpath/libswift_Concurrency.dylib' run rpathlib --host arm64); then fail "passed a frontend also loading @rpath/libswift_Concurrency.dylib"; fi
+grep -q "^FAIL: swift-frontend loads a Swift library through @rpath" "$T/rpathlib.out" || fail "rpathlib: $(cat "$T/rpathlib.out")"
 if (FAKE_AUDIT_RC=1 run audit --host arm64); then fail "passed a frontend the import audit failed"; fi
 has audit "python3 <T>/repo/scripts/audit-imports.py <T>/w/swift-arm64/bin/swift-frontend <T>/sdk/MacOSX11.3.sdk"
 if grep -q '^OK:' "$T/audit.out"; then fail "printed OK after the import audit failed: $(cat "$T/audit.out")"; fi
