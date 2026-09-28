@@ -20,8 +20,9 @@ WHAT IS AND ISN'T REDISTRIBUTED HERE
     the macOS SDK are used only as *build inputs* on the builder's machine;
     none of their bytes are included in this artifact.
 
-Local modifications (full diffs in ./patches/runtime) — all confined to making Swift's
-runtime work on 10.9's objc4-532, all gated to the 10.9/10.10 code path:
+Local modifications (full diffs in ./patches/runtime) — 0001-0007 all confined to making
+Swift's runtime work on 10.9's objc4-532, all gated to the 10.9/10.10 code path; 0008
+keeps a runtime built on OS X 10.9 identical to the one CI builds:
   0001  unsized operator delete — emit operator delete(void*) instead of the
         C++14 sized operator delete(void*, size_t), absent from 10.9's libc++.
   0002  os_system_version 10.9 fallback — guard the macOS-10.10 symbol
@@ -38,6 +39,10 @@ runtime work on 10.9's objc4-532, all gated to the 10.9/10.10 code path:
   0007  is-swift mask legacy bit — tag and check the legacy is-swift bit
         (value 1) on sub-10.14.4 targets, matching what the compiler emits
         for them; the root cause 0005 works around.
+  0008  drop @DebugDescription — never compile ObjectIdentifier's LLDB type
+        summary, whose macro needs swift-syntax, which the 10.9-hosted toolchain
+        lacks; and keep a String fast path that the same missing macro support
+        would compile out. Lost: LLDB's ObjectIdentifier summary.
 
 Build configuration (threading package = pthreads, deployment target = 10.9,
 availability flag) is recorded in MANIFEST and build.sh.

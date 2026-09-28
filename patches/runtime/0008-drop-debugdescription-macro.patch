@@ -1,0 +1,33 @@
+diff --git stdlib/public/core/CMakeLists.txt stdlib/public/core/CMakeLists.txt
+index dd4faf6..8babdbe 100644
+--- stdlib/public/core/CMakeLists.txt
++++ stdlib/public/core/CMakeLists.txt
+@@ -316,7 +316,11 @@ if(SWIFT_STDLIB_ENABLE_VECTOR_TYPES)
+ endif()
+ 
+ # Freestanding and Linux/Android builds both have failures to resolve.
+-if(NOT BOOTSTRAPPING_MODE STREQUAL "OFF" AND NOT SWIFT_FREESTANDING_FLAVOR AND NOT SWIFT_HOST_VARIANT_SDK STREQUAL "ANDROID")
++# Mavericks: never built. Its @DebugDescription is the one external macro the stdlib expands. The
++# toolchain that builds the runtime on OS X 10.9 has no swift-syntax, so hasFeature(Macros) is false
++# there and the file compiles to nothing; CI's compiler expands it into __TEXT,__lldbsummaries.
++# Dropping it in both modes keeps the two libswiftCores equal. Lost: LLDB's ObjectIdentifier summary.
++if(FALSE AND NOT BOOTSTRAPPING_MODE STREQUAL "OFF" AND NOT SWIFT_FREESTANDING_FLAVOR AND NOT SWIFT_HOST_VARIANT_SDK STREQUAL "ANDROID")
+   list(APPEND SWIFTLIB_SOURCES ObjectIdentifier+DebugDescription.swift)
+ endif()
+ 
+diff --git stdlib/public/core/StringBridge.swift stdlib/public/core/StringBridge.swift
+index b68a962..768bf61 100644
+--- stdlib/public/core/StringBridge.swift
++++ stdlib/public/core/StringBridge.swift
+@@ -787,7 +787,10 @@ extension StringProtocol {
+ 
+   public // SPI(Foundation)
+   func _toUTF16Indices(_ range: Range<Int>) -> Range<Index> {
+-#if hasFeature(Macros)
++    // Mavericks: unconditional. `hasFeature(Macros)` tests how the COMPILER was built (no
++    // swift-syntax => false), so this fast path silently vanished from a runtime built by the
++    // OS X 10.9 toolchain; both modes must compile the same code.
++#if true // was: hasFeature(Macros)
+     if Self.self == String.self {
+       let s = unsafe unsafeBitCast(self, to: String.self)
+       return s.utf16._indexRange(for: range, from: s.startIndex)

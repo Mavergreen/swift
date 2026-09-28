@@ -34,7 +34,7 @@ git -C swift config core.precomposeunicode false
 git -C swift reset -q --hard "$SWIFT_SHA"
 git -C swift clean -q -fdx
 
-echo "==> 3. runtime patches (six; patches/runtime, applied in order)"
+echo "==> 3. runtime patches (seven; patches/runtime, applied in order)"
 #  0001 unsized operator delete  — 10.9's libc++ lacks __ZdlPvm (sized delete).
 #       Safe: IRGen (the only consumer needing sized dealloc) isn't built here.
 #  0002 os-version 10.9 fallback — guards os_system_version_get_current_version
@@ -60,10 +60,17 @@ echo "==> 3. runtime patches (six; patches/runtime, applied in order)"
 #       isTypeMetadata()==false -> mangled reflection names, and is the root of
 #       0005's superIsTypeMetadata==0. Confirmed safe on real 10.9.5 (pure-objc
 #       classes leave data low bits free). This is the ROOT fix 0005 symptom-patched.
+#  0008 drop @DebugDescription — equivalence, not 10.9: the toolchain that builds the runtime on
+#       10.9 has no swift-syntax, so hasFeature(Macros) is false there, which compiles
+#       ObjectIdentifier+DebugDescription.swift to nothing (CI's compiler expands its macro into
+#       __TEXT,__lldbsummaries) and drops a String fast path in StringBridge.swift. 0008 drops
+#       the file and keeps the fast path in both modes, so both build the same Swift code. Lost:
+#       LLDB's ObjectIdentifier summary. Undone when the toolchain gains macros (milestone L).
 # Patches are --no-prefix format; apply with -p0.
 PATCHES_DIR="$HERE/patches/runtime"
 for p in "$PATCHES_DIR"/0001-*.patch "$PATCHES_DIR"/0002-*.patch "$PATCHES_DIR"/0003-*.patch \
-         "$PATCHES_DIR"/0004-*.patch "$PATCHES_DIR"/0005-*.patch "$PATCHES_DIR"/0007-*.patch; do
+         "$PATCHES_DIR"/0004-*.patch "$PATCHES_DIR"/0005-*.patch "$PATCHES_DIR"/0007-*.patch \
+         "$PATCHES_DIR"/0008-*.patch; do
   git -C swift apply -p0 --check "$p" && git -C swift apply -p0 "$p" || { echo "patch failed: $p"; exit 1; }
 done
 grep -q 'fno-sized-deallocation' swift/CMakeLists.txt || { echo "patch 0001 not applied"; exit 1; }
@@ -72,6 +79,7 @@ grep -q 'mav_minimalRealize' swift/stdlib/public/runtime/SwiftObject.mm || { ech
 grep -q 'mav_roFromClassData' swift/stdlib/public/runtime/Metadata.cpp || { echo "patch 0004 (getROData) not applied"; exit 1; }
 grep -q 'class_getInstanceSize((Class)const_cast' swift/stdlib/public/runtime/Metadata.cpp || { echo "patch 0005 (objc-super size) not applied"; exit 1; }
 grep -q 'ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101404' swift/include/swift/Runtime/Config.h || { echo "patch 0007 (is-swift mask) not applied"; exit 1; }
+grep -q 'was: hasFeature(Macros)' swift/stdlib/public/core/StringBridge.swift || { echo "patch 0008 (DebugDescription) not applied"; exit 1; }
 # de-instrumented: no debug logging must ship
 ! grep -rq 'getenv("MAV_' swift/stdlib/public/runtime/ || { echo "MAV debug logging leaked into patches"; exit 1; }
 
