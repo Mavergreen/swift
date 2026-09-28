@@ -104,12 +104,13 @@ SWIFTC=/usr/local/mavergreen/bin/swiftc SWIFT_RUNTIME_PREFIX="$S/payload/runtime
 From nothing to a gated runtime takes about 35 minutes on a 6-core Mac Pro: `build-llvm.sh` is the
 long one-time step, now also building lld; each later runtime build is about 5 minutes. The first runs
 also fetch the two SDKs and clone llvm-project and swift. `build.sh` resets its swift checkout to the
-pin and applies `patches/runtime/` every run, so a change to the runtime is a patch there. After one,
-rerun `./build.sh` and the last three commands. A reused build root keeps CMake's cached probe results
-across a rebuild. `build.sh` starts `$MAVERICKS_BUILD_ROOT/swift/work/stdlib-build` afresh by itself
-when the host compiler, its clang or the builtins archive changed (a toolchain update, say); after
-changing any other compiler or linker setting, remove that directory first, so `build.sh` reconfigures
-from scratch. The
+pin and applies `patches/runtime/` every run, so a change to the runtime is a patch there. A new patch
+also needs its number in `build.sh`'s `RUNTIME_PATCHES` and a marker grep after the list (`build.sh`
+refuses a patch file the list lacks). After one, rerun `./build.sh` and the last three commands. A
+reused build root keeps CMake's cached probe results across a rebuild. `build.sh` starts
+`$MAVERICKS_BUILD_ROOT/swift/work/stdlib-build` afresh by itself when the host compiler, its clang or
+the builtins archive changed (a toolchain update, say); after changing any other compiler or linker
+setting, remove that directory first, so `build.sh` reconfigures from scratch. The
 self-test binaries load the runtime just built, not the installed one (`DYLD_PRINT_LIBRARIES=1` shows
 it). `--gate` runs each 500 times, then 10 more under Guard Malloc.
 

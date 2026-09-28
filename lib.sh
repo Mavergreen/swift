@@ -200,6 +200,22 @@ reuse_build_dir() {
   rm -rf "$1"
 }
 
+# runtime_patches_unlisted <dir> <number>... -- prints each <dir>/*.patch whose number (the name up to its
+# first -) is none of <number>..., and fails when there is one, or when <dir> holds no patch. build.sh
+# applies an explicit list (a number can be retired: 0006 was), so a patch added without its entry would
+# be skipped in silence, by a local build and by CI's alike.
+runtime_patches_unlisted() {
+  _rp_dir="$1"; shift
+  _rp_n=0; _rp_bad=0
+  for _rp_p in "$_rp_dir"/*.patch; do
+    [ -f "$_rp_p" ] || continue
+    _rp_n=$((_rp_n + 1)); _rp_num="${_rp_p##*/}"; _rp_num="${_rp_num%%-*}"
+    case " $* " in *" $_rp_num "*) ;; *) printf '%s\n' "$_rp_p"; _rp_bad=1 ;; esac
+  done
+  [ "$_rp_n" -gt 0 ] || { echo "runtime_patches_unlisted: no patches in $_rp_dir" >&2; return 1; }
+  [ "$_rp_bad" -eq 0 ]
+}
+
 # macho_minos <macho> -- the minimum macOS <macho> records. dyld_info when $DYLDINFO names it; else
 # otool's LC_VERSION_MIN_MACOSX or LC_BUILD_VERSION (OS X 10.9 has no dyld_info). Prints nothing when
 # the file records neither.
