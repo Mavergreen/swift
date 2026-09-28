@@ -8,7 +8,9 @@
 #          The cross toolchain's swift-frontend links the swift.org toolchain's libswiftCore (built for
 #          macOS 13) ahead of the SDK's, so its link proves nothing about macOS 11; this audit against
 #          the pinned MacOSX11.3.sdk is the check. A weak import may be absent (the compiler guards it).
-#          A Swift library the SDK has no .tbd for fails, unless every import from it is weak.
+#          A Swift library the SDK has no .tbd for fails, unless every import from it is weak. Reading
+#          zero hard imports from libswiftCore also fails: a misread binary (a dyld_info format change,
+#          say) must not pass as if it were a clean one.
 import re
 import subprocess
 import sys
@@ -99,6 +101,9 @@ def main():
                 weak.append(f"{m.group(1)} ({m.group(3)})")
             else:
                 hard.setdefault(m.group(3), []).append(m.group(1))
+    if not hard.get("libswiftCore"):
+        print("libswiftCore: 0 imports read -- nothing audited (a misread binary is not a clean one)")
+        return 1
     bad = 0
     for lib in sorted(audited):
         imps = hard.get(lib, [])

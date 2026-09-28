@@ -4,7 +4,9 @@
 #   scripts/audit-imports.py, build-toolchain.sh --host arm64's macOS 11 check, must pass a binary whose
 #   every hard Swift import a fixture SDK's .tbd exports for the binary's own arch, allow a weak import
 #   the .tbd lacks, and fail -- naming the symbol -- on a hard import the .tbd exports only for another
-#   arch, on one it does not list at all, and on one from a Swift library the SDK has no .tbd for.
+#   arch, on one it does not list at all, and on one from a Swift library the SDK has no .tbd for. It
+#   must also fail a binary that links libswiftCore but reads zero hard imports from it (a misread, not
+#   a clean binary).
 #   SKIPs (77) without python3, dyld_info or an arm64-capable cc.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -64,4 +66,9 @@ echo "-- fails: a hard import from a Swift library the SDK has no .tbd for"
 prog foo mav_both mav_foo
 if python3 "$A" "$T/foo" "$T/sdk" > "$T/out"; then fail "passed an import from libswiftFoo: $(cat "$T/out")"; fi
 grep -q '^libswiftFoo: 1 imports, and .* has no .*/usr/lib/swift/libswiftFoo.tbd$' "$T/out" || fail "did not name libswiftFoo's missing .tbd: $(cat "$T/out")"
+
+echo "-- fails: a binary that links libswiftCore but reads zero hard imports from it"
+prog zero
+if python3 "$A" "$T/zero" "$T/sdk" > "$T/out"; then fail "passed a binary with no hard libswiftCore imports: $(cat "$T/out")"; fi
+grep -qx 'libswiftCore: 0 imports read -- nothing audited (a misread binary is not a clean one)' "$T/out" || fail "did not report the zero-imports misread: $(cat "$T/out")"
 echo "PASS"
