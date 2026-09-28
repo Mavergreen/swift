@@ -73,8 +73,13 @@ swiftc hello.swift -o hello && ./hello
 ```
 `swiftc` supplies the 10.9 target, the SDK (fetched into `~/Library/Caches/mavericks-sdk` on first
 use; `$SDKROOT` overrides it), its own linker and the runtime's rpath. Your arguments come after
-those, so yours win. Programs it builds need only the runtime package. Not yet: macros, Swift
-Concurrency, the Darwin and ObjectiveC overlays (`import Darwin` works, through the SDK's C module).
+those, so yours win, with one warning: the toolchain's `clang.cfg`, which `swiftc` reads too, sets
+`-mmacosx-version-min=10.9`, so `swiftc -target x86_64-apple-macosx10.12` builds for 10.12 but prints
+`warning: overriding '-mmacosx-version-min=10.9' option`, in both toolchains, as mavericks-clang-22's
+`clang` does. The toolchain's `clang` takes `-mmacosx-version-min=10.12` silently; a versioned `-target`
+warns there too, and fails under `-Werror` without `-Wno-overriding-option`. Programs it builds need
+only the runtime package. Not yet: macros, Swift Concurrency, the Darwin and ObjectiveC overlays
+(`import Darwin` works, through the SDK's C module).
 
 ## The cross toolchain: `swiftc` on an Apple-silicon Mac
 
