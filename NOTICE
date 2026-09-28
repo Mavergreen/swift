@@ -66,3 +66,10 @@ share/doc/LICENSE-LLVM.txt. Of those patches, 0004 changes only compiler-rt's
 build: it passes extra compiler flags to the Darwin builtins (whose build
 otherwise drops them), so that the archive, and the runtime that links part of
 it, carry no path from the machine that built them.
+
+The cross toolchain package (swift-toolchain-cross-*.pkg) contains the same
+components under the same licenses, built from the same sources and patches
+(compiler patch 0002 aside) to run on an Apple-silicon Mac; its standard
+library and compiler-rt builtins are the same bytes as the toolchain
+package's. Both toolchain packages also carry bin/clang.cfg and
+bin/clang++.cfg, this repo's defaults for their clang.

@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head><body style="font-family:-apple-system,Helvetica,sans-serif;font-size:12px">
+<p>This installs a <b>Swift toolchain for Apple-silicon Macs that builds programs for OS X 10.9</b> —
+<code>swiftc</code>, the Swift standard library for 10.9, the <code>ld64.lld</code> linker and a matching
+<code>clang</code>, built from <a href="https://github.com/swiftlang/swift">swiftlang/swift</a> source — into
+<code>/usr/local/mavergreen/swift-toolchain-cross/</code>. New Terminal windows find <code>swiftc-cross</code>
+on their <code>PATH</code>, and <code>swiftc</code> as well unless the 10.9 toolchain package is installed
+here too and was installed first.</p>
+<p>What it builds runs on a 10.9 Mac with the <b>Mavericks Swift Runtime</b> package from the same release.
+The first compile fetches the Mac OS X 10.9 SDK into <code>~/Library/Caches/mavericks-sdk</code>.</p>
+<p>Licensed Apache&nbsp;2.0 (Swift, with the Runtime Library Exception; LLVM, with the LLVM exception).</p>
+</body></html>

@@ -7,6 +7,10 @@
 #   updater and LaunchAgent shipyard's registry derives for swift-toolchain; dev.mavergreen.base installs
 #   first; linking exports swiftc alone, beside an installed clang22, whose group owns clang, clang++ and
 #   ld64.lld; REQUIRE_UPDATER=1 refuses without the updater; and the pkg passes artifact conformance.
+#   Then the same for STAGE_HOST=arm64's swift-toolchain-cross: an arm64 macOS 11.0 floor; the manifest's
+#   group swift and line cross; beside clang22-cross and a native toolchain linked first, it exports
+#   swiftc-cross alone until `mavergreen select swift swift-toolchain-cross` gives it swiftc too; and
+#   conformance passes by its declared floor and sdk-pin deviations.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
@@ -26,10 +30,13 @@ W="$T/work"
 fake_toolchain_build "$W"
 # Real Mach-O stdlib dylibs, so conformance measures them under the scoped sdk-pin deviation.
 printf 'int f(void){return 0;}\n' > "$T/f.c"
-for n in Core SwiftOnoneSupport; do
-  cc -dynamiclib -arch x86_64 -mmacosx-version-min=10.9 -install_name "@rpath/libswift$n.dylib" \
-    -o "$W/stdlib-build/lib/swift/macosx/x86_64/libswift$n.dylib" "$T/f.c"
-done
+real_dylibs() {
+  for n in Core SwiftOnoneSupport; do
+    cc -dynamiclib -arch x86_64 -mmacosx-version-min=10.9 -install_name "@rpath/libswift$n.dylib" \
+      -o "$W/stdlib-build/lib/swift/macosx/x86_64/libswift$n.dylib" "$T/f.c"
+  done
+}
+real_dylibs
 O="$T/out"
 SWIFT_WORK="$W" sh scripts/stage-toolchain.sh "$O" > "$T/stage.log" 2>&1 \
   || { cat "$T/stage.log" >&2; fail "stage-toolchain.sh failed over the fake build"; }
@@ -107,4 +114,87 @@ sh "$SHIPYARD/stand-in-feeds.sh" "$T/dist" "$version" || fail "stand-in-feeds.sh
 facts="$(sh "$SHIPYARD/artifact-facts.sh" "$T/dist" "$version")" || fail "artifact-facts.sh failed"
 printf '%s\n' "$facts" | grep -qx end-of-facts || fail "artifact-facts.sh stopped early"
 printf '%s\n' "$facts" | sh "$SHIPYARD/check-artifact-conformance.sh" || fail "artifact conformance failed"
+
+echo "-- STAGE_HOST=arm64 packages swift-toolchain-cross: an arm64 macOS 11.0 floor, group swift, line cross"
+XFEED="$(sh "$SHIPYARD/product-name.sh" feed swift-toolchain-cross)" \
+  || fail "shipyard's registry does not know swift-toolchain-cross (set MAVERGREEN_PRODUCT_NAMES until @v1 carries its row)"
+XP=usr/local/mavergreen/swift-toolchain-cross
+fake_toolchain_build "$W" arm64
+real_dylibs
+XO="$T/xout"
+STAGE_HOST=arm64 SWIFT_WORK="$W" sh scripts/stage-toolchain.sh "$XO" > "$T/xstage.log" 2>&1 \
+  || { cat "$T/xstage.log" >&2; fail "STAGE_HOST=arm64 stage-toolchain.sh failed over the fake build"; }
+xstaged="$(cd "$XO" && find . | sort)"
+XA="$T/xupd/swift-toolchain-cross-updater.app"
+mkdir -p "$XA/Contents/MacOS"
+printf '#!/bin/sh\n' > "$XA/Contents/MacOS/swift-toolchain-cross-updater"; chmod +x "$XA/Contents/MacOS/swift-toolchain-cross-updater"
+/usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string dev.mavergreen.swift-toolchain-cross.updater" \
+  -c "Add :SUFeedURL string $XFEED" "$XA/Contents/Info.plist" >/dev/null
+( cd / && STAGE_HOST=arm64 OUT="$XO" DIST="$T/xdist" UPD_APP="$XA" sh "$REPO/package-toolchain.sh" ) > "$T/xpkg.log" 2>&1 \
+  || { cat "$T/xpkg.log" >&2; fail "STAGE_HOST=arm64 package-toolchain.sh failed"; }
+xpkg="$(ls "$T/xdist"/swift-toolchain-cross-*.pkg)"
+XX="$T/xx"; pkgutil --expand "$xpkg" "$XX" || fail "pkgutil --expand failed on the cross pkg"
+grep -q '<os-version min="11.0"/>' "$XX/Distribution" || fail "the cross pkg's floor is not macOS 11.0: $(grep os-version "$XX/Distribution")"
+grep -q 'hostArchitectures="arm64"' "$XX/Distribution" || fail "the cross pkg does not declare an arm64 host: $(grep options "$XX/Distribution")"
+xcomp=""
+for c in "$XX"/*.pkg; do
+  if grep -q 'identifier="dev.mavergreen.swift-toolchain-cross"' "$c/PackageInfo"; then xcomp="$c"; fi
+done
+[ -n "$xcomp" ] || fail "no dev.mavergreen.swift-toolchain-cross component"
+XU="Library/Application Support/Mavergreen/swift-toolchain-cross-updater.app"
+XLA=Library/LaunchAgents/dev.mavergreen.swift-toolchain-cross-updatecheck.plist
+got="$(lsbom -s "$xcomp/Bom" | grep -v '/\._' | sort)"
+want="$(printf '%s\n' "$xstaged" "./$XP/mavergreen.plist" ./Library "./Library/Application Support" \
+  "./Library/Application Support/Mavergreen" "./$XU" "./$XU/Contents" "./$XU/Contents/Info.plist" \
+  "./$XU/Contents/MacOS" "./$XU/Contents/MacOS/swift-toolchain-cross-updater" ./Library/LaunchAgents "./$XLA" | sort)"
+[ "$got" = "$want" ] || fail "cross payload is
+$got
+wanted
+$want"
+XV="$T/xvol"; mkdir -p "$XV"; tar -xf "$xcomp/Payload" -C "$XV" || fail "cannot extract the cross payload"
+M="$XV/$XP/mavergreen.plist"
+[ "$(pb product)" = swift-toolchain-cross ] || fail "the cross manifest's product is '$(pb product)'"
+[ "$(pb group)" = swift ] || fail "the cross manifest's group is '$(pb group)', not swift"
+[ "$(pb line)" = cross ] || fail "the cross manifest's line is '$(pb line)', not cross"
+[ "$(pb appcast)" = "$XFEED" ] || fail "the cross manifest's appcast is '$(pb appcast)'"
+ex=""; i=0; while e="$(pb "exports-exclude:$i")"; do ex="$ex$e "; i=$((i + 1)); done
+[ "$ex" = "bin/swift-frontend bin/ld64.lld bin/clang bin/clang++ bin/clang.cfg bin/clang++.cfg " ] \
+  || fail "the cross manifest excludes [$ex]"
+
+echo "-- beside clang22-cross and a native toolchain linked first: swiftc-cross alone, then swiftc once selected"
+C="$T/c22x"; mkdir -p "$C/usr/local/mavergreen/clang22-cross/bin"
+for f in clang clang++ ld64.lld; do : > "$C/usr/local/mavergreen/clang22-cross/bin/$f"; done
+sh "$SHIPYARD/render-manifest.sh" --stage "$C" --product clang22-cross --name "Clang 22 (cross)" \
+  --version 22.1.1-mavericks.6 --group clang --line 22-cross >/dev/null || fail "render-manifest.sh failed for the fake clang22-cross"
+cp -R "$C/usr/local/mavergreen/clang22-cross" "$XV/usr/local/mavergreen/"
+cp -R "$V/usr/local/mavergreen/swift-toolchain" "$XV/usr/local/mavergreen/"
+sh "$MG" --root "$XV" link clang22-cross || fail "could not link the fake clang22-cross"
+sh "$MG" --root "$XV" link swift-toolchain || fail "could not link the native toolchain"
+sh "$MG" --root "$XV" link swift-toolchain-cross 2> "$T/xlink.err" \
+  || fail "linking swift-toolchain-cross beside clang22-cross and swift-toolchain was refused: $(cat "$T/xlink.err")"
+F="$XV/usr/local/mavergreen/bin"
+[ "$(readlink "$F/swiftc")" = ../swift-toolchain/bin/swiftc ] || fail "bin/swiftc links to '$(readlink "$F/swiftc")', not the native toolchain's, which was linked first"
+[ "$(readlink "$F/swiftc-cross")" = ../swift-toolchain-cross/bin/swiftc ] || fail "bin/swiftc-cross links to '$(readlink "$F/swiftc-cross")'"
+for n in clang clang++ ld64.lld; do
+  [ "$(readlink "$F/$n")" = "../clang22-cross/bin/$n" ] || fail "bin/$n links to '$(readlink "$F/$n")', not clang22-cross's"
+done
+xexported() {
+  ( cd "$XV/usr/local/mavergreen" && find . -path ./swift-toolchain-cross -prune -o -type l -print | sort \
+    | while IFS= read -r l; do case "$(readlink "$l")" in (*swift-toolchain-cross/*) echo "$l" ;; esac; done ) | tr '\n' ' '
+}
+[ "$(xexported)" = "./bin/swiftc-cross " ] || fail "unselected, the cross toolchain exported [$(xexported)], not ./bin/swiftc-cross alone"
+sh "$MG" --root "$XV" select swift swift-toolchain-cross || fail "could not select swift-toolchain-cross"
+[ "$(readlink "$F/swiftc")" = ../swift-toolchain-cross/bin/swiftc ] || fail "selected, bin/swiftc links to '$(readlink "$F/swiftc")'"
+[ "$(xexported)" = "./bin/swiftc ./bin/swiftc-cross " ] || fail "selected, the cross toolchain exported [$(xexported)]"
+
+echo "-- the cross pkg passes artifact conformance (its floor and stdlib dylibs by their declared deviations)"
+for n in Core SwiftOnoneSupport; do
+  cmp -s "$W/stdlib-build/lib/swift/macosx/x86_64/libswift$n.dylib" "$XV/$XP/lib/swift/macosx/libswift$n.dylib" \
+    || fail "the cross pkg's libswift$n.dylib is not the stdlib build's"
+done
+xversion="$(basename "$xpkg" .pkg)"; xversion="${xversion#swift-toolchain-cross-}"
+sh "$SHIPYARD/stand-in-feeds.sh" "$T/xdist" "$xversion" || fail "stand-in-feeds.sh failed for the cross pkg"
+facts="$(sh "$SHIPYARD/artifact-facts.sh" "$T/xdist" "$xversion")" || fail "artifact-facts.sh failed for the cross pkg"
+printf '%s\n' "$facts" | grep -qx end-of-facts || fail "artifact-facts.sh stopped early on the cross pkg"
+printf '%s\n' "$facts" | sh "$SHIPYARD/check-artifact-conformance.sh" || fail "artifact conformance failed for the cross pkg"
 echo "PASS"
