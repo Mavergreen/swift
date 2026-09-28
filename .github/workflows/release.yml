@@ -6,7 +6,7 @@ name: release
 # own Sparkle updater, sign all three, and attach the .pkgs + signed appcasts to one GitHub Release. Tags
 # ARE the version -- no `v` prefix; see VERSION.
 #
-# Five jobs: `version` resolves the one version every job labels its pkgs with; `build` (the runtime and
+# Six jobs: `version` resolves the one version every job labels its pkgs with; `build` (the runtime and
 # the native toolchain) and `build-cross` (the cross toolchain) run side by side, each building the
 # runtime's stdlib and builtins itself; `collect` checks that both toolchains carry those same bytes,
 # signs, renders the feeds and runs conformance over all three pkgs; `scan` and `publish` follow it.
@@ -149,7 +149,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/Library/Caches/ccache
-          key: ccache-${{ runner.os }}-swift-${{ hashFiles('pins.env','patches/**','native-helpers/**','build-toolchain.sh') }}
+          key: ccache-${{ runner.os }}-swift-${{ hashFiles('pins.env','patches/**','native-helpers/**','build-toolchain.sh','lib.sh') }}
           restore-keys: ccache-${{ runner.os }}-swift-
 
       - name: Record the pre-build tree
@@ -222,7 +222,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ~/Library/Caches/ccache
-          key: ccache-${{ runner.os }}-swift-${{ hashFiles('pins.env','patches/**','native-helpers/**','build-toolchain.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ccache-${{ runner.os }}-swift-${{ hashFiles('pins.env','patches/**','native-helpers/**','build-toolchain.sh','lib.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Stage the toolchain payload
         run: |
@@ -341,8 +341,8 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/Library/Caches/ccache
-          key: ccache-${{ runner.os }}-swift-cross-${{ hashFiles('pins.env','patches/**','build-toolchain.sh','lib.sh') }}
-          restore-keys: ccache-${{ runner.os }}-swift-cross-
+          key: ccache-${{ runner.os }}-cross-swift-${{ hashFiles('pins.env','patches/**','build-toolchain.sh','lib.sh') }}
+          restore-keys: ccache-${{ runner.os }}-cross-swift-
 
       - name: Record the pre-build tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
@@ -387,7 +387,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ~/Library/Caches/ccache
-          key: ccache-${{ runner.os }}-swift-cross-${{ hashFiles('pins.env','patches/**','build-toolchain.sh','lib.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ccache-${{ runner.os }}-cross-swift-${{ hashFiles('pins.env','patches/**','build-toolchain.sh','lib.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Stage the cross toolchain payload
         run: |
@@ -495,12 +495,21 @@ jobs:
       # title, optional committed prose (release-notes/$VER.md, verbatim), What changed, Build
       # ingredients (only when a pin moved), and the footer. A gap it cannot fill honestly (no visible
       # tags, an unreadable ingredient pin) stops the run here rather than shipping a shorter body.
-      # --min-os 10.9.5 describes the runtime and native pkgs; the cross feed carries its own floor.
+      # --min-os 10.9.5 describes the runtime and native pkgs; the Release body keeps these notes too.
       - name: Generate release notes
         run: |
           VER="${{ needs.version.outputs.version }}"
           sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "$VER" --version "$VER" \
             --product Swift --min-os 10.9.5 --out dist/RELEASE_NOTES.md
+
+      # Same generator, same content, only the floor prose differs: the cross toolchain requires macOS
+      # 11.0 on arm64, not 10.9.5. Only its appcast reads this one; the native feeds and the Release body
+      # keep the 10.9.5 notes above.
+      - name: Generate release notes (cross floor)
+        run: |
+          VER="${{ needs.version.outputs.version }}"
+          sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "$VER" --version "$VER" \
+            --product Swift --min-os 11.0 --out dist/RELEASE_NOTES-cross.md
 
       - name: Sign the three .pkgs + generate their Sparkle appcasts
         if: needs.version.outputs.publish == 'true'
@@ -528,7 +537,7 @@ jobs:
           XPKG=$(ls dist/swift-toolchain-cross-*.pkg | head -1)
           sh "$SH/sign_and_appcast.sh" --product swift-toolchain-cross --feed-dir dist \
             --channel-title "Mavericks Swift Toolchain (cross)" --version "$VER" \
-            --pkg-url "$base/$(basename "$XPKG")" --notes-file dist/RELEASE_NOTES.md --pkg "$XPKG" --min-os 11.0
+            --pkg-url "$base/$(basename "$XPKG")" --notes-file dist/RELEASE_NOTES-cross.md --pkg "$XPKG" --min-os 11.0
           echo "=== swift-toolchain-cross.xml ==="; cat dist/swift-toolchain-cross.xml
 
       # Conformance: do the artifacts about to be published agree with each other and with the
@@ -557,6 +566,7 @@ jobs:
             dist/swift-toolchain.xml
             dist/swift-toolchain-cross.xml
             dist/RELEASE_NOTES.md
+            dist/RELEASE_NOTES-cross.md
 
   # Before anything is published: no log of this run, and no file about to be released, carries a
   # piece of the signing key. shipyard's publish-release.yml looks for this job's record on any signed
