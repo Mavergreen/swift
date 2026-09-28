@@ -136,6 +136,70 @@ native_host_shim() {
   printf '#!/bin/sh\nexec "%s/bin/ld64.lld" "$@"\n' "$1" > "$2/usr/bin/ld" && chmod 755 "$2/usr/bin/ld"
 }
 
+# host_toolchain_release <toolchain-prefix> -- prints `<release> (<where it was read>)` for the Swift
+# toolchain at <prefix>, and fails, saying why, unless <release> is one of SWIFT_VERSION's
+# (<SWIFT_VERSION>-mavericks.N). The stdlib is coupled to its compiler: this checkout's sources compiled
+# by another release's compiler fail far from the cause, or build a runtime CI never builds. The release
+# is the receipt of the pkg that installed <prefix>/bin/swift-frontend (pkgutil --file-info), whichever
+# pkg id that is, so the cross toolchain's is read as the native one's is. A copy that no pkg installed
+# has no receipt: SWIFT_HOST_TOOLCHAIN_VERSION then declares its release, held to the same rule, and
+# where there is a receipt it must agree with it.
+host_toolchain_release() {
+  _hr_info="$(pkgutil --file-info "$1/bin/swift-frontend")" || {
+    echo "FAIL: pkgutil could not look up the receipt of $1/bin/swift-frontend" >&2; return 1; }
+  _hr_v="$(printf '%s\n' "$_hr_info" | sed -n 's/^pkg-version: *//p' | sort -u)"
+  _hr_id="$(printf '%s\n' "$_hr_info" | sed -n 's/^pkgid: *//p' | sort -u | tr '\n' ' ')"
+  case "$_hr_v" in *'
+'*) echo "FAIL: $1/bin/swift-frontend belongs to more than one release: $(printf '%s' "$_hr_v" | tr '\n' ' ')(pkgs ${_hr_id% })" >&2
+    return 1 ;;
+  esac
+  _hr_how="pkg ${_hr_id% }"
+  if [ -n "${SWIFT_HOST_TOOLCHAIN_VERSION:-}" ]; then
+    if [ -z "$_hr_v" ]; then
+      _hr_v="$SWIFT_HOST_TOOLCHAIN_VERSION"; _hr_how="declared by SWIFT_HOST_TOOLCHAIN_VERSION"
+    elif [ "$_hr_v" != "$SWIFT_HOST_TOOLCHAIN_VERSION" ]; then
+      echo "FAIL: SWIFT_HOST_TOOLCHAIN_VERSION says $SWIFT_HOST_TOOLCHAIN_VERSION, but the receipt of $1 ($_hr_how) says $_hr_v" >&2
+      return 1
+    fi
+  fi
+  [ -n "$_hr_v" ] || {
+    echo "FAIL: no pkg installed $1/bin/swift-frontend, so its release is unknown -- install swift-toolchain's newest $SWIFT_VERSION release, or declare a copy's release with SWIFT_HOST_TOOLCHAIN_VERSION" >&2
+    return 1; }
+  case "$_hr_v" in
+    "$SWIFT_VERSION"-?*) ;;
+    *) echo "FAIL: the host toolchain at $1 is release $_hr_v ($_hr_how), but this checkout builds Swift $SWIFT_VERSION -- install swift-toolchain's newest $SWIFT_VERSION-mavericks.N release" >&2
+       return 1 ;;
+  esac
+  printf '%s (%s)\n' "$_hr_v" "$_hr_how"
+}
+
+# host_inputs_stamp <swift-frontend> <clang> <builtins-archive> -- three lines, `<role> <sha256>`, for the
+# host compiler, the host clang and the builtins archive a stdlib build is configured with. Their bytes
+# reach the runtime, yet the build cannot see them change: nothing in the stdlib's CMake depends on an
+# external SWIFT_NATIVE_SWIFT_TOOLS_PATH compiler, no C++ object on its compiler's bytes, and no link on
+# the archive -resource-dir names. Fails, naming it, when one cannot be hashed.
+host_inputs_stamp() {
+  for _hs_r in swift-frontend:"$1" clang:"$2" builtins:"$3"; do
+    _hs_f="${_hs_r#*:}"
+    [ -f "$_hs_f" ] || { echo "host_inputs_stamp: no $_hs_f" >&2; return 1; }
+    _hs_s="$(shasum -a 256 < "$_hs_f" | awk '{ print $1 }')"
+    [ "${#_hs_s}" -eq 64 ] || { echo "host_inputs_stamp: could not hash $_hs_f" >&2; return 1; }
+    printf '%s %s\n' "${_hs_r%%:*}" "$_hs_s"
+  done
+}
+
+# reuse_build_dir <dir> <stamp> -- keeps <dir> when its mavergreen-inputs.stamp holds exactly <stamp>;
+# otherwise removes it, saying so (a dir with no stamp was built from inputs nobody recorded). The caller
+# writes <stamp> there once it has configured <dir>. An empty <stamp> is refused: it would equal the
+# empty read of a missing stamp.
+reuse_build_dir() {
+  [ -n "$2" ] || { echo "reuse_build_dir: an empty stamp for $1" >&2; return 1; }
+  [ -d "$1" ] || return 0
+  if [ "$(cat "$1/mavergreen-inputs.stamp" 2>/dev/null)" = "$2" ]; then return 0; fi
+  echo "    removing $1: its host compiler, clang or builtins archive changed, or went unrecorded"
+  rm -rf "$1"
+}
+
 # macho_minos <macho> -- the minimum macOS <macho> records. dyld_info when $DYLDINFO names it; else
 # otool's LC_VERSION_MIN_MACOSX or LC_BUILD_VERSION (OS X 10.9 has no dyld_info). Prints nothing when
 # the file records neither.

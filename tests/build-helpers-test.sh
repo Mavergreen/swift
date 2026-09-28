@@ -64,4 +64,66 @@ if native_host_shim "$H" "$T/host" 2> "$T/err"; then fail "accepted a toolchain 
 grep -q 'bin/clang' "$T/err" || fail "did not name the missing clang: $(cat "$T/err")"
 [ -d "$T/host/stale" ] || fail "removed the dir before refusing"
 if native_host_shim toolchain "$T/host" 2>/dev/null; then fail "accepted a relative toolchain prefix"; fi
+echo "-- host_inputs_stamp: the three inputs' sha256s by role; one it cannot hash is refused"
+printf a > "$T/fe"; printf b > "$T/cl"; printf c > "$T/bi"
+s1="$(host_inputs_stamp "$T/fe" "$T/cl" "$T/bi")" || fail "host_inputs_stamp failed"
+[ "$(printf '%s\n' "$s1" | sed -n 1p)" = "swift-frontend ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb" ] || fail "stamp line 1: $s1"
+[ "$(printf '%s\n' "$s1" | awk '{ print $1 }' | tr '\n' ' ')" = "swift-frontend clang builtins " ] || fail "stamp roles: $s1"
+if host_inputs_stamp "$T/fe" "$T/absent" "$T/bi" > /dev/null 2> "$T/err"; then fail "stamped a missing clang"; fi
+grep -q "$T/absent" "$T/err" || fail "did not name the missing input: $(cat "$T/err")"
+printf B > "$T/cl"; s2="$(host_inputs_stamp "$T/fe" "$T/cl" "$T/bi")"
+[ "$s2" != "$s1" ] || fail "a changed clang left the stamp as it was"
+
+echo "-- reuse_build_dir: kept with the same stamp; removed with another, or none; an empty stamp refused"
+rc=0; reuse_build_dir "$T/sb" "$s1" > /dev/null || rc=$?; [ "$rc" -eq 0 ] || fail "failed on a dir that does not exist"
+mkdir -p "$T/sb"; : > "$T/sb/obj"
+reuse_build_dir "$T/sb" "$s1" > /dev/null || fail "reuse_build_dir failed"
+[ ! -d "$T/sb" ] || fail "kept a dir that records no stamp"
+mkdir -p "$T/sb"; : > "$T/sb/obj"; printf '%s\n' "$s1" > "$T/sb/mavergreen-inputs.stamp"
+reuse_build_dir "$T/sb" "$s1" > /dev/null || fail "reuse_build_dir failed"
+[ -f "$T/sb/obj" ] || fail "removed a dir whose stamp is the same"
+reuse_build_dir "$T/sb" "$s2" > "$T/out" || fail "reuse_build_dir failed"
+[ ! -d "$T/sb" ] || fail "kept a dir whose stamp differs"
+grep -q 'removing' "$T/out" || fail "removed the dir without saying so"
+mkdir -p "$T/sb"
+if reuse_build_dir "$T/sb" "" 2>/dev/null; then fail "accepted an empty stamp"; fi
+[ -d "$T/sb" ] || fail "removed the dir before refusing an empty stamp"
+
+echo "-- host_toolchain_release: the receipt's release, of SWIFT_VERSION, whatever the pkg id"
+SWIFT_VERSION=6.4.0; mkdir -p "$T/fakebin"
+printf '#!/bin/sh\n[ "$1" = --file-info ] || exit 2\necho "$2" > "%s/pkgutil-arg"\ncat "%s/receipt"\nexit "${FAKE_PKGUTIL_RC:-0}"\n' "$T" "$T" > "$T/fakebin/pkgutil"
+chmod +x "$T/fakebin/pkgutil"
+receipt() {  # $1 = pkgid, $2... = pkg-versions (none: no receipt)
+  _id="$1"; shift
+  { echo "volume: /"; echo "path: $T/tc/bin/swift-frontend"
+    for _v in "$@"; do printf '\npkgid: %s\npkg-version: %s\ninstall-time: 1790384965\n' "$_id" "$_v"; done; } > "$T/receipt"
+}
+release() { ( PATH="$T/fakebin:$PATH"; host_toolchain_release "$T/tc" ) > "$T/out" 2> "$T/err"; }
+receipt dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
+release || fail "refused 6.4.0-mavericks.7: $(cat "$T/err")"
+[ "$(cat "$T/out")" = "6.4.0-mavericks.7 (pkg dev.mavergreen.swift-toolchain)" ] || fail "printed: $(cat "$T/out")"
+[ "$(cat "$T/pkgutil-arg")" = "$T/tc/bin/swift-frontend" ] || fail "looked up $(cat "$T/pkgutil-arg"), not the frontend"
+receipt dev.mavergreen.swift-toolchain-cross 6.4.0-mavericks.8
+release || fail "refused the cross toolchain's receipt: $(cat "$T/err")"
+[ "$(cat "$T/out")" = "6.4.0-mavericks.8 (pkg dev.mavergreen.swift-toolchain-cross)" ] || fail "printed: $(cat "$T/out")"
+for v in 6.4.1-mavericks.1 6.3.3-mavericks.6 6.4.0 6.4.0- 6.4.01-mavericks.1; do
+  receipt dev.mavergreen.swift-toolchain "$v"
+  if release; then fail "accepted release $v for Swift 6.4.0"; fi
+  grep -q "$v" "$T/err" && grep -q 'Swift 6.4.0' "$T/err" || fail "did not name $v and 6.4.0: $(cat "$T/err")"
+done
+receipt dev.mavergreen.swift-toolchain 6.4.0-mavericks.7 6.4.0-mavericks.8
+if release; then fail "accepted a frontend two releases claim"; fi
+receipt dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
+if ( export FAKE_PKGUTIL_RC=1; release ); then fail "passed although pkgutil failed"; fi
+
+echo "-- host_toolchain_release: a copy no pkg installed needs its release declared, under the same rule"
+receipt none
+if release; then fail "accepted a toolchain with no receipt"; fi
+grep -q 'SWIFT_HOST_TOOLCHAIN_VERSION' "$T/err" || fail "did not name the override: $(cat "$T/err")"
+( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.7; release ) || fail "refused a declared 6.4.0-mavericks.7: $(cat "$T/err")"
+grep -q '^6.4.0-mavericks.7 (declared' "$T/out" || fail "printed: $(cat "$T/out")"
+if ( SWIFT_HOST_TOOLCHAIN_VERSION=6.3.3-mavericks.6; release ); then fail "accepted a declared 6.3.3 release"; fi
+receipt dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
+if ( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.8; release ); then fail "accepted a declaration the receipt contradicts"; fi
+( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.7; release ) || fail "refused a declaration the receipt agrees with"
 echo "PASS"

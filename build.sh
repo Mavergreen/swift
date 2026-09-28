@@ -15,8 +15,9 @@
 #   where the driver puts its own; the build root prefix-mapped to /mavergreen-build.
 # Env: MAVERICKS_BUILD_ROOT (build root, see lib.sh), SWIFT_WORK (sources and build trees, default
 #   $SWIFT_BUILD/work), SWIFT_RUNTIME_OUT (the staged payload, default $SWIFT_BUILD/payload/runtime),
-#   MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_BUILTINS (a libclang_rt.osx.a to link instead of the
-#   mode's own), NM (native mode's nm), MAVERICKS_SDK_CACHE (fetch_sdk.sh's cache).
+#   MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_HOST_TOOLCHAIN_VERSION (the release of a host toolchain no
+#   pkg installed, a copy; see lib.sh's host_toolchain_release), SWIFT_BUILTINS (a libclang_rt.osx.a to
+#   link instead of the mode's own), NM (native mode's nm), MAVERICKS_SDK_CACHE (fetch_sdk.sh's cache).
 # Host: cmake through shipyard-cmake, ninja, git, python3 (gyb). On OS X 10.9 pkgsrc supplies python3
 # (gyb, line-directive, LLVM's CMake), ninja, and git (while ~/.gitconfig uses options that git 1.9.5
 # rejects); see README's "Developing on OS X 10.9".
@@ -57,6 +58,8 @@ case "$MODE" in
   native)
     HTC="${SWIFT_HOST_TOOLCHAIN:-/usr/local/mavergreen/swift-toolchain}"
     native_host_shim "$HTC" "$ROOT/native-host" || { echo "FAIL: no host toolchain shim from $HTC"; exit 1; }
+    HTC_RELEASE="$(host_toolchain_release "$HTC")" || exit 1
+    echo "    host toolchain $HTC: release $HTC_RELEASE"
     TC="$ROOT/native-host/usr"
     CLANG_INC="$(clang_resource_include "$HTC")" || { echo "FAIL: no one clang resource dir in $HTC"; exit 1; }
     BUILTINS="${SWIFT_BUILTINS:-$(dirname "$CLANG_INC")/lib/darwin/libclang_rt.osx.a}"
@@ -136,6 +139,11 @@ echo "==> 4. Swift STDLIB-ONLY configure (prebuilt toolchain as native tools)"
 PM_C="$(prefix_map_flags c "$ROOT")"
 PM_SWIFT="$(prefix_map_flags swift "$ROOT")"
 LINK="-fuse-ld=lld --ld-path=$LLD"
+# A reused stdlib-build is kept only while the host compiler, clang and builtins archive are the bytes it
+# was configured with: ninja cannot see them change (a toolchain update, say), and would keep the objects
+# the previous ones built.
+STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS")" || { echo "FAIL: could not stamp the host inputs"; exit 1; }
+reuse_build_dir "$ROOT/stdlib-build" "$STAMP" || exit 1
 # LLVM_BUILD_* are build-tree-only variables that an install tree does not define, but
 # SwiftSharedCMakeConfig.cmake preconditions on them. LLVM_BUILD_MAIN_SRC_DIR only needs to be
 # set, never to exist: it feeds LLVM_MAIN_SRC_DIR, read solely by test/ and lib/Basic, both
@@ -168,6 +176,7 @@ shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
   -DSWIFT_THREADING_PACKAGE="OSX:pthreads" \
   -DSWIFT_NATIVE_SWIFT_TOOLS_PATH="$TC/bin" -DSWIFT_NATIVE_CLANG_TOOLS_PATH="$TC/bin" \
   -DSWIFT_EXPERIMENTAL_EXTRA_FLAGS="$PM_SWIFT;-Xfrontend;-disable-availability-checking"
+printf '%s\n' "$STAMP" > "$ROOT/stdlib-build/mavergreen-inputs.stamp"
 
 echo "==> 5. build libswiftCore (+ SwiftOnoneSupport)"
 ninja -C "$ROOT/stdlib-build" swiftCore-macosx-$ARCH swiftSwiftOnoneSupport-macosx-$ARCH
