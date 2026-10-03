@@ -6,7 +6,8 @@ Everything baked into what this repo publishes, and how a change to it reaches a
 This one repo builds every Swift artifact for Mavericks from one pin: the runtime `.pkg`, the native
 toolchain `.pkg` (it runs on OS X 10.9) and the cross toolchain `.pkg` (it runs on an Apple-silicon
 Mac). `Mavergreen/swift-toolchain`, which used to publish the LLVM build support this repo consumed,
-was merged in and archived (2026-09).
+was merged in (2026-09) and deleted (2026-10). Its 6.4.0 installer mirror is now attached to this repo's
+`6.4.0-mavericks.1` release.
 
 | Ingredient | Pinned in | Renovate | On a bump |
 |---|---|---|---|
