@@ -6,7 +6,11 @@
 #   out-dir, or / by any name, or an unknown STAGE_HOST, before writing anything; bare clang's
 #   clang.cfg and clang++.cfg are toolchain/clang.cfg. With STAGE_HOST=arm64 it must lay out the cross
 #   toolchain from the arm64 build dirs: the same files, the same bytes but for what each LLVM and
-#   Swift build makes itself (the three binaries, clang's headers, the helper outputs).
+#   Swift build makes itself (the three binaries, clang's headers, the helper outputs). --frontend,
+#   --stdlib and --builtins name those inputs elsewhere: the stdlib from a stdlib build's lib/swift or a
+#   staged toolchain's (CI stages the native toolchain with the cross pkg's, self-host.sh a stage with the
+#   previous stage's), the same payload either way; a --stdlib that is neither, or an unknown option, is
+#   refused before anything is written.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -77,6 +81,36 @@ $want"
 for c in clang.cfg clang++.cfg; do
   cmp -s "$REPO/toolchain/clang.cfg" "$T/out/$P/bin/$c" || fail "bin/$c is not toolchain/clang.cfg"
 done
+
+echo "-- --stdlib from a staged toolchain's lib/swift, --frontend and --builtins elsewhere: the same payload"
+mkdir -p "$T/fe/bin" "$T/fe/share/swift/diagnostics"
+for f in bin/swift-frontend share/swift/compatibility-symbols share/swift/diagnostics/en.db share/swift/diagnostics/en.strings; do
+  echo "other $f" > "$T/fe/$f"
+done
+echo "other archive" > "$T/other.a"
+SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --frontend "$T/fe" --stdlib "$T/out/$P/lib/swift" --builtins "$T/other.a" "$T/out2"
+got="$(cd "$T/out2" && find usr -type f | sort)"
+[ "$got" = "$want" ] || fail "payload from a toolchain's stdlib is
+$got
+wanted
+$want"
+( cd "$T/out/$P" && find lib/swift -type f ) | while IFS= read -r f; do
+  cmp -s "$T/out/$P/$f" "$T/out2/$P/$f" || fail "$f, staged from the toolchain's lib/swift, differs from the stdlib build's"
+done
+cmp -s "$T/other.a" "$T/out2/$P/lib/clang/21/lib/darwin/libclang_rt.osx.a" || fail "--builtins did not name the staged archive"
+[ "$(cat "$T/out2/$P/bin/swift-frontend")" = "other bin/swift-frontend" ] || fail "--frontend did not name the staged frontend"
+[ "$(cat "$T/out2/$P/share/swift/diagnostics/en.db")" = "other share/swift/diagnostics/en.db" ] || fail "--frontend did not name the helper outputs"
+
+echo "-- refuses a --stdlib that is no stdlib, and an unknown option, before writing anything"
+mkdir -p "$T/notstdlib/macosx"
+if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --stdlib "$T/notstdlib" "$T/out3" 2> "$T/err"; then fail "staged from a dir that is no stdlib"; fi
+grep -q "$T/notstdlib is no stdlib" "$T/err" || fail "did not name the bad --stdlib: $(cat "$T/err")"
+[ ! -e "$T/out3" ] || fail "wrote $T/out3 before refusing the bad --stdlib"
+rc=0; SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --stdib "$T/out/$P/lib/swift" "$T/out4" 2>/dev/null || rc=$?
+[ "$rc" -eq 2 ] || fail "--stdib: exit $rc, not 2"
+rc=0; SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --stdlib "$T/out4" 2>/dev/null || rc=$?
+[ "$rc" -eq 2 ] || fail "--stdlib with no out-dir: exit $rc, not 2"
+[ ! -e "$T/out4" ] || fail "wrote $T/out4 on a usage error"
 
 echo "-- refuses an unknown STAGE_HOST before writing anything"
 rc=0; STAGE_HOST=x86 SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/bad" 2> "$T/err" || rc=$?
