@@ -14,13 +14,32 @@ was merged in (2026-09) and deleted (2026-10). Its 6.4.0 installer mirror is now
 | Swift release (own upstream) | `SWIFT_VERSION` + `SWIFT_SHA` in `pins.env` | ✅ `github-tags` on `swiftlang/swift`, grouped with llvm-project; minor/major held for a human (below) | auto-cuts `<upstream>-mavericks.1` on the push to main |
 | swiftlang/llvm-project commit | `LLVM_SWIFT_RELEASE` + `LLVM_SHA` in `pins.env` | ✅ `github-tags` on `swiftlang/llvm-project`, in the same "Swift release" PR | moves only WITH the Swift pin: `build-llvm.sh` fails unless `LLVM_SWIFT_RELEASE` equals `SWIFT_VERSION` and `LLVM_SHA` is llvm-project's `swift-<SWIFT_VERSION>-RELEASE` |
 | swiftlang/swift-cmark commit | `CMARK_SWIFT_RELEASE` + `CMARK_SHA` in `pins.env` | ✅ `github-tags` on `swiftlang/swift-cmark`, in the same "Swift release" PR | moves only WITH the Swift pin: `build-toolchain.sh` runs `check_release_pin` on it |
-| mavericks-clang-22 cross toolchain (compiles the 10.9-hosted toolchain and compiler-rt's builtins) | `CLANG22_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/clang-22`, `-mavericks.N` versioning | auto-repackages `-mavericks.(N+1)` |
+| mavericks-clang-22 cross toolchain (compiles the 10.9-hosted toolchain and compiler-rt's builtins, and its `llvm-libtool-darwin`, `llvm-ar`, `llvm-ranlib` and `llvm-lipo` make their archives; on OS X 10.9, `self-host.sh` uses the native package of the same release) | `CLANG22_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/clang-22`, `-mavericks.N` versioning | auto-repackages `-mavericks.(N+1)` |
 | LLVM and compiler source patches (`patches/llvm/`, `patches/compiler/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
-| swift.org toolchain `.pkg` (the host compiler that builds the stdlib) | `TOOLCHAIN_URL`, derived from `SWIFT_VERSION` | ✅ moves with the Swift pin | verified by **signer identity**, not a hash (below) |
+| swift.org toolchain `.pkg` (CI's one seed: it compiles the cross toolchain's Swift half, and a first stdlib that only makes that toolchain runnable; everything the release ships is compiled by this repo's own compilers, below) | `TOOLCHAIN_URL`, derived from `SWIFT_VERSION` | ✅ moves with the Swift pin | verified by **signer identity**, not a hash (below) |
 | Runtime source patches (`patches/runtime/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
-| Sparkle framework, MacOSX10.9 SDK | `Mavergreen/shipyard@v1` | ✅ github-actions manager tracks the tag | `@v1` is a moving tag; nothing auto-repackages |
+| Sparkle framework, MacOSX10.9 SDK (the toolchains link against its original stub files, fetched with shipyard's pin by `lib.sh`'s `sdk109_stubs`, on every host: below) | `Mavergreen/shipyard@v1` | ✅ github-actions manager tracks the tag | `@v1` is a moving tag; nothing auto-repackages |
 | MacOSX11.3.sdk, the pinned modern SDK the runtime builds against (CI and OS X 10.9 alike), and the cross toolchain's arm64 binaries too | `Mavergreen/shipyard@v1` (`sdk-pins.sh`'s arm64 pin, fetched by `fetch_sdk.sh --arch arm64`) | ✅ github-actions manager tracks the tag | `@v1` is a moving tag; nothing auto-repackages |
 | Apple clang, the `macos-26` runner's Command Line Tools (compiles the cross toolchain's LLVM, clang, lld and the C++ half of `swift-frontend`) | the runner image, not pinned | ❌ untrackable: no datasource for a hosted runner's Command Line Tools. The pinned MacOSX11.3.sdk bounds what those binaries record (minOS 11.0, SDK 11.3, checked by the compat guard), and `scripts/audit-imports.py` checks every Swift, C++ and ObjC runtime import of `swift-frontend` against it (it audits only a binary that links libswiftCore, so not `clang` or `ld64.lld`, whose libc++ imports nothing checks) | a runner-image change reaches the next release; those checks run on every build |
+
+## Two seeds, one result
+
+CI seeds from the swift.org compiler alone: it compiles the cross toolchain's Swift half (`build-cross`),
+and the cross toolchain then compiles the standard library every package ships and the 10.9 toolchain's
+Swift half (`build`). CI never builds with an earlier Mavergreen release. On OS X 10.9, `self-host.sh`
+rebuilds the 10.9 toolchain with the previous release, and the result must be the release's bytes
+(`self-host.sh --compare`; DEVELOPING.md). These settings, none of them an ingredient Renovate moves, keep
+the two hosts' builds the same bytes:
+
+- **Archives:** clang22's `llvm-libtool-darwin`, `llvm-ar` and `llvm-ranlib` in `build-toolchain.sh`, and
+  its `llvm-libtool-darwin` and `llvm-lipo` in `build-builtins.sh`, never the host's Apple tools.
+- **The 10.9 SDK's stubs:** `lib.sh`'s `sdk109_stubs` fetches shipyard's pinned tarball with shipyard's
+  own `sdk-pins.sh` and `mavericks_fetch.sh`, and leaves its `MH_DYLIB_STUB` files as they are.
+  `fetch_sdk.sh` converts them to `.tbd` where `tapi` exists, which is every modern Mac and never 10.9
+  (shipyard BACKLOG #30).
+- **clang's linker:** `HOST_LINK_VERSION=241.9` (10.9's ld64) and `CLANG_DEFAULT_LINKER=lld`, in
+  `build-toolchain.sh`, for both toolchains.
+- **Paths:** the build root is mapped to `/mavergreen-build` in every compile.
 
 ## How a bump reaches a release
 
@@ -76,7 +95,7 @@ last, to CI's native-toolchain smoke.
 
 - sdk-pin:*/swift-runtime/lib/swift/*.dylib: the Swift runtime cannot be built against the 10.9 SDK, which has no libc++ headers at all (only libstdc++ 4.2.1) while Swift 6.4 requires C++17, and which lacks declarations of post-10.9 APIs the runtime calls behind availability checks. Its build uses a modern SDK, pinned: MacOSX11.3.sdk, shipyard's arm64 pin (`fetch_sdk.sh --arch arm64`), the same in CI and on 10.9, so a runtime built on 10.9 is byte-identical to CI's. It records sdk 11.3; its libc++ imports are all exported by 10.9's `/usr/lib/libc++.1.dylib`. minos stays 10.9, and the real-10.9 gate is its acceptance. Revisit if the gate gains per-product pins.
 - sdk-pin:*/swift-toolchain/lib/swift/macosx/*.dylib: the toolchain's stdlib dylibs are the runtime's own bytes, staged from the one stdlib build (scripts/stage-toolchain.sh), so the runtime's reason above applies verbatim. The compiler, lld and clang beside them record the pinned 10.9 SDK and take no exemption.
-- sdk-pin:*/swift-toolchain-cross/lib/swift/macosx/*.dylib: the cross toolchain's stdlib dylibs are the runtime's own bytes too: CI's build-cross job builds them from the same source with the same build.sh, and collect refuses a release whose two toolchains' stdlib and builtins trees differ in a byte, so the runtime's reason above applies verbatim. The compiler, lld and clang beside them are arm64 and record the family's arm64 pin (minOS 11.0, SDK 11.3) and take no exemption.
+- sdk-pin:*/swift-toolchain-cross/lib/swift/macosx/*.dylib: the cross toolchain's stdlib dylibs are the runtime's own bytes too: CI's build-cross job builds the one stdlib, with that cross toolchain, and stages it into all three pkgs, and collect refuses a release whose two toolchains' stdlib and builtins trees differ in a byte, so the runtime's reason above applies verbatim. The compiler, lld and clang beside them are arm64 and record the family's arm64 pin (minOS 11.0, SDK 11.3) and take no exemption.
 - floor:swift-toolchain-cross-*.pkg: the cross toolchain runs on an Apple-silicon Mac with macOS 11 or later and only targets 10.9, so its archive's install floor is 11.0 (arm64), not 10.9.5; clang22-cross and rust-cross declare the same.
 - version:upstream-swift-*.pkg: mirrored verbatim from swift.org, so its version is upstream's own
   (`6.4.20260913101` for 6.4.0). Rewriting it would break the correspondence with download.swift.org
