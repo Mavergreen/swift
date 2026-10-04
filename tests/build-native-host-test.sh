@@ -1,11 +1,15 @@
 #!/bin/sh
-# platform: macOS-only -- runs build.sh (macOS-only), in native mode, with a fake pkgutil and toolchain
+# platform: macOS-only -- runs build.sh (macOS-only), in both modes, with a fake pkgutil and toolchain
 # usage: sh tests/build-native-host-test.sh
-#   build.sh's native mode must build with an installed toolchain of this checkout's Swift only: step 1
-#   prints the release the toolchain's receipt names, and refuses one of another Swift version, or one no
-#   pkg installed unless SWIFT_HOST_TOOLCHAIN_VERSION declares it. Native mode cannot run here (it needs
-#   OS X 10.9 and the installed toolchain), so a fake toolchain prefix and a fake pkgutil stand in; NM
-#   names no program, so a toolchain step 1 accepts stops there, at the next check, before any SDK fetch.
+#   build.sh must build with a host toolchain of this checkout's Swift only: step 1 prints the release the
+#   toolchain's receipt names, and refuses one of another Swift version, or one no pkg installed unless
+#   SWIFT_HOST_TOOLCHAIN_VERSION declares it. Native mode cannot run here (it needs OS X 10.9 and the
+#   installed toolchain), so a fake toolchain prefix and a fake pkgutil stand in; NM names no program, so a
+#   toolchain step 1 accepts stops there, at the next check, before any SDK fetch. Cross mode (CI) takes
+#   the toolchain SWIFT_HOST_TOOLCHAIN names the same way, never the swift.org pkg, and stops at the SDK
+#   fetch (this test's shipyard has none), and passes CMAKE_OSX_ARCHITECTURES=x86_64 to the stdlib configure
+#   (an arm64 Mac's CMake probe would ask the x86_64-only toolchain clang for arm64; step 1 reports the flag
+#   it will pass); without it, it wants the swift.org pkg and passes none.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -39,6 +43,7 @@ if build; then fail "build.sh succeeded with a fake toolchain: $(cat "$T/out")";
 grep -qxF "    host toolchain $H: release $SWIFT_VERSION-mavericks.7 (pkg dev.mavergreen.swift-toolchain)" "$T/out" \
   || fail "did not print the release: $(cat "$T/out")"
 went_past_step_1 || fail "stopped before the check after the release's: $(cat "$T/out")"
+if grep -q 'CMAKE_OSX_ARCHITECTURES' "$T/out"; then fail "native mode passes CMAKE_OSX_ARCHITECTURES: $(cat "$T/out")"; fi
 grep -qxF "$H/bin/swift-frontend" "$T/pkgutil-args" || fail "looked up another file's receipt: $(cat "$T/pkgutil-args")"
 
 echo "-- a receipt of another Swift: refused in step 1"
@@ -55,4 +60,25 @@ if went_past_step_1; then fail "went on past a toolchain with no receipt: $(cat 
 if ( export SWIFT_HOST_TOOLCHAIN_VERSION="$SWIFT_VERSION-mavericks.7"; build ); then fail "build.sh succeeded with a fake toolchain"; fi
 grep -q "release $SWIFT_VERSION-mavericks.7 (declared" "$T/out" || fail "did not print the declared release: $(cat "$T/out")"
 went_past_step_1 || fail "stopped at a declared release of this checkout's Swift: $(cat "$T/out")"
+
+echo "-- cross mode with SWIFT_HOST_TOOLCHAIN: that toolchain, its receipt checked, never the swift.org pkg"
+build_cross() {  # build.sh's cross mode; $1 names the host toolchain, or nothing for none
+  ( export PATH="$T/fakebin:$PATH" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=cross
+    unset SWIFT_WORK SWIFT_BUILTINS NM SWIFT_HOST_TOOLCHAIN
+    if [ -n "$1" ]; then export SWIFT_HOST_TOOLCHAIN="$1"; fi
+    sh "$REPO/build.sh" ) > "$T/out" 2>&1
+}
+receipt ""
+if ( export SWIFT_HOST_TOOLCHAIN_VERSION="$SWIFT_VERSION-mavericks.9"; build_cross "$H" ); then fail "build.sh succeeded with a fake toolchain: $(cat "$T/out")"; fi
+grep -qxF "    host toolchain $H: release $SWIFT_VERSION-mavericks.9 (declared by SWIFT_HOST_TOOLCHAIN_VERSION)" "$T/out" \
+  || fail "cross mode did not take the named toolchain: $(cat "$T/out")"
+grep -q 'FAIL: could not fetch the pinned modern SDK' "$T/out" || fail "cross mode stopped before the SDK fetch: $(cat "$T/out")"
+if grep -q 'swift.org toolchain' "$T/out"; then fail "cross mode looked for the swift.org pkg beside a named toolchain"; fi
+grep -qxF "    cmake architectures: -DCMAKE_OSX_ARCHITECTURES=x86_64 (a named host toolchain's clang is x86_64 only)" "$T/out" \
+  || fail "cross mode with a named toolchain did not pass CMAKE_OSX_ARCHITECTURES: $(cat "$T/out")"
+if build_cross "$H"; then fail "build.sh succeeded with a fake toolchain"; fi
+grep -q 'SWIFT_HOST_TOOLCHAIN_VERSION' "$T/out" || fail "cross mode took a receipt-less toolchain without a declared release: $(cat "$T/out")"
+if build_cross ""; then fail "build.sh succeeded with no swift.org pkg"; fi
+if grep -q 'CMAKE_OSX_ARCHITECTURES' "$T/out"; then fail "cross mode without a host toolchain passes CMAKE_OSX_ARCHITECTURES"; fi
+grep -q "FAIL: no swift.org toolchain at $R/swift/cache/" "$T/out" || fail "cross mode without a host toolchain: $(cat "$T/out")"
 echo "PASS"

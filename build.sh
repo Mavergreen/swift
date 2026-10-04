@@ -3,13 +3,15 @@
 # build.sh — from-source build of the Swift runtime (libswiftCore + libswiftSwiftOnoneSupport) for
 # OS X 10.9 / x86_64, staged as the runtime .pkg's payload. No Apple prebuilt runtime bytes ship.
 #
-# One recipe, two modes (MAVERICKS_MODE, else shipyard's mavericks_mode.sh), the same bytes from both:
-#   cross (CI, a modern Mac): host Swift compiler and clang are the swift.org toolchain's
-#     (mirror-toolchain.sh -> $SWIFT_BUILD/cache/<pkg>, signer-verified); builtins archive
-#     build-builtins.sh's.
-#   native (OS X 10.9): host Swift compiler and clang are the INSTALLED swift-toolchain's
-#     (SWIFT_HOST_TOOLCHAIN, default /usr/local/mavergreen/swift-toolchain), run bare through a shim
-#     dir; builtins archive the one that toolchain ships (the same release's bytes).
+# One recipe, two modes (MAVERICKS_MODE, else shipyard's mavericks_mode.sh), the same bytes from both.
+# The host Swift compiler and clang are a Mavergreen toolchain's, run bare through a shim dir, with the
+# builtins archive that toolchain ships, whenever SWIFT_HOST_TOOLCHAIN names one:
+#   cross (CI, a modern Mac): CI's build-cross job names the same run's cross toolchain, so the stdlib
+#     every pkg ships is compiled by this repo's compiler. Without SWIFT_HOST_TOOLCHAIN the host is the
+#     swift.org toolchain (mirror-toolchain.sh -> $SWIFT_BUILD/cache/<pkg>, signer-verified) with
+#     build-builtins.sh's archive: CI's one seed, whose stdlib only makes that cross toolchain runnable.
+#   native (OS X 10.9): the INSTALLED swift-toolchain (SWIFT_HOST_TOOLCHAIN, default
+#     /usr/local/mavergreen/swift-toolchain), or a stage of self-host.sh.
 #   Both: LLVM build support and ld64.lld from build-llvm.sh; the pinned modern SDK (shipyard's
 #   fetch_sdk.sh --arch arm64, MacOSX11.3.sdk); the runtime linked by that lld with the builtins archive
 #   where the driver puts its own; the build root prefix-mapped to /mavergreen-build.
@@ -20,7 +22,7 @@
 #   link instead of the mode's own), NM (native mode's nm), MAVERICKS_SDK_CACHE (fetch_sdk.sh's cache).
 # Host: cmake through shipyard-cmake, ninja, git, python3 (gyb). On OS X 10.9 pkgsrc supplies python3
 # (gyb, line-directive, LLVM's CMake), ninja, and git (while ~/.gitconfig uses options that git 1.9.5
-# rejects); see README's "Developing on OS X 10.9".
+# rejects); see DEVELOPING.md.
 # Output: $SWIFT_RUNTIME_OUT, in scripts/stage-runtime.sh's layout, for package.sh.
 set -eu
 
@@ -47,33 +49,41 @@ echo "    python3 on PATH: $(if command -v python3 >/dev/null 2>&1; then python3
 # An override that names no file is reported as such; each mode's own message is for its own archive.
 [ -z "${SWIFT_BUILTINS:-}" ] || [ -f "$SWIFT_BUILTINS" ] || {
   echo "FAIL: SWIFT_BUILTINS names no file: $SWIFT_BUILTINS"; exit 1; }
-case "$MODE" in
-  cross)
-    PKG="$SWIFT_BUILD/cache/$TOOLCHAIN_ASSET"
-    [ -f "$PKG" ] || { echo "FAIL: no swift.org toolchain at $PKG -- run ./mirror-toolchain.sh"; exit 1; }
-    verify_toolchain_signature "$PKG"
-    expand_toolchain "$PKG" toolchain || { echo "FAIL: could not expand $PKG"; exit 1; }
-    TC="$ROOT/toolchain/usr"
-    BUILTINS="${SWIFT_BUILTINS:-$ROOT/builtins-x86/lib/darwin/libclang_rt.osx.a}"
-    [ -f "$BUILTINS" ] || { echo "FAIL: no builtins archive at $BUILTINS -- run ./build-builtins.sh"; exit 1; }
-    CLANG_INC="$(clang_resource_include "$TC")" || { echo "FAIL: no one clang resource dir in $TC"; exit 1; }
-    ;;
-  native)
-    HTC="${SWIFT_HOST_TOOLCHAIN:-/usr/local/mavergreen/swift-toolchain}"
-    native_host_shim "$HTC" "$ROOT/native-host" || { echo "FAIL: no host toolchain shim from $HTC"; exit 1; }
-    HTC_RELEASE="$(host_toolchain_release "$HTC")" || exit 1
-    echo "    host toolchain $HTC: release $HTC_RELEASE"
-    TC="$ROOT/native-host/usr"
-    CLANG_INC="$(clang_resource_include "$HTC")" || { echo "FAIL: no one clang resource dir in $HTC"; exit 1; }
-    BUILTINS="${SWIFT_BUILTINS:-$(dirname "$CLANG_INC")/lib/darwin/libclang_rt.osx.a}"
-    [ -f "$BUILTINS" ] || { echo "FAIL: no builtins archive at $BUILTINS -- the installed swift-toolchain predates it; name one with SWIFT_BUILTINS"; exit 1; }
-    # platform: step 7 reads imports with nm when there is no dyld_info; clang22's llvm-nm is the one
-    #           proven on the box (the spike), and a GNU nm earlier on PATH would not know -m.
-    NM="${NM:-/usr/local/mavergreen/clang22/bin/llvm-nm}"
-    command -v "$NM" >/dev/null 2>&1 || { echo "FAIL: no $NM (mavericks-clang-22's native pkg provides it; NM names another)"; exit 1; }
-    ;;
-  *) echo "FAIL: mode '$MODE' is neither cross nor native"; exit 1 ;;
-esac
+case "$MODE" in cross|native) ;; *) echo "FAIL: mode '$MODE' is neither cross nor native"; exit 1 ;; esac
+HTC="${SWIFT_HOST_TOOLCHAIN:-}"
+if [ -z "$HTC" ] && [ "$MODE" = native ]; then HTC=/usr/local/mavergreen/swift-toolchain; fi
+set --   # the stdlib configure's extra arguments, below (build.sh takes none of its own)
+if [ -n "$HTC" ]; then
+  native_host_shim "$HTC" "$ROOT/native-host" || { echo "FAIL: no host toolchain shim from $HTC"; exit 1; }
+  HTC_RELEASE="$(host_toolchain_release "$HTC")" || exit 1
+  echo "    host toolchain $HTC: release $HTC_RELEASE"
+  # A named toolchain's clang is x86_64 only; on an arm64 Mac CMake's compiler probe would ask it for arm64.
+  # (Byte-neutral: Task 1's stdlib with the cross toolchain as host was identical.) The swift.org host's
+  # clang is universal and is left as it was, as is native mode, whose Mac is x86_64.
+  if [ "$MODE" = cross ]; then
+    set -- "-DCMAKE_OSX_ARCHITECTURES=$ARCH"
+    echo "    cmake architectures: $1 (a named host toolchain's clang is x86_64 only)"
+  fi
+  TC="$ROOT/native-host/usr"
+  CLANG_INC="$(clang_resource_include "$HTC")" || { echo "FAIL: no one clang resource dir in $HTC"; exit 1; }
+  BUILTINS="${SWIFT_BUILTINS:-$(dirname "$CLANG_INC")/lib/darwin/libclang_rt.osx.a}"
+  [ -f "$BUILTINS" ] || { echo "FAIL: no builtins archive at $BUILTINS -- the host swift-toolchain predates it; name one with SWIFT_BUILTINS"; exit 1; }
+else
+  PKG="$SWIFT_BUILD/cache/$TOOLCHAIN_ASSET"
+  [ -f "$PKG" ] || { echo "FAIL: no swift.org toolchain at $PKG -- run ./mirror-toolchain.sh"; exit 1; }
+  verify_toolchain_signature "$PKG"
+  expand_toolchain "$PKG" toolchain || { echo "FAIL: could not expand $PKG"; exit 1; }
+  TC="$ROOT/toolchain/usr"
+  BUILTINS="${SWIFT_BUILTINS:-$ROOT/builtins-x86/lib/darwin/libclang_rt.osx.a}"
+  [ -f "$BUILTINS" ] || { echo "FAIL: no builtins archive at $BUILTINS -- run ./build-builtins.sh"; exit 1; }
+  CLANG_INC="$(clang_resource_include "$TC")" || { echo "FAIL: no one clang resource dir in $TC"; exit 1; }
+fi
+if [ "$MODE" = native ]; then
+  # platform: step 7 reads imports with nm when there is no dyld_info; clang22's llvm-nm is the one
+  #           proven on the box (the spike), and a GNU nm earlier on PATH would not know -m.
+  NM="${NM:-/usr/local/mavergreen/clang22/bin/llvm-nm}"
+  command -v "$NM" >/dev/null 2>&1 || { echo "FAIL: no $NM (mavericks-clang-22's native pkg provides it; NM names another)"; exit 1; }
+fi
 SDK_RUNTIME="$(sh "$SHIPYARD/fetch_sdk.sh" --arch arm64)" || { echo "FAIL: could not fetch the pinned modern SDK"; exit 1; }
 clang_resource_shim "$CLANG_INC" "$BUILTINS" "$ROOT/clang-resource" || { echo "FAIL: could not lay out $ROOT/clang-resource"; exit 1; }
 echo "    host compiler $TC; SDK $SDK_RUNTIME; linker $LLD; builtins $BUILTINS"
@@ -163,6 +173,7 @@ shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER="$TC/bin/clang" -DCMAKE_CXX_COMPILER="$TC/bin/clang++" \
   -DCMAKE_OSX_SYSROOT="$SDK_RUNTIME" -DSWIFT_SDK_OSX_PATH="$SDK_RUNTIME" \
+  "$@" \
   -DCMAKE_IGNORE_PREFIX_PATH=/opt/pkg \
   "-DCMAKE_C_FLAGS=$PM_C" "-DCMAKE_CXX_FLAGS=$PM_C" \
   "-DCMAKE_EXE_LINKER_FLAGS=$LINK" "-DCMAKE_MODULE_LINKER_FLAGS=$LINK" \
