@@ -22,9 +22,18 @@ T="$(CDPATH='' cd -P -- "$T" && pwd -P)"
 R="$T/repo"; mkdir -p "$R/scripts" "$T/shipyard"
 cp "$REPO/self-host.sh" "$REPO/lib.sh" "$REPO/pins.env" "$REPO/msc.sh" "$R/"
 W="$T/root/swift/work"
-# A Swift toolchain prefix as host_swiftc_stamp and toolchain_cmp read it: frontend, stdlib, builtins.
+# A Swift toolchain prefix as host_swiftc_stamp, stdlib_layout and toolchain_cmp read it: a frontend that
+# runs, swiftc, a staged toolchain's stdlib, builtins. The stdlib files no test varies are the same bytes
+# in every prefix, the fake stage-toolchain.sh's included (it writes them as stdlib_files does).
+stdlib_files() {  # stdlib_files <lib/swift dir>
+  mkdir -p "$1/macosx/SwiftOnoneSupport.swiftmodule" "$1/shims"
+  echo onone > "$1/macosx/SwiftOnoneSupport.swiftmodule/x86_64-apple-macos.swiftmodule"
+  echo onone > "$1/macosx/libswiftSwiftOnoneSupport.dylib"
+  echo layouts > "$1/macosx/layouts-x86_64.yaml"; echo shims > "$1/shims/module.modulemap"
+}
 fake_prefix() {  # fake_prefix <prefix> <frontend bytes> <stdlib bytes>
   mkdir -p "$1/bin" "$1/lib/swift/macosx/Swift.swiftmodule" "$1/lib/clang/21/lib/darwin"
+  stdlib_files "$1/lib/swift"
   printf '#!/bin/sh\necho "Swift version 6.4 (%s)"\n' "$2" > "$1/bin/swift-frontend"; chmod +x "$1/bin/swift-frontend"
   printf '#!/bin/sh\n' > "$1/bin/swiftc"; chmod +x "$1/bin/swiftc"
   echo "$3" > "$1/lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule"
@@ -69,6 +78,10 @@ cp "$fe/bin/swift-frontend" "$p/bin/"; printf '#!/bin/sh\n' > "$p/bin/swiftc"; c
 s=stdlib; [ ! -f "$sl/macosx/libswiftCore.dylib" ] || s="$(cat "$sl/macosx/libswiftCore.dylib")"
 echo "$s" > "$p/lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule"; echo "$s" > "$p/lib/swift/macosx/libswiftCore.dylib"
 cp "$bi" "$p/lib/clang/21/lib/darwin/libclang_rt.osx.a"
+l="$p/lib/swift"; mkdir -p "$l/macosx/SwiftOnoneSupport.swiftmodule" "$l/shims"
+echo onone > "$l/macosx/SwiftOnoneSupport.swiftmodule/x86_64-apple-macos.swiftmodule"
+echo onone > "$l/macosx/libswiftSwiftOnoneSupport.dylib"
+echo layouts > "$l/macosx/layouts-x86_64.yaml"; echo shims > "$l/shims/module.modulemap"
 F
 } > "$R/scripts/stage-toolchain.sh"
 chmod +x "$R"/*.sh "$R/scripts/stage-toolchain.sh"
@@ -138,13 +151,28 @@ if run other --compare "$T/other"; then fail "--compare passed a prefix with ano
 grep -q 'differ: bin/swift-frontend' "$T/other.out" || fail "other: $(cat "$T/other.out")"
 
 echo "-- refused before anything runs: cross mode, a seed that is no toolchain, a --compare that is none, bad usage"
-rc=0; (MODE=cross run cross) || rc=$?
-[ "$rc" -eq 2 ] && [ ! -s "$T/cross.log" ] || fail "cross mode: exit $rc, ran [$(head -1 "$T/cross.log")]"
-if (SEED="$T/nothing" run noseed); then fail "ran with no seed"; fi
-grep -q "no Swift toolchain to seed from at $T/nothing" "$T/noseed.out" && [ ! -s "$T/noseed.log" ] || fail "noseed: $(cat "$T/noseed.out")"
-if run nocompare --compare "$T/nothing"; then fail "ran with a --compare that names nothing"; fi
-[ ! -s "$T/nocompare.log" ] || fail "ran [$(head -1 "$T/nocompare.log")] before refusing the --compare"
-rc=0; run usage --stages 2 || rc=$?; [ "$rc" -eq 2 ] && [ ! -s "$T/usage.log" ] || fail "--stages: exit $rc"
+refused() {  # refused <name> <exit> <message> -- run <name> exited <exit>, said <message>, and ran nothing
+  [ "$rc" -eq "$2" ] && grep -q -e "$3" "$T/$1.out" && [ ! -s "$T/$1.log" ] \
+    || fail "$1: exit $rc (wanted $2), ran [$(head -1 "$T/$1.log")]: $(cat "$T/$1.out")"
+}
+rc=0; (MODE=cross run cross) || rc=$?; refused cross 2 "mode is 'cross'"
+rc=0; (SEED="$T/nothing" run noseed) || rc=$?; refused noseed 1 "no Swift toolchain to seed from at $T/nothing"
+rc=0; run nocompare --compare "$T/nothing" || rc=$?; refused nocompare 1 "FAIL: --compare names no Swift toolchain: $T/nothing"
+# An empty --compare (a --compare "$UNSET") must not run unverified for hours and pass as if none were given.
+rc=0; run emptycompare --compare "" || rc=$?; refused emptycompare 2 "usage: self-host.sh"
+rc=0; run usage --stages 2 || rc=$?; refused usage 2 "usage: self-host.sh"
+# A seed must be one the build can use, all of it: a frontend that runs here (not an arm64 or newer-OS
+# one), an executable swiftc (build-toolchain.sh's host compiler), a staged toolchain's stdlib (stage 1's
+# pre toolchain is staged with it) -- or build-llvm.sh and build-builtins.sh would run for hours first.
+cp -R "$T/seed" "$T/deadseed"; printf '#!/bin/sh\necho "Bad CPU type in executable" >&2; exit 126\n' > "$T/deadseed/bin/swift-frontend"
+rc=0; (SEED="$T/deadseed" run deadseed) || rc=$?; refused deadseed 1 "the seed's swift-frontend does not run here: .*Bad CPU type"
+cp -R "$T/seed" "$T/noswiftc"; chmod -x "$T/noswiftc/bin/swiftc"
+rc=0; (SEED="$T/noswiftc" run noswiftc) || rc=$?; refused noswiftc 1 "no executable $T/noswiftc/bin/swiftc"
+cp -R "$T/seed" "$T/nolayout"; rm "$T/nolayout/lib/swift/macosx/layouts-x86_64.yaml"
+rc=0; (SEED="$T/nolayout" run nolayout) || rc=$?; refused nolayout 1 "$T/nolayout/lib/swift is no staged toolchain's stdlib"
+cp -R "$T/seed" "$T/buildlayout"; mkdir "$T/buildlayout/lib/swift/macosx/x86_64"
+cp "$T/buildlayout/lib/swift/macosx/"libswift*.dylib "$T/buildlayout/lib/swift/macosx/x86_64/"   # a stdlib build's
+rc=0; (SEED="$T/buildlayout" run buildlayout) || rc=$?; refused buildlayout 1 "$T/buildlayout/lib/swift is no staged toolchain's stdlib"
 
 echo "-- a relative seed is the same seed: build-toolchain.sh, which cds, gets it absolute"
 (cd "$T" && SEED=seed run relseed) || fail "relseed: $(cat "$T/relseed.out")"

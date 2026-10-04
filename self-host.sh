@@ -22,9 +22,10 @@
 #      release as both seed and <prefix>, and this checkout at that release's tag, that verifies the
 #      release: what it ships is what its source builds, on this Mac.
 # Before anything runs it refuses cross mode, an installed mavericks-clang-22 whose pkg receipt is not
-# pins.env's CLANG22_VERSION (a CLANG22_PREFIX set by hand skips that check, warning), and a seed (or a
-# --compare) that is no Swift toolchain. Every stage gets its host toolchain as SWIFT_HOST_TOOLCHAIN,
-# named explicitly, never a script's own default.
+# pins.env's CLANG22_VERSION (a CLANG22_PREFIX set by hand skips that check, warning), an empty or
+# toolchain-less --compare, and a seed that is no Swift toolchain this Mac can build with (its frontend
+# must run here, its swiftc be executable, its lib/swift a staged toolchain's stdlib). Every stage gets
+# its host toolchain as SWIFT_HOST_TOOLCHAIN, named explicitly, never a script's own default.
 # Out: $SWIFT_BUILD/self-host/s<N>/toolchain (scripts/stage-toolchain.sh's payload) and s<N>/runtime
 # (build.sh's); each step's wall time in $SWIFT_BUILD/self-host/times; the gate's commands, last, with
 # stage 2's toolchain and runtime. Budget: DEVELOPING.md.
@@ -35,7 +36,7 @@ usage() { echo "usage: self-host.sh [--compare <toolchain-prefix>]" >&2; exit 2;
 COMPARE=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --compare) [ $# -ge 2 ] || usage; COMPARE="$2"; shift 2 ;;
+    --compare) [ $# -ge 2 ] && [ -n "$2" ] || usage; COMPARE="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -58,6 +59,14 @@ SEED="${SWIFT_HOST_TOOLCHAIN:-/usr/local/mavergreen/swift-toolchain}"
 host_swiftc_stamp "$SEED" > /dev/null || { echo "FAIL: no Swift toolchain to seed from at $SEED -- install swift-toolchain, or name one with SWIFT_HOST_TOOLCHAIN" >&2; exit 1; }
 # Absolute, or build-toolchain.sh, which cds into the build tree, would miss it after build-llvm.sh's hours.
 SEED="$(CDPATH='' cd -- "$SEED" && pwd)"
+# All of the seed the stages use, checked before anything is built: a frontend that runs on this Mac (an
+# arm64 or newer-OS toolchain does not), the swiftc build-toolchain.sh compiles with, and a staged
+# toolchain's stdlib, which stage 1's pre toolchain is staged with.
+SEED_VERSION="$("$SEED/bin/swift-frontend" -version 2>&1)" \
+  || { echo "FAIL: the seed's swift-frontend does not run here: $SEED/bin/swift-frontend -version said: $SEED_VERSION" >&2; exit 1; }
+[ -x "$SEED/bin/swiftc" ] || { echo "FAIL: no executable $SEED/bin/swiftc -- is a Swift toolchain at $SEED?" >&2; exit 1; }
+[ "$(stdlib_layout "$SEED/lib/swift")" = toolchain ] \
+  || { echo "FAIL: $SEED/lib/swift is no staged toolchain's stdlib (stdlib_layout, above) -- is a Swift toolchain at $SEED?" >&2; exit 1; }
 if [ -n "$COMPARE" ]; then
   [ -f "$COMPARE/bin/swift-frontend" ] || { echo "FAIL: --compare names no Swift toolchain: $COMPARE" >&2; exit 1; }
 fi
@@ -75,7 +84,7 @@ timed() {  # timed <label> <command>... -- runs it, recording its wall seconds i
   echo "    $_tl: $((_t1 - _t0)) s"
 }
 echo "self-host.sh: seed $SEED"
-"$SEED/bin/swift-frontend" -version 2>&1 | sed 's/^/    /'
+printf '%s\n' "$SEED_VERSION" | sed 's/^/    /'
 timed "LLVM build support and lld (build-llvm.sh)" sh "$HERE/build-llvm.sh"
 timed "builtins (build-builtins.sh)" sh "$HERE/build-builtins.sh"
 prev="$SEED"
