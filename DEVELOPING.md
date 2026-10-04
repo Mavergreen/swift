@@ -67,7 +67,7 @@ export MAVERICKS_BUILD_ROOT="$HOME/mm-build"   # not /tmp (a reboot wipes it), n
 ### The runtime
 
 ```sh
-./build-llvm.sh     # LLVM build support and lld, with clang-22: about 28 min the first time
+./build-llvm.sh     # LLVM build support and lld, with clang-22: about 31 min the first time
 ./build.sh          # the runtime, with the installed toolchain: about 5 min
 S="$MAVERICKS_BUILD_ROOT/swift"; R="$S/payload/runtime/usr/local/mavergreen/swift-runtime"
 SWIFTC=/usr/local/mavergreen/bin/swiftc SWIFT_RUNTIME_PREFIX="$R" DIST="$S/dist" sh make-selftest.sh
@@ -106,7 +106,9 @@ the second one, file for file:
   depend on the seed. The compiler's Swift half is compiled by the seed. The new compiler then builds its
   own standard library and runtime (`build.sh`), and the stage's toolchain is staged with them.
 - **Stages 2 and 3:** the same build dirs. Each stage reconfigures the compiler for its new host (the
-  previous stage), recompiles only the Swift half, and builds and stages again.
+  previous stage), recompiles only the Swift half, and builds and stages again. `build.sh` reuses the previous stdlib build
+  when the compiler's bytes (and the other inputs it stamps) are unchanged, so at a fixed point stage 3's
+  stdlib is mostly stage 2's.
 - **The fixed point:** stage 2's and stage 3's toolchains are the same files (the compiler, clang, lld,
   the standard library, the builtins archive, the helpers' outputs). `self-host.sh` checks only that stage 2
   equals stage 3. Seeded by the same release, stage 1 is expected to equal them too, as it did in the T4 runs, but
@@ -120,17 +122,16 @@ Budget on a 6-core Mac Pro (Xeon E5-1650 v2, 12 threads), from nothing:
 
 | step | wall time |
 |---|---|
-| `build-llvm.sh` (first time) | 28 min |
-| builtins | 1 min |
-| stage 1: LLVM, clang and lld | 60 min |
-| stage 1: the compiler (C++ half, then Swift half) | 45 min |
-| each stage's standard library and runtime | 5 min |
-| stages 2 and 3: the compiler's Swift half | 7 min and 6 min |
-| in all | about 2 h 50 min |
+| `build-llvm.sh` (first time) | about 31 min |
+| builtins | under a minute |
+| stage 1: LLVM, clang, lld and the compiler | about 106 min |
+| each stage's standard library and runtime | 3 to 5 min |
+| stages 2 and 3: the compiler's Swift half | about 6 min each |
+| in all | about 2 h 40 min |
 
-It needs about 10 GB under the build root, and 1 GB more for the two SDKs (fetched once into
+It needs about 8 GB under the build root, and 1 GB more for the two SDKs (fetched once into
 `~/Library/Caches/mavericks-sdk`). A later run reuses LLVM, clang, lld and the compiler's C++ half,
-and takes about 40 minutes.
+so it should take much less; that is an estimate, not a measurement.
 
 Since the seed must compile this checkout's compiler, a seed of an earlier Swift release (6.4 building
 6.5) is untested until the next Swift bump.

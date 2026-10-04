@@ -17,7 +17,8 @@
 #      stage's toolchain is staged with them.
 #   3. The fixed point: stage 2's and stage 3's toolchains are the same files (lib.sh's toolchain_cmp:
 #      the compiler, clang, lld, the stdlib, the builtins archive, the helpers' outputs). Seeded by the
-#      same release, stage 1 already equals them; stage 3 is what makes the check independent of the seed.
+#      same release, stage 1 is expected to equal them (as in the T4 runs), but only stage 2 = stage 3 is
+#      checked; stage 3 is what makes the check independent of the seed.
 #   4. --compare <prefix>: stage 2's toolchain and <prefix> are the same files. With the installed
 #      release as both seed and <prefix>, and this checkout at that release's tag, that verifies the
 #      release: what it ships is what its source builds, on this Mac.
