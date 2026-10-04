@@ -7,7 +7,10 @@
 #   rpath is the installed runtime's, then builds the gate corpus through make-selftest.sh's SWIFTC=
 #   mode, and its clang links C that uses @available (its builtins archive is where the driver looks).
 #   Its bare clang and clang++, given no flags, must build for 10.9 on this modern host too (clang.cfg
-#   and clang++.cfg). Nothing it builds is run: the runtime is not installed here, and running them is
+#   and clang++.cfg), and its bare clang, given only the SDK, must link C with the toolchain's own
+#   ld64.lld (its default linker) and none of the flags a newer ld64 takes (its pinned host linker
+#   version): 6.4.0-mavericks.8's clang ran the host's ld, with -no_deduplicate, which OS X 10.9's
+#   refuses. Nothing it builds is run: the runtime is not installed here, and running them is
 #   the real-10.9 gate's job. The native toolchain's compiler and linker are x86_64, so on an arm64 host
 #   every one of their processes runs translated (INGREDIENTS.md declares it:
 #   rosetta:tests/toolchain-smoke-test.sh); the cross toolchain's are arm64 and run natively. SKIPs (77)
@@ -99,4 +102,14 @@ for d in clang clang++; do
   v="$(otool -l "$T/bare-$d.o" | awk '$1 == "cmd" { c = $2 } c == "LC_VERSION_MIN_MACOSX" && $1 == "version" { print $2 }')"
   [ "$v" = 10.9 ] || fail "bare $d built for macOS '$v', not 10.9"
 done
+echo "-- bare clang links C with the toolchain's own ld64.lld, given only the SDK"
+printf 'int main(void) { return 0; }\n' > "$T/hi.c"
+LD="$("$TC/bin/clang" -isysroot "$SDKROOT" -### "$T/hi.c" -o "$T/hi" 2>&1 | tail -1 | sed "s/^ *//")" || fail "bare clang -### failed"
+echo "$LD" | cut -c1-160
+BIN="$(CDPATH='' cd -P -- "$TC/bin" && pwd -P)"
+case "$LD" in "\"$BIN/ld64.lld\""*) ;; *) fail "bare clang links with $(echo "$LD" | awk '{ print $1 }'), not $BIN/ld64.lld" ;; esac
+case "$LD" in *'"-no_deduplicate"'*) fail "bare clang passes -no_deduplicate, a flag for an ld64 of 262 or later" ;; esac
+"$TC/bin/clang" -isysroot "$SDKROOT" "$T/hi.c" -o "$T/hi" || fail "bare clang could not link C"
+plat="$(dyld_info -platform "$T/hi" | awk '$1 == "macOS" { print $2, $3 }')"
+[ "$plat" = "10.9 10.9" ] || fail "bare clang's program records minOS and SDK '$plat', not '10.9 10.9'"
 echo "PASS"
