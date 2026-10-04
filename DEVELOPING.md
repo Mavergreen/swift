@@ -48,7 +48,8 @@ Once, install:
   6.4.0 that is the newest `6.4.0-mavericks.N`. `build.sh` prints the release it builds with, and refuses
   one of another Swift version. The same release's runtime package runs the programs its `swiftc`
   builds; the gate below needs none;
-- mavericks-clang-22's native package (it compiles LLVM, clang, lld and compiler-rt's builtins);
+- mavericks-clang-22's native package, the release `pins.env`'s `CLANG22_VERSION` names (it compiles LLVM,
+  clang, lld and compiler-rt's builtins; `self-host.sh` refuses any other release's receipt);
 - the shipyard package (`shipyard-cmake`).
 
 pkgsrc supplies `python3` (gyb, line-directive, LLVM's CMake), `ninja`, and a `git` newer than 10.9's
@@ -107,8 +108,9 @@ the second one, file for file:
 - **Stages 2 and 3:** the same build dirs. Each stage reconfigures the compiler for its new host (the
   previous stage), recompiles only the Swift half, and builds and stages again.
 - **The fixed point:** stage 2's and stage 3's toolchains are the same files (the compiler, clang, lld,
-  the standard library, the builtins archive, the helpers' outputs). Seeded by the same release, stage 1
-  already equals them. Stage 3 is what makes the check independent of the seed.
+  the standard library, the builtins archive, the helpers' outputs). `self-host.sh` checks only that stage 2
+  equals stage 3. Seeded by the same release, stage 1 is expected to equal them too, as it did in the T4 runs, but
+  nothing checks it. Stage 3 is what makes the check independent of the seed.
 
 The stages land in `$MAVERICKS_BUILD_ROOT/swift/self-host/s<N>/` (`toolchain/`, the package's payload,
 and `runtime/`). `self-host.sh` prints the gate's commands at the end: the self-test bundle built by
@@ -135,11 +137,13 @@ Since the seed must compile this checkout's compiler, a seed of an earlier Swift
 
 ### Verifying a release
 
-To check, on your own 10.9 Mac, that the installed release is what its source builds:
+To check, on your own 10.9 Mac, that the installed release is what its source builds, first install the
+mavericks-clang-22 release that tag's `pins.env` names as `CLANG22_VERSION` (`self-host.sh` fails when the
+installed one differs):
 
 ```sh
 V="$(pkgutil --pkg-info dev.mavergreen.swift-toolchain | sed -n 's/^version: //p')"   # the installed release
-git checkout "$V"                 # its tag
+git checkout "$V"                 # its tag (afterwards, `git checkout -` returns to your branch)
 ./self-host.sh --compare /usr/local/mavergreen/swift-toolchain
 ```
 
@@ -147,7 +151,7 @@ git checkout "$V"                 # its tag
 compiler, clang, lld, standard library, builtins archive and helper outputs are the bytes this Mac built
 from the release's source. The same release's runtime package carries those same `libswiftCore.dylib` and
 `libswiftSwiftOnoneSupport.dylib` (the toolchain's `lib/swift/macosx` holds them too), and `cmp` shows that
-this Mac built them:
+this Mac built them (install that release's runtime package first):
 
 ```sh
 S="$MAVERICKS_BUILD_ROOT/swift/self-host/s2/runtime/usr/local/mavergreen/swift-runtime/lib/swift"
