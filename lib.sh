@@ -260,13 +260,7 @@ runtime_patches_unlisted() {
 # otool's LC_VERSION_MIN_MACOSX or LC_BUILD_VERSION (OS X 10.9 has no dyld_info). Prints nothing when
 # the file records neither.
 macho_minos() {
-  if [ -n "${DYLDINFO:-}" ]; then
-    "$DYLDINFO" -platform "$1" | awk '$1 == "macOS" { print $2; exit }'
-  else
-    otool -l "$1" | awk '$1 == "cmd" { c = $2 }
-      c == "LC_VERSION_MIN_MACOSX" && $1 == "version" { print $2; exit }
-      c == "LC_BUILD_VERSION" && $1 == "minos" { print $2; exit }'
-  fi
+  macho_version "$1" | awk '{ print $1 }'   # the pipe's status is awk's, as before: a reader failure prints nothing
 }
 
 # macho_imports <macho> -- one line per symbol <macho> imports, `<symbol> [weak-import] (from <lib>)` for
@@ -334,7 +328,7 @@ toolchain_digest() {
                "$_td_cl/darwin/libclang_rt.osx.a"; do
     [ -f "$1/$_td_f" ] || { echo "toolchain_digest: no $1/$_td_f" >&2; return 1; }
   done
-  _td_list="$(cd "$1" && find lib/swift/macosx lib/swift/shims "$_td_cl" ! -type d)" \
+  _td_list="$(cd "$1" && find $(toolchain_stdlib_trees "$_td_cl") ! -type d)" \
     || { echo "toolchain_digest: could not list $1's stdlib, shims and builtins" >&2; return 1; }
   _td_list="$(printf '%s\n' "$_td_list" | LC_ALL=C sort)"
   _td_line=""
@@ -400,4 +394,209 @@ toolchain_digests_agree() {
     for (i = 1; i <= m; i++) if (!(y[i] in inA)) print "  > " y[i]
   }' >&2
   return 1
+}
+
+# clang22_prefix cross|native <repo> -- prints the prefix of the mavericks-clang-22 that compiles the
+# 10.9-hosted toolchain and compiler-rt's builtins in that mode: cross, the CROSS toolchain
+# <repo>/fetch-clang22.sh pins (pins.env's CLANG22_VERSION); native, the installed native one,
+# ${CLANG22_PREFIX:-/usr/local/mavergreen/clang22}. Fails, naming it, when one of the tools both modes
+# take from it is not there: clang, clang++ and ld64.lld, and llvm-ar, llvm-ranlib, llvm-libtool-darwin,
+# llvm-lipo and llvm-nm -- one archiver, one indexer and one reader on both hosts, so the archives the
+# build makes, and what links them, are the same bytes on both (T4 spike Q1 and Q5).
+clang22_prefix() {
+  case "$1" in
+    cross) _cp="$(sh "$2/fetch-clang22.sh")" || { echo "clang22_prefix: $2/fetch-clang22.sh failed" >&2; return 1; } ;;
+    native) _cp="${CLANG22_PREFIX:-/usr/local/mavergreen/clang22}" ;;
+    *) echo "clang22_prefix: the mode is cross or native, not '$1'" >&2; return 2 ;;
+  esac
+  for _ct in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-nm; do
+    [ -x "$_cp/bin/$_ct" ] || { echo "clang22_prefix: no $_cp/bin/$_ct (mavericks-clang-22's $1 package provides it)" >&2; return 1; }
+  done
+  printf '%s\n' "$_cp"
+}
+
+# sdk109_stubs -- prints the pinned MacOSX10.9.sdk exactly as its tarball holds it, its libraries the
+# original MH_DYLIB_STUB files, fetched and verified with shipyard's own pin (sdk-pins.sh) and fetcher
+# (mavericks_fetch.sh) into the stubs/ dir of fetch_sdk.sh's cache (MAVERICKS_SDK_CACHE). fetch_sdk.sh
+# converts those stubs to .tbd wherever tapi exists, which is every modern Mac and never OS X 10.9, and lld
+# orders a .tbd's exports by name but a stub's in trie order, so a toolchain linked on each differed in
+# its symbol table (T4 spike Q5; shipyard BACKLOG #30): both hosts link the toolchain against these. The
+# tarball fetch_sdk.sh already cached is reused. Needs $SHIPYARD (msc.sh).
+sdk109_stubs() {
+  _ss_cache="${MAVERICKS_SDK_CACHE:-$HOME/Library/Caches/mavericks-sdk}"
+  { . "$SHIPYARD/mavericks_fetch.sh" && . "$SHIPYARD/sdk-pins.sh"; } || {
+    echo "sdk109_stubs: cannot source mavericks_fetch.sh and sdk-pins.sh from $SHIPYARD" >&2; return 1; }
+  _ss_pin="$(mav_sdk_pin x86_64)" || { echo "sdk109_stubs: shipyard pins no x86_64 SDK" >&2; return 1; }
+  # shellcheck disable=SC2086  # the pin is four space-free words by construction (sdk-pins.sh)
+  set -- $_ss_pin
+  _ss_dir="$_ss_cache/stubs"
+  if [ ! -d "$_ss_dir/$4/usr/lib" ]; then
+    mkdir -p "$_ss_dir" || return 1
+    if [ ! -f "$_ss_dir/$3" ] && [ -f "$_ss_cache/$3" ]; then cp "$_ss_cache/$3" "$_ss_dir/$3" || return 1; fi
+    mav_fetch_pinned "$1" "$2" "$_ss_dir" "$3" || { echo "sdk109_stubs: could not fetch and verify $3" >&2; return 1; }
+  fi
+  [ -d "$_ss_dir/$4/usr/lib" ] || { echo "sdk109_stubs: $_ss_dir/$4 has no usr/lib" >&2; return 1; }
+  printf '%s\n' "$_ss_dir/$4"
+}
+
+# macho_version <macho> -- `<minOS> <SDK>` as <macho> records them: dyld_info when $DYLDINFO names it;
+# else otool's LC_VERSION_MIN_MACOSX or LC_BUILD_VERSION (OS X 10.9 has no dyld_info). Prints nothing
+# when the file records neither; fails when the reader fails. The one parser: macho_minos is its first word.
+macho_version() {
+  if [ -n "${DYLDINFO:-}" ]; then
+    _mv="$("$DYLDINFO" -platform "$1")" || return 1
+    printf '%s\n' "$_mv" | awk '$1 == "macOS" { print $2, $3; exit }'
+  else
+    _mv="$(otool -l "$1")" || return 1
+    printf '%s\n' "$_mv" | awk '$1 == "cmd" { c = $2 }
+      c == "LC_VERSION_MIN_MACOSX" && $1 == "version" { v = $2 }
+      c == "LC_VERSION_MIN_MACOSX" && $1 == "sdk" { print v, $2; exit }
+      c == "LC_BUILD_VERSION" && $1 == "minos" { v = $2 }
+      c == "LC_BUILD_VERSION" && $1 == "sdk" { print v, $2; exit }'
+  fi
+}
+
+# macho_rpaths <macho> -- each LC_RPATH <macho> records, one per line, in order: dyld_info when $DYLDINFO
+# names it, else otool. Fails when the reader fails.
+macho_rpaths() {
+  if [ -n "${DYLDINFO:-}" ]; then
+    _mr="$("$DYLDINFO" -rpaths "$1")" || return 1
+    printf '%s\n' "$_mr" | awk 'NR > 2 { print $1 }'
+  else
+    _mr="$(otool -l "$1")" || return 1
+    printf '%s\n' "$_mr" | awk '$1 == "cmd" { c = $2 } c == "LC_RPATH" && $1 == "path" { print $2 }'
+  fi
+}
+
+# host_swiftc_stamp <toolchain-prefix> -- four lines: `prefix <toolchain-prefix>` (CMake knows the host
+# swiftc by its path), then `<role> <sha256>` for what a toolchain built with that host swiftc compiles
+# its Swift half with and against: the host's swift-frontend, and the Swift.swiftmodule and
+# libswiftCore.dylib in its lib/swift/macosx (the stdlib's inlinable code lands in the Swift half, and
+# HOSTTOOLS links against that dylib). Fails, naming it, when one is missing.
+host_swiftc_stamp() {
+  printf 'prefix %s\n' "$1"
+  for _hw_r in swift-frontend:bin/swift-frontend \
+               swiftmodule:lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule \
+               libswiftCore:lib/swift/macosx/libswiftCore.dylib; do
+    _hw_f="$1/${_hw_r#*:}"
+    [ -f "$_hw_f" ] || { echo "host_swiftc_stamp: no $_hw_f -- is a Swift toolchain at $1?" >&2; return 1; }
+    _hw_s="$(shasum -a 256 < "$_hw_f" | awk '{ print $1 }')"
+    [ "${#_hw_s}" -eq 64 ] || { echo "host_swiftc_stamp: could not hash $_hw_f" >&2; return 1; }
+    printf '%s %s\n' "${_hw_r%%:*}" "$_hw_s"
+  done
+}
+
+# swift_half_reset <swift-build-dir> <stamp> -- leaves a configured <dir> as it is when its
+# mavergreen-host.stamp holds exactly <stamp> (host_swiftc_stamp's); otherwise removes CMake's cache
+# (CMakeCache.txt and CMakeFiles/) and the Swift half's objects (SwiftCompilerSources/*.o), saying so,
+# and keeps the rest: the C++ half does not depend on the host swiftc. CMake, seeing CMAKE_Swift_COMPILER
+# change to another path, drops its cache itself and reconfigures WITHOUT the command line's -D options
+# (T4 spike blocker 2), and ninja sees a compiler only by its path, which a toolchain updated in place
+# keeps. An empty <stamp> is refused: it would equal the empty read of a missing stamp. The caller writes
+# <stamp> there once it has configured <dir>.
+swift_half_reset() {
+  [ -n "$2" ] || { echo "swift_half_reset: an empty stamp for $1" >&2; return 1; }
+  [ -f "$1/CMakeCache.txt" ] || return 0
+  if [ "$(cat "$1/mavergreen-host.stamp" 2>/dev/null)" = "$2" ]; then return 0; fi
+  echo "    $1: its host swiftc changed, or went unrecorded: configuring it afresh, and recompiling the Swift half"
+  rm -rf "$1/CMakeCache.txt" "$1/CMakeFiles" "$1/mavergreen-host.stamp" && rm -f "$1"/SwiftCompilerSources/*.o
+}
+
+# stdlib_layout <lib/swift dir> -- `build` when <dir> is a stdlib build's lib/swift (build.sh's
+# stdlib-build: the two dylibs in macosx/x86_64/), `toolchain` when it is a staged toolchain's (the two
+# dylibs in macosx/); both hold macosx/Swift.swiftmodule, macosx/SwiftOnoneSupport.swiftmodule,
+# macosx/layouts-x86_64.yaml and shims/. Fails, naming what is missing, for anything else.
+stdlib_layout() {
+  for _sl_f in macosx/Swift.swiftmodule macosx/SwiftOnoneSupport.swiftmodule macosx/layouts-x86_64.yaml shims; do
+    [ -e "$1/$_sl_f" ] || { echo "stdlib_layout: $1 has no $_sl_f" >&2; return 1; }
+  done
+  if [ -f "$1/macosx/x86_64/libswiftCore.dylib" ] && [ -f "$1/macosx/x86_64/libswiftSwiftOnoneSupport.dylib" ]; then
+    echo build
+  elif [ -f "$1/macosx/libswiftCore.dylib" ] && [ -f "$1/macosx/libswiftSwiftOnoneSupport.dylib" ]; then
+    echo toolchain
+  else
+    echo "stdlib_layout: $1 holds libswiftCore.dylib and libswiftSwiftOnoneSupport.dylib in neither macosx/x86_64/ (a stdlib build) nor macosx/ (a toolchain)" >&2
+    return 1
+  fi
+}
+
+# toolchain_stdlib_trees [<clang-lib-dir>...] -- the trees, relative to a toolchain prefix, that a
+# toolchain's build makes alike wherever it runs and that two toolchain pkgs must carry byte for byte, one
+# per line: lib/swift/macosx and lib/swift/shims (the stdlib), then each <clang-lib-dir> given (the
+# builtins archive's lib/clang/<v>/lib, which the caller names: toolchain_digest the one its resource dir
+# is, toolchain_release_files every one there is). One definition for both, so what is digested and what
+# is compared cannot drift apart.
+toolchain_stdlib_trees() {
+  printf '%s\n' lib/swift/macosx lib/swift/shims
+  for _ts_c in "$@"; do printf '%s\n' "$_ts_c"; done
+}
+
+# toolchain_release_files <toolchain-prefix> -- the files of a Swift toolchain prefix that its build makes,
+# one relative path per line, sorted: bin/swift-frontend, bin/clang and bin/ld64.lld, and every file under
+# toolchain_stdlib_trees (the stdlib, and the builtins archive) and share/swift (the helpers' outputs). The
+# rest of a prefix (the wrappers, the docs, shipyard's SDK fetcher, clang's headers) is copied from a
+# checkout or the installed shipyard.
+toolchain_release_files() {
+  ( cd "$1" || exit 1
+    for _rf in bin/swift-frontend bin/clang bin/ld64.lld; do if [ -f "$_rf" ]; then echo "$_rf"; fi; done
+    # shellcheck disable=SC2046  # trees hold no space: the glob's matches are lib/clang/<version>/lib
+    for _rd in $(toolchain_stdlib_trees lib/clang/*/lib) share/swift; do
+      if [ -d "$_rd" ]; then find "$_rd" -type f; fi
+    done ) | LC_ALL=C sort
+}
+
+# toolchain_cmp <prefix> <prefix> -- 0 when two Swift toolchain prefixes hold the same
+# toolchain_release_files, byte for byte (cmp), and prints `same: <n> files`; otherwise 1, listing each
+# file that differs (`differ: <path>`) or that only one prefix holds (`only in <prefix>: <path>`). Fails
+# too, saying so, when either prefix has no bin/swift-frontend: two empty lists must never compare equal.
+toolchain_cmp() {
+  for _tc_p in "$1" "$2"; do
+    [ -f "$_tc_p/bin/swift-frontend" ] || { echo "toolchain_cmp: $_tc_p has no bin/swift-frontend" >&2; return 1; }
+  done
+  _tc_all="$( { toolchain_release_files "$1"; toolchain_release_files "$2"; } | LC_ALL=C sort -u)"
+  _tc_rc=0; _tc_n=0
+  while IFS= read -r _tc_f; do
+    if [ ! -f "$1/$_tc_f" ]; then echo "only in $2: $_tc_f"; _tc_rc=1
+    elif [ ! -f "$2/$_tc_f" ]; then echo "only in $1: $_tc_f"; _tc_rc=1
+    elif cmp -s "$1/$_tc_f" "$2/$_tc_f"; then _tc_n=$((_tc_n + 1))
+    else echo "differ: $_tc_f"; _tc_rc=1
+    fi
+  done <<TCEOF
+$_tc_all
+TCEOF
+  if [ "$_tc_rc" -eq 0 ]; then echo "same: $_tc_n files"; fi
+  return "$_tc_rc"
+}
+
+# pkg_extract_product <pkg> <product> <dir> -- extracts, into <dir> (replaced), the payload of the one
+# component of the product archive <pkg> that installs /usr/local/mavergreen/<product>, and prints that
+# prefix, <dir>/usr/local/mavergreen/<product>; the rest of the payload (an updater under Library/, the
+# family's base component) is left out. pkgutil --expand and ditto, so it runs on a modern Mac and on OS X
+# 10.9 alike (10.9's pkgutil has no --expand-full). Fails when no component installs that prefix, or more
+# than one does. <dir> is rm -rf'd first, so it is refused when relative, when it is $HOME, and when
+# scripts/outdir.sh's refuse_root_outdir (which the caller has sourced) refuses it: / by any name.
+pkg_extract_product() {
+  case "$3" in /*) ;; *) echo "pkg_extract_product: '$3' is not an absolute path" >&2; return 1 ;; esac
+  command -v refuse_root_outdir > /dev/null 2>&1 \
+    || { echo "pkg_extract_product: source scripts/outdir.sh first (refuse_root_outdir guards the rm -rf of $3)" >&2; return 1; }
+  ( refuse_root_outdir pkg_extract_product "$3" ) || return 1
+  if [ -d "$3" ] && [ "$(CDPATH='' cd -P -- "$3" && pwd -P)" = "$(CDPATH='' cd -P -- "$HOME" && pwd -P)" ]; then
+    echo "pkg_extract_product: refusing out-dir '$3' (it is \$HOME)" >&2; return 1
+  fi
+  [ -f "$1" ] || { echo "pkg_extract_product: no $1" >&2; return 1; }
+  rm -rf "$3" "$3.x" && mkdir -p "$3/usr/local/mavergreen" "$3.x" || return 1
+  pkgutil --expand "$1" "$3.x/pkg" || { echo "pkg_extract_product: pkgutil could not expand $1" >&2; return 1; }
+  _pe_n=0; _pe_hit=""
+  for _pe_p in "$3.x"/pkg/*/Payload "$3.x"/pkg/Payload; do
+    [ -f "$_pe_p" ] || continue
+    _pe_n=$((_pe_n + 1)); _pe_t="$3.x/c$_pe_n"
+    mkdir -p "$_pe_t" && ditto -x -z "$_pe_p" "$_pe_t" || { echo "pkg_extract_product: could not extract $_pe_p" >&2; return 1; }
+    if [ -d "$_pe_t/usr/local/mavergreen/$2" ]; then
+      [ -z "$_pe_hit" ] || { echo "pkg_extract_product: more than one component of $1 installs /usr/local/mavergreen/$2" >&2; return 1; }
+      _pe_hit="$_pe_t"
+    fi
+  done
+  [ -n "$_pe_hit" ] || { echo "pkg_extract_product: no component of $1 installs /usr/local/mavergreen/$2" >&2; return 1; }
+  mv "$_pe_hit/usr/local/mavergreen/$2" "$3/usr/local/mavergreen/$2" && rm -rf "$3.x" || return 1
+  printf '%s\n' "$3/usr/local/mavergreen/$2"
 }
