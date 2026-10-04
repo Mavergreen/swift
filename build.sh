@@ -52,7 +52,7 @@ echo "    python3 on PATH: $(if command -v python3 >/dev/null 2>&1; then python3
 case "$MODE" in cross|native) ;; *) echo "FAIL: mode '$MODE' is neither cross nor native"; exit 1 ;; esac
 HTC="${SWIFT_HOST_TOOLCHAIN:-}"
 if [ -z "$HTC" ] && [ "$MODE" = native ]; then HTC=/usr/local/mavergreen/swift-toolchain; fi
-set --   # the stdlib configure's extra arguments, below (build.sh takes none of its own)
+CMAKE_ARCH_ARGS=""   # extra stdlib-configure arguments (word-split on use, step 4): the architecture a named host's clang needs
 if [ -n "$HTC" ]; then
   native_host_shim "$HTC" "$ROOT/native-host" || { echo "FAIL: no host toolchain shim from $HTC"; exit 1; }
   HTC_RELEASE="$(host_toolchain_release "$HTC")" || exit 1
@@ -61,8 +61,8 @@ if [ -n "$HTC" ]; then
   # (Byte-neutral: Task 1's stdlib with the cross toolchain as host was identical.) The swift.org host's
   # clang is universal and is left as it was, as is native mode, whose Mac is x86_64.
   if [ "$MODE" = cross ]; then
-    set -- "-DCMAKE_OSX_ARCHITECTURES=$ARCH"
-    echo "    cmake architectures: $1 (a named host toolchain's clang is x86_64 only)"
+    CMAKE_ARCH_ARGS="-DCMAKE_OSX_ARCHITECTURES=$ARCH"
+    echo "    cmake architectures: $CMAKE_ARCH_ARGS (a named host toolchain's clang is x86_64 only)"
   fi
   TC="$ROOT/native-host/usr"
   CLANG_INC="$(clang_resource_include "$HTC")" || { echo "FAIL: no one clang resource dir in $HTC"; exit 1; }
@@ -173,7 +173,7 @@ shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER="$TC/bin/clang" -DCMAKE_CXX_COMPILER="$TC/bin/clang++" \
   -DCMAKE_OSX_SYSROOT="$SDK_RUNTIME" -DSWIFT_SDK_OSX_PATH="$SDK_RUNTIME" \
-  "$@" \
+  $CMAKE_ARCH_ARGS \
   -DCMAKE_IGNORE_PREFIX_PATH=/opt/pkg \
   "-DCMAKE_C_FLAGS=$PM_C" "-DCMAKE_CXX_FLAGS=$PM_C" \
   "-DCMAKE_EXE_LINKER_FLAGS=$LINK" "-DCMAKE_MODULE_LINKER_FLAGS=$LINK" \

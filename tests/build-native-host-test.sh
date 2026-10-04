@@ -81,4 +81,20 @@ grep -q 'SWIFT_HOST_TOOLCHAIN_VERSION' "$T/out" || fail "cross mode took a recei
 if build_cross ""; then fail "build.sh succeeded with no swift.org pkg"; fi
 if grep -q 'CMAKE_OSX_ARCHITECTURES' "$T/out"; then fail "cross mode without a host toolchain passes CMAKE_OSX_ARCHITECTURES"; fi
 grep -q "FAIL: no swift.org toolchain at $R/swift/cache/" "$T/out" || fail "cross mode without a host toolchain: $(cat "$T/out")"
+
+echo "-- the stdlib configure takes step 1's architecture arguments (the call is run here with a fake shipyard-cmake)"
+# Reaching step 4 for real needs the pinned swift source, patched; so the configure call itself is cut out of
+# build.sh (from `shipyard-cmake` to the first line with no trailing backslash) and run with CMAKE_ARCH_ARGS set.
+awk '/^shipyard-cmake /{on=1} on{print} on&&!/\\$/{exit}' "$REPO/build.sh" > "$T/configure.sh"
+[ -s "$T/configure.sh" ] || fail "found no shipyard-cmake call in build.sh"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@"\n' > "$T/fakebin/shipyard-cmake"; chmod +x "$T/fakebin/shipyard-cmake"
+configure_args() {  # $1 = CMAKE_ARCH_ARGS; the arguments the call passes, one a line
+  ( set +eu; CMAKE_ARCH_ARGS="$1"
+    PATH="$T/fakebin:$PATH"
+    . "$T/configure.sh" ) > "$T/cmake-args"
+}
+configure_args "-DCMAKE_OSX_ARCHITECTURES=x86_64"
+grep -qxF -e '-DCMAKE_OSX_ARCHITECTURES=x86_64' "$T/cmake-args" || fail "the configure call dropped CMAKE_ARCH_ARGS: $(cat "$T/cmake-args")"
+configure_args ""
+if grep -q 'CMAKE_OSX_ARCHITECTURES' "$T/cmake-args"; then fail "the configure call passes an architecture of its own"; fi
 echo "PASS"
