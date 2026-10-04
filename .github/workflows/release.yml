@@ -6,10 +6,14 @@ name: release
 # own Sparkle updater, sign all three, and attach the .pkgs + signed appcasts to one GitHub Release. Tags
 # ARE the version -- no `v` prefix; see VERSION.
 #
-# Six jobs: `version` resolves the one version every job labels its pkgs with; `build` (the runtime and
-# the native toolchain) and `build-cross` (the cross toolchain) run side by side, each building the
-# runtime's stdlib and builtins itself; `collect` checks that both toolchains carry those same bytes,
-# signs, renders the feeds and runs conformance over all three pkgs; `scan` and `publish` follow it.
+# Six jobs: `version` resolves the one version every job labels its pkgs with; `build-cross` builds the
+# cross toolchain, its Swift half compiled by the swift.org compiler (CI's one seed), then the stdlib --
+# built once, by that cross toolchain -- and the runtime pkg; `build` then builds the native toolchain,
+# its Swift half compiled by build-cross's toolchain, and stages build-cross's stdlib and builtins in it;
+# `collect` checks that both toolchains carry those same bytes, signs, renders the feeds and runs
+# conformance over all three pkgs; `scan` and `publish` follow it. CI never builds with an earlier
+# release; OS X 10.9 rebuilds the native toolchain with the previous release (self-host.sh), and the
+# two must be the same bytes (docs/superpowers/specs/2026-09-25-t4-self-hosting-design.md).
 #
 # The host build environment is built here too: build-llvm.sh (swiftlang LLVM build support, and the
 # lld that links the runtime), build-builtins.sh (compiler-rt's builtins for 10.9) and
@@ -61,8 +65,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # One version for the whole run: the two build jobs run side by side, and each labels its pkgs with
-  # this one (resolve-version.sh reuses a written VERSION: "every job must agree").
+  # One version for the whole run: both build jobs label their pkgs with this one (resolve-version.sh
+  # reuses a written VERSION: "every job must agree"), and build-cross declares it as the release of the
+  # cross toolchain it builds the stdlib with.
   version:
     runs-on: macos-26
     outputs:
@@ -124,9 +129,196 @@ jobs:
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
           echo "version=$VER publish=$PUBLISH"
 
-  # The runtime and the native toolchain.
-  build:
+  # The cross toolchain, the stdlib and the runtime: arm64, macOS 11.0, built natively on this arm64
+  # runner with nothing cross-compiled, its compiler's Swift half compiled by the swift.org compiler --
+  # the one seed. The stdlib every pkg ships is then built ONCE, by that cross toolchain; build stages the
+  # native toolchain with these same bytes, and collect checks that it did.
+  build-cross:
     needs: [version]
+    runs-on: macos-26
+    timeout-minutes: 355   # the same cap as build's: LLVM and swift-frontend, hours cold
+    env:
+      MAVERICKS_USE_CCACHE: "1"   # build-toolchain.sh launches its compilers through ccache
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install mavericks-shipyard
+        uses: Mavergreen/shipyard/.github/actions/install@v1
+
+      - name: Ensure ccache
+        run: command -v ccache >/dev/null 2>&1 || brew install ccache
+
+      # Its own key, disjoint from build's: the arm64 build's objects are not the native build's. The
+      # restore prefix (`ccache-<os>-cross-swift-`) is not a prefix of build's key either.
+      - name: Restore ccache (cross)
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-${{ runner.os }}-cross-swift-${{ hashFiles('pins.env','patches/**','build-toolchain.sh','lib.sh') }}
+          restore-keys: ccache-${{ runner.os }}-cross-swift-
+
+      - name: Record the pre-build tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
+
+      - name: Build out of tree
+        run: |
+          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+          echo "SWIFT_BUILD=$RUNNER_TEMP/mm-build/swift" >> "$GITHUB_ENV"
+
+      - name: Derive the upstream version from the pin, and pin the version the version job resolved
+        run: |
+          sh scripts/derive-upstream-version.sh
+          printf '%s\n' "${{ needs.version.outputs.version }}" > VERSION   # a build product; every later step reads this one
+
+      - name: Build the LLVM build support and lld (TableGen for the cross LLVM; lld links the runtime)
+        run: ./build-llvm.sh
+
+      - name: Fetch the swift.org compiler (verbatim; signer must match pins.env)
+        run: ./mirror-toolchain.sh
+
+      - name: Build compiler-rt's builtins (x86_64, 10.9; the runtime links them, every toolchain ships them)
+        run: ./build-builtins.sh
+
+      # The swift.org compiler's stdlib ships nowhere: it only makes the cross toolchain runnable, so that
+      # the cross toolchain can build the stdlib that does ship (below).
+      - name: Build a first stdlib with the swift.org compiler (to run the cross toolchain; it ships nowhere)
+        run: ./build.sh
+
+      - name: Disk before the toolchain build
+        run: df -h "$RUNNER_TEMP" | tail -1
+
+      - name: Build the cross toolchain (swift-frontend, lld and clang for arm64 / macOS 11; ccache)
+        id: toolchain
+        run: ./build-toolchain.sh --host arm64
+
+      - name: ccache statistics
+        if: ${{ !cancelled() && steps.toolchain.outcome != 'skipped' }}
+        run: |
+          if command -v ccache >/dev/null 2>&1; then ccache -s; else echo "no ccache on PATH: no statistics"; fi
+
+      # As in build: a cold build that fails late must not lose hours of ccache.
+      - name: Save ccache (cross), even when the build or a later step fails
+        if: ${{ !cancelled() && steps.toolchain.outcome != 'skipped' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ~/Library/Caches/ccache
+          key: ccache-${{ runner.os }}-cross-swift-${{ hashFiles('pins.env','patches/**','build-toolchain.sh','lib.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Stage the cross toolchain with the first stdlib (the stdlib build's host)
+        run: STAGE_HOST=arm64 sh scripts/stage-toolchain.sh "$SWIFT_BUILD/payload/toolchain-cross-seed"
+
+      # The ONE stdlib build: this repo's compiler, the cross toolchain above, builds the stdlib and the
+      # runtime every pkg ships, as a 10.9 Mac builds them with its toolchain (DEVELOPING.md). No pkg
+      # installed that prefix, so its release is declared: the one this run builds.
+      - name: Build the stdlib and the runtime with the cross toolchain (the stdlib every pkg ships)
+        run: |
+          SWIFT_HOST_TOOLCHAIN="$SWIFT_BUILD/payload/toolchain-cross-seed/usr/local/mavergreen/swift-toolchain-cross" \
+          SWIFT_HOST_TOOLCHAIN_VERSION="${{ needs.version.outputs.version }}" ./build.sh
+
+      - name: Compat guard over the runtime (must pass)
+        run: ./scripts/guard.sh "$SWIFT_BUILD/payload/runtime/usr/local/mavergreen/swift-runtime/lib/swift"/*.dylib
+
+      - name: Build swift-runtime-updater.app (Cocoa/Sparkle; must NOT link Swift)
+        run: |
+          # The Sparkle framework is fetched inside mavericks_add_updater_app (mavericks_fetch_sparkle).
+          shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
+            -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
+          shipyard-cmake --build "$SWIFT_BUILD/build/updater" --target swift-runtime-updater
+          otool -L "$SWIFT_BUILD/build/updater/swift-runtime-updater.app/Contents/MacOS/swift-runtime-updater" > /tmp/o.txt
+          cat /tmp/o.txt
+          ! grep -q 'libswift' /tmp/o.txt || { echo "::error::updater links a Swift runtime library (self-update circularity)"; exit 1; }
+
+      - name: Package runtime .pkg (10.9.5 floor; stages the manifest, updater + LaunchAgent)
+        run: REQUIRE_UPDATER=1 ./package.sh
+
+      - name: Stage the cross toolchain payload
+        run: |
+          STAGE_HOST=arm64 sh scripts/stage-toolchain.sh "$SWIFT_BUILD/payload/toolchain-cross"
+          du -sh "$SWIFT_BUILD/payload/toolchain-cross"; df -h "$RUNNER_TEMP" | tail -1
+
+      # Two batches: the three tools are arm64 (the family's arm64 pin, minOS 11.0 and SDK 11.3), the two
+      # stdlib dylibs x86_64 (the 10.9 target, by their declared sdk-pin deviation).
+      - name: Compat guard over the cross toolchain payload (must pass)
+        run: |
+          P="$SWIFT_BUILD/payload/toolchain-cross/usr/local/mavergreen/swift-toolchain-cross"
+          find "$P" -type f \( -perm -111 -o -name '*.dylib' \) \
+            -exec sh -c 'file "$1" | grep -q Mach-O && echo "$1"' _ {} \; | sort > "$RUNNER_TEMP/cross-machos"
+          cat "$RUNNER_TEMP/cross-machos"
+          # Exactly these five, so nothing new in the payload goes unguarded.
+          printf '%s\n' "$P/bin/clang" "$P/bin/ld64.lld" "$P/bin/swift-frontend" \
+            "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib" | sort > "$RUNNER_TEMP/cross-want"
+          cmp -s "$RUNNER_TEMP/cross-machos" "$RUNNER_TEMP/cross-want" \
+            || { echo "::error::the cross payload's Mach-O files are not swift-frontend, ld64.lld, clang and the 2 stdlib dylibs"; diff "$RUNNER_TEMP/cross-want" "$RUNNER_TEMP/cross-machos"; exit 1; }
+          MAVERICKS_ALLOW_ARCHS=arm64 ./scripts/guard.sh "$P/bin/swift-frontend" "$P/bin/ld64.lld" "$P/bin/clang"
+          ./scripts/guard.sh "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib"
+          # The builtins archive is not executable, so the list above misses it; guard it by name.
+          ./scripts/guard.sh "$P"/lib/clang/*/lib/darwin/libclang_rt.osx.a
+
+      - name: Digest the stdlib and builtins the cross toolchain ships
+        id: digest
+        run: |
+          d="$(. ./lib.sh && toolchain_digest "$SWIFT_BUILD/payload/toolchain-cross/usr/local/mavergreen/swift-toolchain-cross")"
+          echo "$d"
+          echo "digest=$d" >> "$GITHUB_OUTPUT"
+
+      # The cross toolchain runs natively here: no Rosetta. A SKIP is a failure, as in build's smoke.
+      - name: Cross toolchain smoke, native arm64 (the staged swiftc compiles and links; must not skip)
+        run: |
+          rc=0; STAGE_HOST=arm64 sh tests/toolchain-smoke-test.sh || rc=$?
+          [ "$rc" -ne 77 ] || { echo "::error::the cross toolchain smoke SKIPPED, so this run never ran the toolchain it ships"; exit 1; }
+          exit "$rc"
+
+      # arm64 / macOS 11, where the cross toolchain runs (clang22-cross's updater, CLANG_VARIANT=cross).
+      - name: Build swift-toolchain-cross-updater.app (Cocoa/Sparkle, arm64 / macOS 11; must NOT link Swift)
+        run: |
+          shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater-toolchain-cross" -DSWIFT_UPDATER_PRODUCT=swift-toolchain-cross \
+            -DCMAKE_OBJC_COMPILER=/usr/bin/clang -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
+          shipyard-cmake --build "$SWIFT_BUILD/build/updater-toolchain-cross" --target swift-toolchain-cross-updater
+          U="$SWIFT_BUILD/build/updater-toolchain-cross/swift-toolchain-cross-updater.app/Contents/MacOS/swift-toolchain-cross-updater"
+          otool -L "$U" > /tmp/oc.txt
+          cat /tmp/oc.txt
+          ! grep -q 'libswift' /tmp/oc.txt || { echo "::error::cross toolchain updater links a Swift runtime library (self-update circularity)"; exit 1; }
+          [ "$(lipo -archs "$U")" = arm64 ] || { echo "::error::the cross toolchain updater is $(lipo -archs "$U"), not arm64"; exit 1; }
+
+      - name: Package the cross toolchain .pkg (macOS 11 arm64 floor; stages the manifest, updater + LaunchAgent)
+        run: STAGE_HOST=arm64 REQUIRE_UPDATER=1 ./package-toolchain.sh
+
+      # The mirror changes only when Swift does, so it rides the new upstream's first release only
+      # (docs/superpowers/specs/2026-09-24-t1a-one-repo-design.md); INGREDIENTS.md declares its
+      # conformance deviations. This job fetched it (mirror-toolchain.sh), so it attaches it.
+      - name: Attach the swift.org mirror (a new upstream's first release only)
+        if: needs.version.outputs.publish == 'true'
+        run: |
+          case "${{ needs.version.outputs.version }}" in
+            *-mavericks.1)
+              . ./pins.env
+              cp "$SWIFT_BUILD/cache/$TOOLCHAIN_ASSET" "$SWIFT_BUILD/dist/" ;;
+            *) echo "not a -mavericks.1 release: no mirror" ;;
+          esac
+
+      - name: The build must not have written into the source tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
+
+      # build reads the cross toolchain pkg from this (its compiler's Swift half, and the stdlib and
+      # builtins it stages); collect signs every pkg in it, beside build's. On a -mavericks.1 release it
+      # carries the swift.org mirror too, so build downloads that once per Swift version.
+      - name: Upload the runtime and cross toolchain pkgs for build and collect
+        uses: actions/upload-artifact@v7
+        with:
+          name: swift-cross
+          path: ${{ env.SWIFT_BUILD }}/dist/*.pkg
+
+  # The native toolchain: x86_64, OS X 10.9, cross-compiled with mavericks-clang-22. Its compiler's Swift
+  # half is compiled by build-cross's toolchain, the same run's -- never the swift.org compiler, never an
+  # earlier release -- against the pinned 11.3 SDK, as self-host.sh compiles it on 10.9 with the previous
+  # release; the two seeds share nothing, so a 10.9 build equal to this one is the proof that neither
+  # changed it. Its stdlib and builtins are build-cross's, the cross pkg's own bytes.
+  build:
+    needs: [version, build-cross]
     runs-on: macos-26
     timeout-minutes: 355   # safety cap under GitHub's 360; the toolchain cross-build is hours cold (mavergreen-clang's cap)
     env:
@@ -171,40 +363,29 @@ jobs:
           sh scripts/derive-upstream-version.sh
           printf '%s\n' "${{ needs.version.outputs.version }}" > VERSION   # a build product; every later step reads this one
 
-      # Only build-toolchain.sh compiles through ccache; these steps build cold every run. Every input
-      # is pinned and verified, so correctness never depends on cache state.
-      - name: Build the LLVM build support and lld (TableGen + CMake package; lld links the runtime)
+      # Only build-toolchain.sh compiles through ccache. Every input is pinned and verified, so
+      # correctness never depends on cache state.
+      - name: Build the LLVM build support (TableGen and the native helpers' LLVM, for the cross build)
         run: ./build-llvm.sh
 
-      - name: Fetch the swift.org compiler (verbatim; signer must match pins.env)
-        run: ./mirror-toolchain.sh
+      - uses: actions/download-artifact@v8
+        with: { name: swift-cross, path: "${{ runner.temp }}/cross-dist" }
 
-      - name: Build compiler-rt's builtins (x86_64, 10.9; the runtime links them, the toolchain ships them)
-        run: ./build-builtins.sh
-
-      - name: Build the runtime (patched stdlib, 10.9 / x86_64)
-        run: ./build.sh
-
-      - name: Compat guard (must pass)
-        run: ./scripts/guard.sh "$SWIFT_BUILD/payload/runtime/usr/local/mavergreen/swift-runtime/lib/swift"/*.dylib
-
-      - name: Build swift-runtime-updater.app (Cocoa/Sparkle; must NOT link Swift)
+      # The pkg this release ships, unpacked as lib.sh's pkg_extract_product lays it out: the compiler
+      # that compiles this toolchain's Swift half, and the stdlib and builtins this toolchain stages.
+      # scripts/outdir.sh first: pkg_extract_product refuses to rm -rf its out-dir without its guard.
+      - name: Unpack the same run's cross toolchain
         run: |
-          # The Sparkle framework is fetched inside mavericks_add_updater_app (mavericks_fetch_sparkle).
-          shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
-            -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
-          shipyard-cmake --build "$SWIFT_BUILD/build/updater" --target swift-runtime-updater
-          otool -L "$SWIFT_BUILD/build/updater/swift-runtime-updater.app/Contents/MacOS/swift-runtime-updater" > /tmp/o.txt
-          cat /tmp/o.txt
-          ! grep -q 'libswift' /tmp/o.txt || { echo "::error::updater links a Swift runtime library (self-update circularity)"; exit 1; }
-
-      - name: Package runtime .pkg (10.9.5 floor; stages the manifest, updater + LaunchAgent)
-        run: REQUIRE_UPDATER=1 ./package.sh
+          . ./scripts/outdir.sh
+          . ./lib.sh
+          X="$(pkg_extract_product "$(ls "$RUNNER_TEMP"/cross-dist/swift-toolchain-cross-*.pkg)" swift-toolchain-cross "$RUNNER_TEMP/cross-toolchain")"
+          "$X/bin/swift-frontend" -version
+          echo "SWIFT_HOST_TOOLCHAIN=$X" >> "$GITHUB_ENV"
 
       - name: Disk before the toolchain build
         run: df -h "$RUNNER_TEMP" | tail -1
 
-      - name: Build the native toolchain (swift-frontend, lld and clang for 10.9; ccache)
+      - name: Build the native toolchain (swift-frontend, lld and clang for 10.9; its Swift half by the cross toolchain; ccache)
         id: toolchain
         run: ./build-toolchain.sh
 
@@ -224,14 +405,15 @@ jobs:
           path: ~/Library/Caches/ccache
           key: ccache-${{ runner.os }}-swift-${{ hashFiles('pins.env','patches/**','native-helpers/**','build-toolchain.sh','lib.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Stage the toolchain payload
+      - name: Stage the toolchain payload (the cross pkg's stdlib and builtins)
         run: |
-          sh scripts/stage-toolchain.sh "$SWIFT_BUILD/payload/toolchain"
+          sh scripts/stage-toolchain.sh --stdlib "$SWIFT_HOST_TOOLCHAIN/lib/swift" \
+            --builtins "$(ls "$SWIFT_HOST_TOOLCHAIN"/lib/clang/*/lib/darwin/libclang_rt.osx.a)" "$SWIFT_BUILD/payload/toolchain"
           du -sh "$SWIFT_BUILD/payload/toolchain"; df -h "$RUNNER_TEMP" | tail -1
 
       # collect compares this with build-cross's: the two toolchain pkgs must carry the same stdlib (its
       # dylibs, the swiftmodules whose inlinable code lands in every program, the shims) and builtins
-      # archive, byte for byte, since both are built from one source at one pin, in two jobs.
+      # archive, byte for byte. This job stages build-cross's, so a difference is a staging fault.
       - name: Digest the stdlib and builtins the native toolchain ships
         id: digest
         run: |
@@ -286,170 +468,15 @@ jobs:
       - name: Package the toolchain .pkg (10.9.5 floor; stages the manifest, updater + LaunchAgent)
         run: REQUIRE_UPDATER=1 ./package-toolchain.sh
 
-      # The mirror changes only when Swift does, so it rides the new upstream's first release only
-      # (docs/superpowers/specs/2026-09-24-t1a-one-repo-design.md); INGREDIENTS.md declares its
-      # conformance deviations.
-      - name: Attach the swift.org mirror (a new upstream's first release only)
-        if: needs.version.outputs.publish == 'true'
-        run: |
-          case "${{ needs.version.outputs.version }}" in
-            *-mavericks.1)
-              . ./pins.env
-              cp "$SWIFT_BUILD/cache/$TOOLCHAIN_ASSET" "$SWIFT_BUILD/dist/" ;;
-            *) echo "not a -mavericks.1 release: no mirror" ;;
-          esac
-
-      # NOTE: the self-test bundle is intentionally dropped from this release. The hand-rolled
-      # thorough_test linked Increment-1 siblings (libswiftObjectiveC/Darwin) not shipped in the
-      # core .pkg, so it only "passed" where those were already installed -- a mirage. It returns
-      # in a later release, rebuilt to match exactly what the .pkg ships. Acceptance for this
-      # release is the manual real-10.9 validation (500/500 + Guard Malloc/Scribble).
-
       - name: The build must not have written into the source tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
 
-      # collect signs these, beside build-cross's, and publishes all of them as the artifact `swift`.
-      - name: Upload the runtime and native toolchain pkgs for collect
+      # collect signs this, beside build-cross's, and publishes all of them as the artifact `swift`.
+      - name: Upload the native toolchain pkg for collect
         uses: actions/upload-artifact@v7
         with:
           name: swift-native
           path: ${{ env.SWIFT_BUILD }}/dist/*.pkg
-
-  # The cross toolchain: arm64, macOS 11.0, built natively on this arm64 runner with nothing
-  # cross-compiled. It builds its own LLVM build support, stdlib and builtins, which collect checks
-  # against build's, rather than waiting hours for build's.
-  build-cross:
-    needs: [version]
-    runs-on: macos-26
-    timeout-minutes: 355   # the same cap: LLVM and swift-frontend again, hours cold
-    env:
-      MAVERICKS_USE_CCACHE: "1"   # build-toolchain.sh launches its compilers through ccache
-    outputs:
-      digest: ${{ steps.digest.outputs.digest }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Install mavericks-shipyard
-        uses: Mavergreen/shipyard/.github/actions/install@v1
-
-      - name: Ensure ccache
-        run: command -v ccache >/dev/null 2>&1 || brew install ccache
-
-      # Its own key: the arm64 build's objects are not the native build's.
-      - name: Restore ccache (cross)
-        uses: actions/cache@v6
-        with:
-          path: ~/Library/Caches/ccache
-          key: ccache-${{ runner.os }}-cross-swift-${{ hashFiles('pins.env','patches/**','build-toolchain.sh','lib.sh') }}
-          restore-keys: ccache-${{ runner.os }}-cross-swift-
-
-      - name: Record the pre-build tree
-        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
-
-      - name: Build out of tree
-        run: |
-          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
-          echo "SWIFT_BUILD=$RUNNER_TEMP/mm-build/swift" >> "$GITHUB_ENV"
-
-      - name: Derive the upstream version from the pin, and pin the version the version job resolved
-        run: |
-          sh scripts/derive-upstream-version.sh
-          printf '%s\n' "${{ needs.version.outputs.version }}" > VERSION   # a build product; every later step reads this one
-
-      - name: Build the LLVM build support and lld (TableGen for the cross LLVM; lld links the runtime)
-        run: ./build-llvm.sh
-
-      - name: Fetch the swift.org compiler (verbatim; signer must match pins.env)
-        run: ./mirror-toolchain.sh
-
-      - name: Build compiler-rt's builtins (x86_64, 10.9; the cross toolchain ships them)
-        run: ./build-builtins.sh
-
-      - name: Build the runtime's stdlib (the cross toolchain ships it)
-        run: ./build.sh
-
-      - name: Disk before the toolchain build
-        run: df -h "$RUNNER_TEMP" | tail -1
-
-      - name: Build the cross toolchain (swift-frontend, lld and clang for arm64 / macOS 11; ccache)
-        id: toolchain
-        run: ./build-toolchain.sh --host arm64
-
-      - name: ccache statistics
-        if: ${{ !cancelled() && steps.toolchain.outcome != 'skipped' }}
-        run: |
-          if command -v ccache >/dev/null 2>&1; then ccache -s; else echo "no ccache on PATH: no statistics"; fi
-
-      # As in build: a cold build that fails late must not lose hours of ccache.
-      - name: Save ccache (cross), even when the build or a later step fails
-        if: ${{ !cancelled() && steps.toolchain.outcome != 'skipped' }}
-        uses: actions/cache/save@v6
-        with:
-          path: ~/Library/Caches/ccache
-          key: ccache-${{ runner.os }}-cross-swift-${{ hashFiles('pins.env','patches/**','build-toolchain.sh','lib.sh') }}-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Stage the cross toolchain payload
-        run: |
-          STAGE_HOST=arm64 sh scripts/stage-toolchain.sh "$SWIFT_BUILD/payload/toolchain-cross"
-          du -sh "$SWIFT_BUILD/payload/toolchain-cross"; df -h "$RUNNER_TEMP" | tail -1
-
-      # Two batches: the three tools are arm64 (the family's arm64 pin, minOS 11.0 and SDK 11.3), the two
-      # stdlib dylibs x86_64 (the 10.9 target, by their declared sdk-pin deviation).
-      - name: Compat guard over the cross toolchain payload (must pass)
-        run: |
-          P="$SWIFT_BUILD/payload/toolchain-cross/usr/local/mavergreen/swift-toolchain-cross"
-          find "$P" -type f \( -perm -111 -o -name '*.dylib' \) \
-            -exec sh -c 'file "$1" | grep -q Mach-O && echo "$1"' _ {} \; | sort > "$RUNNER_TEMP/cross-machos"
-          cat "$RUNNER_TEMP/cross-machos"
-          # Exactly these five, so nothing new in the payload goes unguarded.
-          printf '%s\n' "$P/bin/clang" "$P/bin/ld64.lld" "$P/bin/swift-frontend" \
-            "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib" | sort > "$RUNNER_TEMP/cross-want"
-          cmp -s "$RUNNER_TEMP/cross-machos" "$RUNNER_TEMP/cross-want" \
-            || { echo "::error::the cross payload's Mach-O files are not swift-frontend, ld64.lld, clang and the 2 stdlib dylibs"; diff "$RUNNER_TEMP/cross-want" "$RUNNER_TEMP/cross-machos"; exit 1; }
-          MAVERICKS_ALLOW_ARCHS=arm64 ./scripts/guard.sh "$P/bin/swift-frontend" "$P/bin/ld64.lld" "$P/bin/clang"
-          ./scripts/guard.sh "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib"
-          # The builtins archive is not executable, so the list above misses it; guard it by name.
-          ./scripts/guard.sh "$P"/lib/clang/*/lib/darwin/libclang_rt.osx.a
-
-      - name: Digest the stdlib and builtins the cross toolchain ships
-        id: digest
-        run: |
-          d="$(. ./lib.sh && toolchain_digest "$SWIFT_BUILD/payload/toolchain-cross/usr/local/mavergreen/swift-toolchain-cross")"
-          echo "$d"
-          echo "digest=$d" >> "$GITHUB_OUTPUT"
-
-      # The cross toolchain runs natively here: no Rosetta. A SKIP is a failure, as in build's smoke.
-      - name: Cross toolchain smoke, native arm64 (the staged swiftc compiles and links; must not skip)
-        run: |
-          rc=0; STAGE_HOST=arm64 sh tests/toolchain-smoke-test.sh || rc=$?
-          [ "$rc" -ne 77 ] || { echo "::error::the cross toolchain smoke SKIPPED, so this run never ran the toolchain it ships"; exit 1; }
-          exit "$rc"
-
-      # arm64 / macOS 11, where the cross toolchain runs (clang22-cross's updater, CLANG_VARIANT=cross).
-      - name: Build swift-toolchain-cross-updater.app (Cocoa/Sparkle, arm64 / macOS 11; must NOT link Swift)
-        run: |
-          shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater-toolchain-cross" -DSWIFT_UPDATER_PRODUCT=swift-toolchain-cross \
-            -DCMAKE_OBJC_COMPILER=/usr/bin/clang -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
-          shipyard-cmake --build "$SWIFT_BUILD/build/updater-toolchain-cross" --target swift-toolchain-cross-updater
-          U="$SWIFT_BUILD/build/updater-toolchain-cross/swift-toolchain-cross-updater.app/Contents/MacOS/swift-toolchain-cross-updater"
-          otool -L "$U" > /tmp/oc.txt
-          cat /tmp/oc.txt
-          ! grep -q 'libswift' /tmp/oc.txt || { echo "::error::cross toolchain updater links a Swift runtime library (self-update circularity)"; exit 1; }
-          [ "$(lipo -archs "$U")" = arm64 ] || { echo "::error::the cross toolchain updater is $(lipo -archs "$U"), not arm64"; exit 1; }
-
-      - name: Package the cross toolchain .pkg (macOS 11 arm64 floor; stages the manifest, updater + LaunchAgent)
-        run: STAGE_HOST=arm64 REQUIRE_UPDATER=1 ./package-toolchain.sh
-
-      - name: The build must not have written into the source tree
-        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
-
-      - name: Upload the cross toolchain pkg for collect
-        uses: actions/upload-artifact@v7
-        with:
-          name: swift-cross
-          path: ${{ env.SWIFT_BUILD }}/dist/swift-toolchain-cross-*.pkg
 
   # All three pkgs exist only here, so this is where the two toolchains are compared, and where the
   # release is signed and checked as a whole (mavergreen-clang's collect).
@@ -467,7 +494,8 @@ jobs:
           fetch-depth: 0
 
       # Every run, publishing or not: two toolchain pkgs that disagree about the stdlib or the builtins
-      # would build different programs from one source, which is what one release must never ship.
+      # would build different programs from one source, which is what one release must never ship. Both
+      # carry build-cross's one stdlib build, so a difference here is a staging fault in build.
       - name: The two toolchains carry the same stdlib and builtins archive, byte for byte
         env:
           NATIVE_DIGEST: ${{ needs.build.outputs.digest }}

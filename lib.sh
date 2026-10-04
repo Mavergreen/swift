@@ -315,11 +315,12 @@ compiler_patches() {
 # <path> (relative to the prefix), for every file under lib/swift/macosx, lib/swift/shims and
 # lib/clang/<v>/lib: the stdlib's dylibs, the swiftmodules whose inlinable code lands in every program a
 # toolchain builds, the shims and the builtins archive. The two toolchain pkgs must carry them byte for
-# byte, and in CI two jobs build them, each from the same source with its own build.sh and
-# build-builtins.sh, which is why they are compared. Fails, naming it, when an anchor (the two dylibs,
-# Swift's swiftmodule, the shims' module.modulemap, the builtins archive) is missing, or a tree holds a
-# link, a path with a space, or a file that cannot be hashed: two jobs that each printed nothing, or less
-# than the whole trees, must never compare equal.
+# byte: in CI build-cross builds them once and stages them in the cross toolchain, and build stages the
+# cross pkg's copy in the native one, so a difference is a staging fault; each job digests what it
+# staged, and collect compares the two. Fails, naming it, when an anchor (the two dylibs, Swift's
+# swiftmodule, the shims' module.modulemap, the builtins archive) is missing, or a tree holds a link, a
+# path with a space, or a file that cannot be hashed: two jobs that each printed nothing, or less than
+# the whole trees, must never compare equal.
 toolchain_digest() {
   _td_inc="$(clang_resource_include "$1")" || return 1
   _td_cl="lib/clang/$(basename "$(dirname "$_td_inc")")/lib"
