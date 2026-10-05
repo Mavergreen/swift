@@ -20,7 +20,7 @@ T="$(CDPATH='' cd -P -- "$T" && pwd -P)"
 
 echo "-- clang22_prefix: the native prefix with every tool, a refusal naming a missing one, the cross fetch"
 C="$T/clang22"; mkdir -p "$C/bin"
-for t in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-nm; do
+for t in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-nm llvm-otool llvm-strings; do
   printf '#!/bin/sh\n' > "$C/bin/$t"; chmod +x "$C/bin/$t"
 done
 [ "$(CLANG22_PREFIX="$C" clang22_prefix native "$REPO")" = "$C" ] || fail "native: not $C"
@@ -28,6 +28,10 @@ rm "$C/bin/llvm-libtool-darwin"
 if CLANG22_PREFIX="$C" clang22_prefix native "$REPO" > /dev/null 2> "$T/err"; then fail "accepted a clang22 without llvm-libtool-darwin"; fi
 grep -q "no $C/bin/llvm-libtool-darwin" "$T/err" || fail "did not name the missing tool: $(cat "$T/err")"
 printf '#!/bin/sh\n' > "$C/bin/llvm-libtool-darwin"; chmod +x "$C/bin/llvm-libtool-darwin"
+rm "$C/bin/llvm-otool"
+if CLANG22_PREFIX="$C" clang22_prefix native "$REPO" > /dev/null 2> "$T/err"; then fail "accepted a clang22 without llvm-otool (10.9's otool is a Command Line Tools stub)"; fi
+grep -q "no $C/bin/llvm-otool" "$T/err" || fail "did not name the missing llvm-otool: $(cat "$T/err")"
+printf '#!/bin/sh\n' > "$C/bin/llvm-otool"; chmod +x "$C/bin/llvm-otool"
 mkdir -p "$T/repo"; printf '#!/bin/sh\necho "%s"\n' "$C" > "$T/repo/fetch-clang22.sh"
 [ "$(clang22_prefix cross "$T/repo")" = "$C" ] || fail "cross: not what fetch-clang22.sh printed"
 rc=0; clang22_prefix both "$REPO" > /dev/null 2>&1 || rc=$?; [ "$rc" -eq 2 ] || fail "mode 'both': exit $rc, not 2"

@@ -39,6 +39,28 @@ v="$(DYLDINFO='' macho_version "$T/f11.dylib")"
   || fail "rpaths are '$(DYLDINFO='' macho_rpaths "$T/frp.dylib" | tr '\n' ' ')'"
 [ -z "$(DYLDINFO='' macho_rpaths "$T/f109.dylib")" ] || fail "found an rpath in a dylib that has none"
 if DYLDINFO='' macho_version "$T/nothere" > /dev/null 2>&1; then fail "macho_version succeeded on a file otool cannot read"; fi
+# platform: macOS's /bin/sh (bash 3.2) keeps a VAR=val prefix of a function call after the call; a
+#           subshell confines each override below to its own case.
+if ( OTOOL=false DYLDINFO='' macho_version "$T/f109.dylib" ) > /dev/null 2>&1; then fail "macho_version read with otool, not OTOOL"; fi
+if ( OTOOL=false DYLDINFO='' macho_rpaths "$T/frp.dylib" ) > /dev/null 2>&1; then fail "macho_rpaths read with otool, not OTOOL"; fi
+
+# On OS X 10.9 the build reads with clang22's llvm-otool and llvm-nm (the Command Line Tools' are stubs
+# without them); here, wherever a clang22 is (CLANG22_PREFIX, or the installed native one), they must say
+# what the host's own readers say.
+X="${CLANG22_PREFIX:-/usr/local/mavergreen/clang22}/bin"
+if [ -x "$X/llvm-otool" ] && [ -x "$X/llvm-nm" ]; then
+  echo "-- clang22's llvm-otool and llvm-nm say what otool and nm say ($X)"
+  for f in f109 f11 frp; do
+    got="$( (OTOOL="$X/llvm-otool" DYLDINFO='' macho_version "$T/$f.dylib") )"
+    [ "$got" = "$( (DYLDINFO='' macho_version "$T/$f.dylib") )" ] || fail "$f: llvm-otool reads minOS and SDK '$got'"
+    got="$( (OTOOL="$X/llvm-otool" DYLDINFO='' macho_rpaths "$T/$f.dylib") )"
+    [ "$got" = "$( (DYLDINFO='' macho_rpaths "$T/$f.dylib") )" ] || fail "$f: llvm-otool reads rpaths '$got'"
+    got="$( (NM="$X/llvm-nm" DYLDINFO='' macho_imports "$T/$f.dylib") )"
+    [ "$got" = "$( (DYLDINFO='' macho_imports "$T/$f.dylib") )" ] || fail "$f: llvm-nm reads imports '$got'"
+  done
+else
+  echo "-- no clang22 at $X: the host's otool and nm are the only readers checked"
+fi
 
 DI="$(xcrun -f dyld_info 2>/dev/null || :)"
 if [ -n "$DI" ]; then

@@ -35,7 +35,7 @@ printf '#!/bin/sh\necho "guard ALLOW=${MAVERICKS_ALLOW_ARCHS:-} $*" >> "%s/log"\
 mkdir -p "$T/bin" "$T/shipyard"
 for P in "$T/clang22" "$T/clang22n"; do
   mkdir -p "$P/bin"
-  for t in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-nm; do printf '#!/bin/sh\n' > "$P/bin/$t"; done
+  for t in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-nm llvm-otool llvm-strings; do printf '#!/bin/sh\n' > "$P/bin/$t"; done
   chmod +x "$P/bin/"*
 done
 cat > "$T/shipyard/clone_pinned.sh" <<F

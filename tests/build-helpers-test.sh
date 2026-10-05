@@ -99,6 +99,11 @@ if host_inputs_stamp "$T/fe" "$T/absent" "$T/bi" > /dev/null 2> "$T/err"; then f
 grep -q "$T/absent" "$T/err" || fail "did not name the missing input: $(cat "$T/err")"
 printf B > "$T/cl"; s2="$(host_inputs_stamp "$T/fe" "$T/cl" "$T/bi")"
 [ "$s2" != "$s1" ] || fail "a changed clang left the stamp as it was"
+printf e > "$T/ar"; s5="$(host_inputs_stamp "$T/fe" "$T/cl" "$T/bi" "$T/ar")" || fail "host_inputs_stamp failed with an archiver"
+[ "$(printf '%s\n' "$s5" | awk '{ print $1 }' | tr '\n' ' ')" = "swift-frontend clang clang.cfg clang++.cfg builtins archiver " ] || fail "stamp roles with an archiver: $s5"
+[ "$(printf '%s\n' "$s5" | sed 6d)" = "$s2" ] || fail "an archiver changed the other lines: $s5"
+printf E > "$T/ar"; s6="$(host_inputs_stamp "$T/fe" "$T/cl" "$T/bi" "$T/ar")"
+[ "$s6" != "$s5" ] || fail "a changed archiver left the stamp as it was"
 
 echo "-- reuse_build_dir: kept with the same stamp; removed with another, or none; an empty stamp refused"
 rc=0; reuse_build_dir "$T/sb" "$s1" > /dev/null || rc=$?; [ "$rc" -eq 0 ] || fail "failed on a dir that does not exist"
@@ -130,6 +135,14 @@ grep -q '/opt/pkg/lib/libz.1.dylib' "$T/out" || fail "did not list the /opt/pkg 
   && fail "passed although otool failed"
 ( export PATH="$T/fakebin:$PATH" FAKE_OTOOL_OUT=""; macho_links_none_under "$T/lld" /opt/pkg/ ) > /dev/null 2>&1 \
   && fail "passed although otool printed nothing (10.9's stub, without the Command Line Tools)"
+# OTOOL names the reader (clang22's llvm-otool on 10.9): here one that sees /opt/pkg, beside a clean otool on PATH.
+cp "$T/fakebin/otool" "$T/llvm-otool"
+( export PATH="$T/fakebin:$PATH" FAKE_OTOOL_OUT="$LIBS
+    /opt/pkg/lib/libz.1.dylib (compatibility version 1.0.0)"; OTOOL=false macho_links_none_under "$T/lld" /opt/pkg/ ) > "$T/out" 2>&1 \
+  && fail "passed although OTOOL could not read"
+grep -q '(false)' "$T/out" || fail "did not name OTOOL's reader: $(cat "$T/out")"
+( export PATH="$T/fakebin:$PATH" FAKE_OTOOL_OUT="$LIBS"; OTOOL="$T/llvm-otool" macho_links_none_under "$T/lld" /opt/pkg/ ) > /dev/null \
+  || fail "refused a clean lld read by OTOOL"
 
 echo "-- host_toolchain_release: the receipt's release, of SWIFT_VERSION, whatever the pkg id"
 SWIFT_VERSION=6.4.0; mkdir -p "$T/fakebin"

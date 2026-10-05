@@ -33,7 +33,7 @@ for c in ar lipo nm libtool ranlib; do
 done
 for P in "$T/cross" "$T/native"; do
   mkdir -p "$P/bin"
-  for t in clang clang++ ld64.lld llvm-ranlib llvm-libtool-darwin; do printf '#!/bin/sh\n' > "$P/bin/$t"; done
+  for t in clang clang++ ld64.lld llvm-ranlib llvm-libtool-darwin llvm-otool llvm-strings; do printf '#!/bin/sh\n' > "$P/bin/$t"; done
   cat > "$P/bin/llvm-nm" <<'F'
 #!/bin/sh
 for s in ___isPlatformVersionAtLeast ___isPlatformOrVariantPlatformVersionAtLeast ___divti3 ___modti3 ___udivti3 ___umodti3; do

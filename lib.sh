@@ -255,14 +255,16 @@ host_toolchain_release() {
   printf '%s (%s)\n' "$_hr_v" "$_hr_how"
 }
 
-# host_inputs_stamp <swift-frontend> <clang> <builtins-archive> -- five lines, `<role> <sha256>`, for the
-# host compiler, the host clang, the clang.cfg and clang++.cfg that clang reads (`<role> none` for one
-# that is absent) and the builtins archive a stdlib build is configured with. Their bytes reach the
-# runtime, yet the build cannot see them change: nothing in the stdlib's CMake depends on an external
-# SWIFT_NATIVE_SWIFT_TOOLS_PATH compiler, no C++ object on its compiler's bytes or flags from a cfg, and
-# no link on the archive -resource-dir names. clang reads <driver>.cfg from its real binary's directory,
-# links resolved (the native host shim links the toolchain's clang), so the cfgs are looked for there.
-# Fails, naming it, when one cannot be hashed.
+# host_inputs_stamp <swift-frontend> <clang> <builtins-archive> [<archiver>] -- five lines, `<role>
+# <sha256>`, for the host compiler, the host clang, the clang.cfg and clang++.cfg that clang reads
+# (`<role> none` for one that is absent) and the builtins archive a stdlib build is configured with,
+# and a sixth, `archiver <sha256>`, when <archiver> is given. Their bytes reach the runtime, yet the
+# build cannot see them change: nothing in the stdlib's CMake depends on an external
+# SWIFT_NATIVE_SWIFT_TOOLS_PATH compiler, no C++ object on its compiler's bytes or flags from a cfg, no
+# link on the archive -resource-dir names, and a configured tree keeps the CMAKE_AR it was first
+# configured with whatever -DCMAKE_AR says later. clang reads <driver>.cfg from its real binary's
+# directory, links resolved (the native host shim links the toolchain's clang), so the cfgs are looked
+# for there. Fails, naming it, when one cannot be hashed.
 host_inputs_stamp() {
   _hs_c="$2"; _hs_n=0
   while [ -L "$_hs_c" ]; do
@@ -272,7 +274,7 @@ host_inputs_stamp() {
     case "$_hs_l" in /*) _hs_c="$_hs_l" ;; *) _hs_c="$(dirname "$_hs_c")/$_hs_l" ;; esac
   done
   _hs_d="$(dirname "$_hs_c")"
-  for _hs_r in swift-frontend:"$1" clang:"$2" clang.cfg:"$_hs_d/clang.cfg" clang++.cfg:"$_hs_d/clang++.cfg" builtins:"$3"; do
+  for _hs_r in swift-frontend:"$1" clang:"$2" clang.cfg:"$_hs_d/clang.cfg" clang++.cfg:"$_hs_d/clang++.cfg" builtins:"$3" ${4:+archiver:"$4"}; do
     _hs_f="${_hs_r#*:}"
     case "${_hs_r%%:*}" in
       *.cfg) if [ ! -e "$_hs_f" ] && [ ! -L "$_hs_f" ]; then printf '%s none\n' "${_hs_r%%:*}"; continue; fi ;;
@@ -292,18 +294,19 @@ reuse_build_dir() {
   [ -n "$2" ] || { echo "reuse_build_dir: an empty stamp for $1" >&2; return 1; }
   [ -d "$1" ] || return 0
   if [ "$(cat "$1/mavergreen-inputs.stamp" 2>/dev/null)" = "$2" ]; then return 0; fi
-  echo "    removing $1: its host compiler, clang, clang.cfg or builtins archive changed, or went unrecorded"
+  echo "    removing $1: its host compiler, clang, clang.cfg, builtins archive or archiver changed, or went unrecorded"
   rm -rf "$1"
 }
 
 # macho_links_none_under <macho> <dir> -- fails, listing them, when <macho> links a library under <dir>.
-# Fails too when otool cannot read <macho>'s libraries, or reads no libSystem, which every program links:
-# on OS X 10.9 without the Command Line Tools, /usr/bin/otool is a stub that prints nothing, and an empty
-# answer read as "nothing under <dir>" is a check that checked nothing.
+# Fails too when ${OTOOL:-otool} cannot read <macho>'s libraries, or reads no libSystem, which every
+# program links: on OS X 10.9 without the Command Line Tools, /usr/bin/otool is a stub that prints
+# nothing, and an empty answer read as "nothing under <dir>" is a check that checked nothing. Natively the
+# build names clang22's llvm-otool, whose -L prints what otool's does.
 macho_links_none_under() {
-  _ml_out="$(otool -L "$1")" || { echo "FAIL: could not read the libraries $1 links (otool)" >&2; return 1; }
+  _ml_out="$("${OTOOL:-otool}" -L "$1")" || { echo "FAIL: could not read the libraries $1 links (${OTOOL:-otool})" >&2; return 1; }
   printf '%s\n' "$_ml_out" | grep -q '/usr/lib/libSystem\.B\.dylib' || {
-    echo "FAIL: otool read no libSystem from $1, so it read nothing $1 links" >&2; return 1; }
+    echo "FAIL: ${OTOOL:-otool} read no libSystem from $1, so it read nothing $1 links" >&2; return 1; }
   if printf '%s\n' "$_ml_out" | grep -F "$2"; then
     echo "FAIL: $1 links a library from $2 (listed above)" >&2; return 1
   fi
@@ -472,14 +475,15 @@ toolchain_digests_agree() {
 # ${CLANG22_PREFIX:-/usr/local/mavergreen/clang22}. Fails, naming it, when one of the tools both modes
 # take from it is not there: clang, clang++ and ld64.lld, and llvm-ar, llvm-ranlib, llvm-libtool-darwin,
 # llvm-lipo and llvm-nm -- one archiver, one indexer and one reader on both hosts, so the archives the
-# build makes, and what links them, are the same bytes on both (T4 spike Q1 and Q5).
+# build makes, and what links them, are the same bytes on both (T4 spike Q1 and Q5) -- and llvm-otool
+# and llvm-strings, the readers the build's checks run in place of the Command Line Tools' (T5a).
 clang22_prefix() {
   case "$1" in
     cross) _cp="$(sh "$2/fetch-clang22.sh")" || { echo "clang22_prefix: $2/fetch-clang22.sh failed" >&2; return 1; } ;;
     native) _cp="${CLANG22_PREFIX:-/usr/local/mavergreen/clang22}" ;;
     *) echo "clang22_prefix: the mode is cross or native, not '$1'" >&2; return 2 ;;
   esac
-  for _ct in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-nm; do
+  for _ct in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-nm llvm-otool llvm-strings; do
     [ -x "$_cp/bin/$_ct" ] || { echo "clang22_prefix: no $_cp/bin/$_ct (mavericks-clang-22's $1 package provides it)" >&2; return 1; }
   done
   printf '%s\n' "$_cp"
@@ -510,30 +514,34 @@ sdk109_stubs() {
 }
 
 # macho_version <macho> -- `<minOS> <SDK>` as <macho> records them: dyld_info when $DYLDINFO names it;
-# else otool's LC_VERSION_MIN_MACOSX or LC_BUILD_VERSION (OS X 10.9 has no dyld_info). Prints nothing
-# when the file records neither; fails when the reader fails. The one parser: macho_minos is its first word.
+# else ${OTOOL:-otool}'s LC_VERSION_MIN_MACOSX or LC_BUILD_VERSION (OS X 10.9 has no dyld_info). Prints
+# nothing when the file records neither; fails when the reader fails. The one parser: macho_minos is its
+# first word.
 macho_version() {
   if [ -n "${DYLDINFO:-}" ]; then
     _mv="$("$DYLDINFO" -platform "$1")" || return 1
     printf '%s\n' "$_mv" | awk '$1 == "macOS" { print $2, $3; exit }'
   else
-    _mv="$(otool -l "$1")" || return 1
-    printf '%s\n' "$_mv" | awk '$1 == "cmd" { c = $2 }
+    _mv="$("${OTOOL:-otool}" -l "$1")" || return 1
+    # platform: Apple's otool prints LC_BUILD_VERSION's minos before its sdk, clang22's llvm-otool the
+    #           sdk first (and a header table before the load commands); a tool's own "version" line in
+    #           LC_BUILD_VERSION is the linker's, not the minOS.
+    printf '%s\n' "$_mv" | awk '$1 == "cmd" { c = $2; v = ""; s = "" }
       c == "LC_VERSION_MIN_MACOSX" && $1 == "version" { v = $2 }
-      c == "LC_VERSION_MIN_MACOSX" && $1 == "sdk" { print v, $2; exit }
       c == "LC_BUILD_VERSION" && $1 == "minos" { v = $2 }
-      c == "LC_BUILD_VERSION" && $1 == "sdk" { print v, $2; exit }'
+      (c == "LC_VERSION_MIN_MACOSX" || c == "LC_BUILD_VERSION") && $1 == "sdk" { s = $2 }
+      v != "" && s != "" { print v, s; exit }'
   fi
 }
 
 # macho_rpaths <macho> -- each LC_RPATH <macho> records, one per line, in order: dyld_info when $DYLDINFO
-# names it, else otool. Fails when the reader fails.
+# names it, else ${OTOOL:-otool}. Fails when the reader fails.
 macho_rpaths() {
   if [ -n "${DYLDINFO:-}" ]; then
     _mr="$("$DYLDINFO" -rpaths "$1")" || return 1
     printf '%s\n' "$_mr" | awk 'NR > 2 { print $1 }'
   else
-    _mr="$(otool -l "$1")" || return 1
+    _mr="$("${OTOOL:-otool}" -l "$1")" || return 1
     printf '%s\n' "$_mr" | awk '$1 == "cmd" { c = $2 } c == "LC_RPATH" && $1 == "path" { print $2 }'
   fi
 }
