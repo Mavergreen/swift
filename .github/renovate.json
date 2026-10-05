@@ -3,6 +3,9 @@
   "extends": [
     "github>Mavergreen/shipyard"
   ],
+  "gitIgnoredAuthors": [
+    "41898282+github-actions[bot]@users.noreply.github.com"
+  ],
   "customManagers": [
     {
       "description": "Swift releases. swiftlang/swift tags them swift-X.Y.Z-RELEASE. Version and commit are captured by ONE regex so Renovate moves them together -- build.sh fetches SWIFT_TAG with clone_pinned.sh, which fails unless the checkout is exactly SWIFT_SHA, so a version bumped without its commit fails closed.",
@@ -55,7 +58,7 @@
   ],
   "packageRules": [
     {
-      "description": "ONE PR per Swift release, moving the Swift pin, the llvm-project pin and the swift-cmark pin together. Apart, each fails its release-pin check (build-llvm.sh, build-toolchain.sh), so none could merge. The builds fetch each commit as GitHub's tarball, verified by a SHA-256 in pins.env that Renovate cannot compute, so the PR's body says to run scripts/pin-source-tarballs.sh on its branch: CI fails at the fetch, naming the pin, until that commit is pushed.",
+      "description": "ONE PR per Swift release, moving the Swift pin, the llvm-project pin and the swift-cmark pin together. Apart, each fails its release-pin check (build-llvm.sh, build-toolchain.sh), so none could merge. The builds fetch each commit as GitHub's tarball, verified by a SHA-256 in pins.env that Renovate cannot compute: .github/workflows/pins-bot.yml writes those on the PR's branch and runs release.yml on its commit (gitIgnoredAuthors keeps that commit from marking the branch as edited), so a patch bump still automerges on green.",
       "matchDepNames": [
         "swiftlang/swift",
         "swiftlang/llvm-project",
@@ -63,7 +66,7 @@
       ],
       "groupName": "Swift release",
       "prBodyNotes": [
-        "**Before this can merge:** run `sh scripts/pin-source-tarballs.sh` on this branch and push the `pins.env` it writes. The builds fetch llvm-project, swift and swift-cmark as GitHub's tarballs of the pinned commits, verified by `LLVM_TARBALL_SHA256`, `SWIFT_TARBALL_SHA256` and `CMARK_TARBALL_SHA256`, which Renovate cannot compute; CI fails at the fetch, naming the pin, until they are pushed (INGREDIENTS.md)."
+        "**The tarball pins:** `.github/workflows/pins-bot.yml` writes `LLVM_TARBALL_SHA256`, `SWIFT_TARBALL_SHA256` and `CMARK_TARBALL_SHA256` on this branch, after checking that each tarball is its commit's tree, and runs `release.yml` on its commit; that run's `build` is the check this PR merges on. Until then CI fails at the first fetch, naming the pin. If the bot failed, run `sh scripts/pin-source-tarballs.sh` on this branch and push `pins.env` (INGREDIENTS.md)."
       ]
     },
     {
