@@ -19,3 +19,4 @@ work/
 out/
 dist/
 llvm-build/
+/.idea/
