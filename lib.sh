@@ -61,18 +61,73 @@ expand_toolchain() {
   mv "$_rec.tmp" "$_rec"
 }
 
+# Where each pinned source lives; pins.env pins its release, its commit and the SHA-256 of GitHub's
+# tarball of that commit. LLVM's is also what its version stamp names (`clang --version`).
+LLVM_REPO_URL=https://github.com/swiftlang/llvm-project.git
+SWIFT_REPO_URL=https://github.com/swiftlang/swift.git
+CMARK_REPO_URL=https://github.com/swiftlang/swift-cmark.git
+
 # check_release_pin <what> <release> <tag> <sha> <repo-url> -- fail unless <release> is SWIFT_VERSION
 # and <sha> is the commit <repo-url>'s <tag> names. Source code cut for another Swift release builds
-# fine and is wrong, which no later gate can see; this refuses it before anything is fetched.
+# fine and is wrong, which no later gate can see; this refuses it before anything is fetched. The tags
+# are read with curl from <repo-url>'s ref advertisement (info/refs, what `git ls-remote` reads), so
+# the check needs no git, which OS X 10.9 has only with Xcode's Command Line Tools, and no token:
+# GitHub's REST API allows 60 unauthenticated requests an hour per address, and CI runners share theirs.
 check_release_pin() {
   [ "$2" = "$SWIFT_VERSION" ] || {
     echo "FAIL: $1 is pinned at $3, but SWIFT_VERSION is $SWIFT_VERSION -- move its pins in pins.env" >&2; return 1; }
-  # platform: git ls-remote lists an annotated tag twice, the tag object and then its peeled commit
-  #           (refs/tags/T^{}); only the peeled one is comparable with a commit SHA.
-  _sha="$(git ls-remote "$5" "refs/tags/$3" "refs/tags/$3^{}" \
-    | awk -v t="refs/tags/$3" '{ sha[$2] = $1 } END { if ((t "^{}") in sha) print sha[t "^{}"]; else print sha[t] }')"
+  _rp_refs="$(mktemp "${TMPDIR:-/tmp}/release-pin.XXXXXX")" || return 1
+  curl -fsSL --retry 3 --retry-delay 5 -o "$_rp_refs" "${5%.git}.git/info/refs?service=git-upload-pack" || {
+    rm -f "$_rp_refs"; echo "FAIL: could not list $5's tags (curl)" >&2; return 1; }
+  # platform: each ref is a pkt-line, <4 hex digits of length><40-hex sha> <ref>, and the first one is
+  #           followed by a NUL and the server's capabilities. An annotated tag is listed twice, the tag
+  #           object and then its peeled commit (refs/tags/T^{}); only the peeled one is comparable with a
+  #           commit SHA.
+  _sha="$(tr '\000' '\n' < "$_rp_refs" | awk -v t="refs/tags/$3" '
+    $1 ~ /^[0-9a-f]+$/ { sha[$2] = substr($1, 5) }
+    END { if ((t "^{}") in sha) print sha[t "^{}"]; else if (t in sha) print sha[t] }')"
+  rm -f "$_rp_refs"
   [ -n "$_sha" ] || { echo "FAIL: $5 has no tag $3" >&2; return 1; }
   [ "$_sha" = "$4" ] || { echo "FAIL: $1's pinned commit is $4, but $5's $3 is $_sha" >&2; return 1; }
+}
+
+# fetch_source <dir> <repo-url> <commit> <sha256> <pin> -- replaces <dir> with a fresh extraction of
+# <repo-url>'s source at <commit>: GitHub's tarball of that commit, fetched once into shipyard's source
+# cache and verified against <sha256> by shipyard's fetch_pinned_source.sh, which also writes
+# <dir>/.mavergreen-source. Fresh on every call, so the patches applied next start from upstream's
+# bytes, as `git reset --hard` and `git clean -fdx` once made them. Needs no git. <pin> names the
+# pins.env variable that holds <sha256>, for the message a moved commit gets.
+fetch_source() {
+  [ -f "$SHIPYARD/fetch_pinned_source.sh" ] || {
+    echo "FAIL: the shipyard at $SHIPYARD has no fetch_pinned_source.sh -- install a newer shipyard pkg" >&2; return 1; }
+  sh "$SHIPYARD/fetch_pinned_source.sh" "$2" "$3" "$4" "$1" || {
+    echo "FAIL: could not fetch $2 at $3 -- if pins.env moved that commit (a Swift bump), run sh scripts/pin-source-tarballs.sh and commit pins.env's $5" >&2
+    return 1; }
+}
+
+# source_commit <dir> -- prints the commit of the source tree fetch_source extracted into <dir>, from the
+# stamp shipyard's fetch_pinned_source.sh writes last; nothing for a tree it did not complete.
+source_commit() {
+  awk 'NR == 1 { print $2 }' "$1/.mavergreen-source" 2>/dev/null || :
+}
+
+# patch_source <dir> <patch>... -- applies each <patch> (an absolute path, -p0 paths as patches/ holds
+# them) to the source tree <dir>, in order, with the OS's patch: OS X 10.9's GNU patch 2.5.8 and a modern
+# Mac's BSD patch 2.0 write the same bytes. Each is first tried with --dry-run, so one that does not
+# apply fails, naming itself, before it changes anything; -N refuses one already applied instead of
+# offering to reverse it; -V none stops both from leaving a .orig beside a file a hunk reached at an
+# offset. Fails, too, when a .orig or .rej is left anywhere in <dir>.
+patch_source() {
+  _ps_dir="$1"; shift
+  [ -d "$_ps_dir" ] || { echo "FAIL: no source tree at $_ps_dir to patch" >&2; return 1; }
+  for _ps_p in "$@"; do
+    case "$_ps_p" in /*) ;; *) echo "FAIL: patch_source: '$_ps_p' is not an absolute path" >&2; return 1 ;; esac
+    _ps_out="$(cd "$_ps_dir" && patch -p0 -N -V none --dry-run -i "$_ps_p" < /dev/null 2>&1)" || {
+      printf '%s\n' "$_ps_out" >&2; echo "FAIL: patch did not apply: $_ps_p" >&2; return 1; }
+    ( cd "$_ps_dir" && patch -p0 -N -V none -s -i "$_ps_p" < /dev/null ) || { echo "FAIL: patch did not apply: $_ps_p" >&2; return 1; }
+  done
+  _ps_left="$(cd "$_ps_dir" && find . \( -name '*.orig' -o -name '*.rej' \) -print)"
+  [ -z "$_ps_left" ] || { printf '%s\n' "$_ps_left" >&2; echo "FAIL: patching left the files above in $_ps_dir" >&2; return 1; }
 }
 
 # prefix_map_flags c|swift <root> -- flags sending <root>, by both of its spellings, to /mavergreen-build,
