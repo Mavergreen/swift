@@ -20,6 +20,12 @@ mkdir -p "$T/bin"
   printf '004aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa refs/tags/swift-8.8.8-RELEASE\n'
   printf '004dbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb refs/tags/swift-8.8.8-RELEASE^{}\n'
   printf '0000'; } > "$T/refs"
+# A second one whose first ref, the one that follows the flush with no newline and carries the
+# capabilities, is the tag itself.
+{ printf '001e# service=git-upload-pack\n0000'
+  printf '0086dddddddddddddddddddddddddddddddddddddddd refs/tags/swift-9.9.9-RELEASE\000multi_ack thin-pack side-band symref=HEAD:refs/heads/main\n'
+  printf '003dcccccccccccccccccccccccccccccccccccccccc refs/heads/main\n'
+  printf '0000'; } > "$T/refs-first"
 cat > "$T/bin/curl" <<F
 #!/bin/sh
 o=""; u=""
@@ -27,6 +33,8 @@ while [ \$# -gt 0 ]; do case "\$1" in -o) o="\$2"; shift 2 ;; -*) shift ;; *) u=
 echo "\$u" >> "$T/curl.log"
 case "\$u" in
   https://fail.invalid/*) exit 22 ;;
+  https://portal.invalid/*) printf '<html><body>Sign in to the network</body></html>\n' > "\$o" ;;
+  https://first.invalid/*/info/refs\?service=git-upload-pack) cp "$T/refs-first" "\$o" ;;
   */info/refs\?service=git-upload-pack) cp "$T/refs" "\$o" ;;
   *) exit 22 ;;
 esac
@@ -52,5 +60,13 @@ check 9.9.9 thing 9.9.9 swift-9.9.9-RELEASE cccccccccccccccccccccccccccccccccccc
 check 9.9.9 thing 9.9.9 swift-9.9.9-RELEASE 1111111111111111111111111111111111111111 https://fail.invalid/acme/widget.git
 [ "$rc" = 1 ] || fail "passed although curl failed"
 grep -q 'could not list' "$T/out" || fail "a failed curl: $(cat "$T/out")"
+check 9.9.9 thing 9.9.9 swift-9.9.9-RELEASE dddddddddddddddddddddddddddddddddddddddd https://first.invalid/acme/widget.git
+[ "$rc" = 0 ] || fail "misread the first ref, the one after the flush: $(cat "$T/out")"
+check 9.9.9 thing 9.9.9 swift-9.9.9-RELEASE 1111111111111111111111111111111111111111 https://portal.invalid/acme/widget.git
+[ "$rc" = 1 ] || fail "took a captive portal's page for a ref advertisement"
+grep -q 'not a git ref advertisement' "$T/out" || fail "a captive portal's page: $(cat "$T/out")"
+rc=0; ( PATH="$T/bin:$PATH"; TMPDIR="$T/absent"; SWIFT_VERSION=9.9.9; . "$REPO/lib.sh"
+  check_release_pin thing 9.9.9 swift-9.9.9-RELEASE 1111111111111111111111111111111111111111 "$U" ) > "$T/out" 2>&1 || rc=$?
+[ "$rc" = 1 ] && grep -q 'could not make a temporary file' "$T/out" || fail "no temporary file: rc $rc, $(cat "$T/out")"
 [ ! -f "$T/git.log" ] || fail "ran git: $(cat "$T/git.log")"
 echo "PASS"

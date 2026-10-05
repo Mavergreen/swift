@@ -76,15 +76,22 @@ CMARK_REPO_URL=https://github.com/swiftlang/swift-cmark.git
 check_release_pin() {
   [ "$2" = "$SWIFT_VERSION" ] || {
     echo "FAIL: $1 is pinned at $3, but SWIFT_VERSION is $SWIFT_VERSION -- move its pins in pins.env" >&2; return 1; }
-  _rp_refs="$(mktemp "${TMPDIR:-/tmp}/release-pin.XXXXXX")" || return 1
+  _rp_refs="$(mktemp "${TMPDIR:-/tmp}/release-pin.XXXXXX")" || {
+    echo "FAIL: check_release_pin: could not make a temporary file in ${TMPDIR:-/tmp}" >&2; return 1; }
   curl -fsSL --retry 3 --retry-delay 5 -o "$_rp_refs" "${5%.git}.git/info/refs?service=git-upload-pack" || {
     rm -f "$_rp_refs"; echo "FAIL: could not list $5's tags (curl)" >&2; return 1; }
-  # platform: each ref is a pkt-line, <4 hex digits of length><40-hex sha> <ref>, and the first one is
-  #           followed by a NUL and the server's capabilities. An annotated tag is listed twice, the tag
-  #           object and then its peeled commit (refs/tags/T^{}); only the peeled one is comparable with a
-  #           commit SHA.
+  # platform: a ref advertisement starts with the pkt-line "001e# service=git-upload-pack" and a flush
+  #           (0000); anything else (a proxy's or captive portal's page, served with a 200) is refused
+  #           here, so it is not taken for a repository without the tag.
+  [ "$(head -n 1 "$_rp_refs")" = "001e# service=git-upload-pack" ] || {
+    rm -f "$_rp_refs"; echo "FAIL: $5's info/refs is not a git ref advertisement (a proxy or captive portal answered?)" >&2; return 1; }
+  # platform: each ref is a pkt-line, <4 hex digits of length><40-hex sha> <ref>, with no newline between
+  #           pkt-lines' framing: the first ref follows the flush directly (0000<length><sha> HEAD) and is
+  #           followed by a NUL and the server's capabilities. So the SHA is the last 40 characters of the
+  #           ref's first word, whatever precedes them. An annotated tag is listed twice, the tag object and
+  #           then its peeled commit (refs/tags/T^{}); only the peeled one is comparable with a commit SHA.
   _sha="$(tr '\000' '\n' < "$_rp_refs" | awk -v t="refs/tags/$3" '
-    $1 ~ /^[0-9a-f]+$/ { sha[$2] = substr($1, 5) }
+    $1 ~ /^[0-9a-f]+$/ && length($1) >= 44 { sha[$2] = substr($1, length($1) - 39) }
     END { if ((t "^{}") in sha) print sha[t "^{}"]; else if (t in sha) print sha[t] }')"
   rm -f "$_rp_refs"
   [ -n "$_sha" ] || { echo "FAIL: $5 has no tag $3" >&2; return 1; }
@@ -98,6 +105,8 @@ check_release_pin() {
 # bytes, as `git reset --hard` and `git clean -fdx` once made them. Needs no git. <pin> names the
 # pins.env variable that holds <sha256>, for the message a moved commit gets.
 fetch_source() {
+  [ -n "${SHIPYARD:-}" ] || {
+    echo "FAIL: fetch_source: SHIPYARD is not set -- source msc.sh first" >&2; return 1; }
   [ -f "$SHIPYARD/fetch_pinned_source.sh" ] || {
     echo "FAIL: the shipyard at $SHIPYARD has no fetch_pinned_source.sh -- install a newer shipyard pkg" >&2; return 1; }
   sh "$SHIPYARD/fetch_pinned_source.sh" "$2" "$3" "$4" "$1" || {
@@ -115,18 +124,23 @@ source_commit() {
 # them) to the source tree <dir>, in order, with the OS's patch: OS X 10.9's GNU patch 2.5.8 and a modern
 # Mac's BSD patch 2.0 write the same bytes. Each is first tried with --dry-run, so one that does not
 # apply fails, naming itself, before it changes anything; -N refuses one already applied instead of
-# offering to reverse it; -V none stops both from leaving a .orig beside a file a hunk reached at an
-# offset. Fails, too, when a .orig or .rej is left anywhere in <dir>.
+# offering to reverse it; -F 0 refuses a hunk whose context has drifted, as `git apply` did (an offset is
+# still accepted, as it was, except that GNU patch then holds a hunk with less context before than after
+# to the start of the file, a shape diff -U3 makes only there); --no-backup-if-mismatch stops both from
+# leaving a backup beside a file a hunk reached at an offset. Fails, too, when a .orig, .rej or ~ backup
+# is left anywhere in <dir>.
 patch_source() {
   _ps_dir="$1"; shift
   [ -d "$_ps_dir" ] || { echo "FAIL: no source tree at $_ps_dir to patch" >&2; return 1; }
   for _ps_p in "$@"; do
     case "$_ps_p" in /*) ;; *) echo "FAIL: patch_source: '$_ps_p' is not an absolute path" >&2; return 1 ;; esac
-    _ps_out="$(cd "$_ps_dir" && patch -p0 -N -V none --dry-run -i "$_ps_p" < /dev/null 2>&1)" || {
+    # platform: GNU patch 2.5.8 (OS X 10.9) reads -V none as a version-control name, not "no backups",
+    #           and leaves file.~1~ at an offset; --no-backup-if-mismatch is honoured by it and by BSD 2.0.
+    _ps_out="$(cd "$_ps_dir" && patch -p0 -N -F 0 --no-backup-if-mismatch --dry-run -i "$_ps_p" < /dev/null 2>&1)" || {
       printf '%s\n' "$_ps_out" >&2; echo "FAIL: patch did not apply: $_ps_p" >&2; return 1; }
-    ( cd "$_ps_dir" && patch -p0 -N -V none -s -i "$_ps_p" < /dev/null ) || { echo "FAIL: patch did not apply: $_ps_p" >&2; return 1; }
+    ( cd "$_ps_dir" && patch -p0 -N -F 0 --no-backup-if-mismatch -s -i "$_ps_p" < /dev/null ) || { echo "FAIL: patch did not apply: $_ps_p" >&2; return 1; }
   done
-  _ps_left="$(cd "$_ps_dir" && find . \( -name '*.orig' -o -name '*.rej' \) -print)"
+  _ps_left="$(cd "$_ps_dir" && find . \( -name '*.orig' -o -name '*.rej' -o -name '*~' \) -print)"
   [ -z "$_ps_left" ] || { printf '%s\n' "$_ps_left" >&2; echo "FAIL: patching left the files above in $_ps_dir" >&2; return 1; }
 }
 
