@@ -4,6 +4,8 @@
 #   scripts/pin-source-tarballs.sh must write into pins.env the SHA-256 of each pinned commit's tarball,
 #   leaving every other line as it was; with --check, write nothing and fail naming a pin that is not its
 #   tarball's; and refuse, writing nothing, a tarball that does not hold exactly its commit's files.
+#   pins.env is written once, after every row is verified: a later row's failure, or a TERM, leaves it
+#   byte for byte as it was even when an earlier row's pin had moved, and leaves no temp file behind.
 #   Offline: three fixture git repositories stand in for llvm-project, swift and swift-cmark, a fake
 #   shipyard serves their tarballs (made as GitHub makes them, `git archive --prefix=<name>-<commit>/`)
 #   and clones them, and a copy of the repo's pins.env names the fixtures' commits.
@@ -40,8 +42,11 @@ cat > "$T/shipyard/clone_pinned.sh" <<F
 n="\${1##*/}"; n="\${n%.git}"
 git clone -q "$T/up/\$n" "\$4" && [ "\$(git -C "\$4" rev-parse HEAD)" = "\$3" ]
 F
-pins() { SHIPYARD_SCRIPTS="$T/shipyard" sh "$R/scripts/pin-source-tarballs.sh" "$@"; }
+mkdir -p "$T/tmp"
+pins() { TMPDIR="$T/tmp" SHIPYARD_SCRIPTS="$T/shipyard" sh "$R/scripts/pin-source-tarballs.sh" "$@"; }
 sum() { shasum -a 256 < "$T/tarballs/$1-$2.tar.gz" | cut -c1-64; }
+# What a run left behind: anything in its TMPDIR, or beside pins.env.
+left() { ls -A "$T/tmp"; ls -A "$R" | grep -vx -e scripts -e lib.sh -e msc.sh -e pins.env || true; }
 
 echo "-- writes each tarball's SHA-256, and nothing else"
 cp "$R/pins.env" "$T/before"
@@ -50,6 +55,9 @@ grep -qx "LLVM_TARBALL_SHA256=\"$(sum llvm-project "$C_llvm_project")\"" "$R/pin
 grep -qx "SWIFT_TARBALL_SHA256=\"$(sum swift "$C_swift")\"" "$R/pins.env" || fail "SWIFT_TARBALL_SHA256: $(grep SWIFT_TARBALL "$R/pins.env")"
 grep -qx "CMARK_TARBALL_SHA256=\"$(sum swift-cmark "$C_swift_cmark")\"" "$R/pins.env" || fail "CMARK_TARBALL_SHA256: $(grep CMARK_TARBALL "$R/pins.env")"
 [ "$(diff "$T/before" "$R/pins.env" | grep -c '^[<>]')" = 6 ] || fail "changed more than the three pins: $(diff "$T/before" "$R/pins.env")"
+cp "$R/pins.env" "$T/after"; touch -t 200001010000 "$R/pins.env"
+pins > "$T/out" 2>&1 || fail "a second run failed: $(cat "$T/out")"
+cmp -s "$T/after" "$R/pins.env" && [ -z "$(find "$R/pins.env" -newer "$T/after")" ] || fail "a second run, the pins current, rewrote pins.env"
 
 echo "-- --check passes on them, and fails naming a stale one, writing nothing"
 pins --check > "$T/out" 2>&1 || fail "--check failed on fresh pins: $(cat "$T/out")"
@@ -68,10 +76,30 @@ if pins > "$T/out" 2>&1; then fail "pinned a tarball whose sub/file.txt is not t
 grep -q "is not commit $C_swift's tree" "$T/out" || fail "a tarball that is not the commit: $(cat "$T/out")"
 cmp -s "$T/stale" "$R/pins.env" || fail "wrote pins.env although a tarball was not its commit's"
 
-echo "-- a TERM ends it at once: exit 143, nothing written, no temp dir left"
-mkdir -p "$T/tmp"; printf '#!/bin/sh\nkill -TERM $PPID\nsleep 1\nexit 1\n' > "$T/shipyard/clone_pinned.sh"
-rc=0; TMPDIR="$T/tmp" pins > "$T/out" 2>&1 || rc=$?
+echo "-- a later row's failure writes nothing, though an earlier row's pin had moved"
+Z=0000000000000000000000000000000000000000000000000000000000000000
+sed "s/^LLVM_TARBALL_SHA256=\"[0-9a-f]*\"/LLVM_TARBALL_SHA256=\"$Z\"/" "$T/stale" > "$T/stale2"
+cp "$T/stale2" "$R/pins.env"
+if pins > "$T/out" 2>&1; then fail "pinned with swift's tarball not its commit's"; fi
+grep -q "is not commit $C_swift's tree" "$T/out" || fail "swift's tarball, after a moved LLVM pin: $(cat "$T/out")"
+cmp -s "$T/stale2" "$R/pins.env" || fail "wrote LLVM's pin although swift's tarball was not its commit's: $(diff "$T/stale2" "$R/pins.env")"
+[ -z "$(left)" ] || fail "a failed run left $(left)"
+# swift's real tarball back; swift-cmark's (the last row) gone, so its fetch fails after two pins moved.
+git -C "$T/up/swift" archive --format=tar --prefix="swift-$C_swift/" HEAD | gzip -n > "$T/tarballs/swift-$C_swift.tar.gz"
+mv "$T/tarballs/swift-cmark-$C_swift_cmark.tar.gz" "$T/cmark.tar.gz"
+if pins > "$T/out" 2>&1; then fail "pinned with swift-cmark's tarball unfetchable"; fi
+grep -q "could not fetch .*swift-cmark-$C_swift_cmark" "$T/out" || fail "swift-cmark's fetch: $(cat "$T/out")"
+cmp -s "$T/stale2" "$R/pins.env" || fail "wrote pins.env although swift-cmark's fetch failed: $(diff "$T/stale2" "$R/pins.env")"
+[ -z "$(left)" ] || fail "a failed run left $(left)"
+mv "$T/cmark.tar.gz" "$T/tarballs/swift-cmark-$C_swift_cmark.tar.gz"
+
+echo "-- a TERM ends it at once: exit 143, nothing written though LLVM's pin had moved, no temp file left"
+# LLVM's row runs whole; the TERM comes in swift's (the second) row.
+cp "$T/shipyard/clone_pinned.sh" "$T/clone_pinned.sh"
+{ printf '#!/bin/sh\ncase "$1" in */swift.git) kill -TERM $PPID; sleep 1; exit 1 ;; esac\n'; sed 1d "$T/clone_pinned.sh"; } > "$T/shipyard/clone_pinned.sh"
+rc=0; pins > "$T/out" 2>&1 || rc=$?
 [ "$rc" = 143 ] || fail "a TERM: exit $rc, not 143: $(cat "$T/out")"
-cmp -s "$T/stale" "$R/pins.env" || fail "a TERM: wrote pins.env"
-[ -z "$(ls -A "$T/tmp")" ] || fail "a TERM left $(ls -A "$T/tmp")"
+[ "$(grep -c "(the commit's tree, file for file)" "$T/out")" = 1 ] || fail "a TERM: LLVM's row did not run first: $(cat "$T/out")"
+cmp -s "$T/stale2" "$R/pins.env" || fail "a TERM: wrote pins.env: $(diff "$T/stale2" "$R/pins.env")"
+[ -z "$(left)" ] || fail "a TERM left $(left)"
 echo "PASS"

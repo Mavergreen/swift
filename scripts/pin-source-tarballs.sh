@@ -8,7 +8,9 @@
 #          branch and commit pins.env. A hash is written only for a tarball that holds exactly its
 #          commit's files: the commit is fetched with shipyard's clone_pinned.sh and compared, by git,
 #          with the extracted tarball (so this runs where git is; the builds never run it). --check
-#          writes nothing, and fails naming each pin that is not its tarball's SHA-256.
+#          writes nothing, and fails naming each pin that is not its tarball's SHA-256. pins.env is
+#          written once, after every row is verified, by a rename from beside it: a failure or a
+#          signal anywhere leaves it as it was, with no temp file behind.
 #          Needs curl, git, tar, shasum and shipyard (msc.sh).
 set -eu
 CHECK=0
@@ -23,9 +25,11 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 . "$HERE/msc.sh"    # -> $SHIPYARD (fetch_pinned_source.sh --url, clone_pinned.sh)
 [ -f "$SHIPYARD/fetch_pinned_source.sh" ] || { echo "FAIL: the shipyard at $SHIPYARD has no fetch_pinned_source.sh -- install a newer shipyard pkg" >&2; exit 1; }
 T="$(mktemp -d "${TMPDIR:-/tmp}/pin-source-tarballs.XXXXXX")"
-trap 'rm -rf "$T"' EXIT
+NEW="$HERE/pins.env.new.$$"   # beside pins.env, so the one write is a rename within a file system
+trap 'rm -rf "$T" "$NEW"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+cp "$HERE/pins.env" "$T/pins.env"   # the rows' new pins gather here; pins.env is untouched until all pass
 rc=0
 for row in "LLVM_TARBALL_SHA256 $LLVM_REPO_URL $LLVM_SHA $LLVM_TAG" "SWIFT_TARBALL_SHA256 $SWIFT_REPO_URL $SWIFT_SHA $SWIFT_TAG" \
            "CMARK_TARBALL_SHA256 $CMARK_REPO_URL $CMARK_SHA $CMARK_TAG"; do
@@ -52,10 +56,13 @@ for row in "LLVM_TARBALL_SHA256 $LLVM_REPO_URL $LLVM_SHA $LLVM_TAG" "SWIFT_TARBA
     [ "$pinned" = "$sha" ] || { echo "FAIL: pins.env's $pin is $pinned, but $url is $sha -- run sh scripts/pin-source-tarballs.sh and commit pins.env" >&2; rc=1; }
   elif [ "$pinned" != "$sha" ]; then
     awk -v k="$pin" -v v="$sha" 'index($0, k "=\"") == 1 { sub(/="[0-9a-f]*"/, "=\"" v "\"") } { print }' \
-      "$HERE/pins.env" > "$T/pins.env" && mv "$T/pins.env" "$HERE/pins.env"
-    grep -q "^$pin=\"$sha\"" "$HERE/pins.env" || { echo "FAIL: could not write $pin into pins.env" >&2; exit 1; }
-    echo "    wrote $pin"
+      "$T/pins.env" > "$T/pins.env.next" && mv "$T/pins.env.next" "$T/pins.env"
+    grep -q "^$pin=\"$sha\"" "$T/pins.env" || { echo "FAIL: could not write $pin into pins.env" >&2; exit 1; }
+    echo "    $pin moves"
   fi
   rm -rf "$T/$pin.tar.gz" "$T/$pin.x" "$T/$pin.git"
 done
-exit "$rc"
+[ "$CHECK" = 0 ] || exit "$rc"
+if cmp -s "$T/pins.env" "$HERE/pins.env"; then echo "pins.env: unchanged"; exit 0; fi
+cp "$T/pins.env" "$NEW" && mv "$NEW" "$HERE/pins.env" || { echo "FAIL: could not write pins.env" >&2; exit 1; }
+echo "pins.env: wrote the moved pins"
