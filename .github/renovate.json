@@ -55,13 +55,16 @@
   ],
   "packageRules": [
     {
-      "description": "ONE PR per Swift release, moving the Swift pin, the llvm-project pin and the swift-cmark pin together. Apart, each fails its release-pin check (build-llvm.sh, build-toolchain.sh), so none could merge.",
+      "description": "ONE PR per Swift release, moving the Swift pin, the llvm-project pin and the swift-cmark pin together. Apart, each fails its release-pin check (build-llvm.sh, build-toolchain.sh), so none could merge. The builds fetch each commit as GitHub's tarball, verified by a SHA-256 in pins.env that Renovate cannot compute, so the PR's body says to run scripts/pin-source-tarballs.sh on its branch: CI fails at the fetch, naming the pin, until that commit is pushed.",
       "matchDepNames": [
         "swiftlang/swift",
         "swiftlang/llvm-project",
         "swiftlang/swift-cmark"
       ],
-      "groupName": "Swift release"
+      "groupName": "Swift release",
+      "prBodyNotes": [
+        "**Before this can merge:** run `sh scripts/pin-source-tarballs.sh` on this branch and push the `pins.env` it writes. The builds fetch llvm-project, swift and swift-cmark as GitHub's tarballs of the pinned commits, verified by `LLVM_TARBALL_SHA256`, `SWIFT_TARBALL_SHA256` and `CMARK_TARBALL_SHA256`, which Renovate cannot compute; CI fails at the fetch, naming the pin, until they are pushed (INGREDIENTS.md)."
+      ]
     },
     {
       "description": "EXCEPTION to the family ship-if-green default. A MINOR or MAJOR Swift bump is held: the runtime patches are cut against specific stdlib and runtime internals, so a bump that happens to build proves nothing about the 10.9 behaviour a macOS 26 runner cannot see. Needs a human until CI can run the real-10.9 gate (umbrella track E, vm-guest). A PATCH bump takes the family default.",
