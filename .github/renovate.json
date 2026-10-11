@@ -8,7 +8,7 @@
   ],
   "customManagers": [
     {
-      "description": "Swift releases. swiftlang/swift tags them swift-X.Y.Z-RELEASE. Version and commit are captured by ONE regex so Renovate moves them together -- build.sh fetches SWIFT_TAG with clone_pinned.sh, which fails unless the checkout is exactly SWIFT_SHA, so a version bumped without its commit fails closed.",
+      "description": "Swift releases. swiftlang/swift tags them swift-X.Y.Z-RELEASE. Version and commit are captured by ONE regex so Renovate moves them together -- the builds fetch GitHub's tarball of SWIFT_SHA (shipyard's fetch_pinned_source.sh), verified by SWIFT_TARBALL_SHA256, which the pins bot writes on the PR's branch; so the commit, not the tag, is what is built, and a version bumped without its commit would build the old source.",
       "customType": "regex",
       "managerFilePatterns": [
         "/^pins\\.env$/"

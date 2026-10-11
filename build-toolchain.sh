@@ -46,7 +46,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/pins.env"
 . "$HERE/lib.sh"    # -> $SWIFT_BUILD, check_release_pin, toolchain_host_select, compiler_patches, the T4 helpers
 toolchain_host_select "$HOST" || exit 2
-. "$HERE/msc.sh"    # -> $SHIPYARD (clone_pinned.sh, fetch_sdk.sh, mavericks_mode.sh)
+. "$HERE/msc.sh"    # -> $SHIPYARD (fetch_pinned_source.sh, fetch_sdk.sh, mavericks_mode.sh)
 MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
 case "$MODE:$HOST" in
   cross:x86_64|cross:arm64|native:x86_64) ;;

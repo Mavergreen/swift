@@ -33,7 +33,7 @@ set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"   # capture BEFORE the cd below: $0 is relative as ./build.sh
 . "$HERE/pins.env"
 . "$HERE/lib.sh"    # -> $SWIFT_BUILD, verify_toolchain_signature, expand_toolchain, the build helpers
-. "$HERE/msc.sh"    # -> $SHIPYARD (clone_pinned.sh, mavericks_mode.sh, fetch_sdk.sh)
+. "$HERE/msc.sh"    # -> $SHIPYARD (fetch_pinned_source.sh, mavericks_mode.sh, fetch_sdk.sh)
 ROOT="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$ROOT"; cd "$ROOT"
 LLVMB="$SWIFT_BUILD/out/llvm"
 LLD="$ROOT/llvm-build/bin/ld64.lld"
