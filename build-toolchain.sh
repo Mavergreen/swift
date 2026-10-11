@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- a modern arm64 Mac (cross: xcrun, dyld_info) or OS X 10.9 (native: otool), per MAVERICKS_MODE
+# platform: macOS-only -- a modern arm64 Mac (cross: xcrun, dyld_info) or OS X 10.9 (native: clang22's llvm-otool), per MAVERICKS_MODE
 # build-toolchain.sh [--host x86_64|arm64] — build a Swift toolchain: a Swift compiler, lld and clang that
 # target OS X 10.9 (x86_64) by default.
 #   --host x86_64 (the default): the NATIVE toolchain, which RUNS on OS X 10.9 (x86_64). One recipe, two
@@ -12,7 +12,9 @@
 #     same run's cross toolchain, never an earlier release; on 10.9 the installed previous release, the
 #     default there, or self-host.sh's previous stage) against the pinned MacOSX11.3.sdk; everything links
 #     against the pinned 10.9 SDK in its original stub form (lib.sh's sdk109_stubs); clang22's
-#     llvm-libtool-darwin, llvm-ar and llvm-ranlib make every archive; the build root is prefix-mapped.
+#     llvm-libtool-darwin, llvm-ar and llvm-ranlib make every archive, and its llvm-lipo, llvm-otool,
+#     llvm-nm and llvm-strings read the results for the checks (OS X 10.9 has no other without the
+#     Command Line Tools); the build root is prefix-mapped.
 #     The design and the evidence: docs/superpowers/specs/2026-09-25-t4-self-hosting-design.md and
 #     docs/superpowers/spikes/2026-10-03-t4-self-hosting-FINDINGS.md (and, for the cross build's stages,
 #     docs/superpowers/specs/2026-09-24-t1b-native-toolchain-design.md).
@@ -23,11 +25,14 @@
 # Both hosts' clang default to the lld beside them, with one pinned host linker version
 # (HOST_LINK_VERSION below). They share every source, pin and patch but compiler patch 0002 (lib.sh's
 # compiler_patches), and each has its own build dirs and compiler checkout (lib.sh's
-# toolchain_host_select). Run after build-llvm.sh (and, for arm64, mirror-toolchain.sh and build.sh).
+# toolchain_host_select). The sources are GitHub's tarballs of the pinned commits, verified by pins.env's
+# SHA-256s and patched with the OS's patch; no git runs, and LLVM's, clang's and lld's version stamps are
+# forced to LLVM_SHA and its repository (Swift's own, which reaches no shipped byte, is off). Run after build-llvm.sh (and, for arm64, mirror-toolchain.sh and build.sh).
 # STAGE_HOST=<host> scripts/stage-toolchain.sh lays the results out as that toolchain's pkg payload.
 # MAVERICKS_USE_CCACHE=1 compiles through ccache (CI sets it). Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, JOBS,
 # MAVERICKS_USE_CCACHE, MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_INSTALLED_TOOLCHAIN (native mode's default
-# host toolchain, /usr/local/mavergreen/swift-toolchain unless set), CLANG22_PREFIX, MAVERICKS_SDK_CACHE.
+# host toolchain, /usr/local/mavergreen/swift-toolchain unless set), CLANG22_PREFIX, MAVERICKS_SDK_CACHE,
+# MAVERICKS_SOURCE_CACHE.
 set -eu
 HOST=x86_64
 while [ $# -gt 0 ]; do
@@ -139,6 +144,7 @@ if [ "$HOST" = x86_64 ]; then
     -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_DOCS=OFF \
     -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_TERMINFO=OFF \
     -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_ENABLE_ONDISK_CAS=OFF \
+    -DLLVM_FORCE_VC_REVISION="$LLVM_SHA" -DLLVM_FORCE_VC_REPOSITORY="$LLVM_REPO_URL" -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON \
     -DCLANG_DEFAULT_LINKER=lld -DHOST_LINK_VERSION="$HOST_LINK_VERSION"
 else
   # X86 alone, as in the native toolchain, so the two compilers carry the same code generator: the
@@ -154,13 +160,14 @@ else
     -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_DOCS=OFF \
     -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_TERMINFO=OFF \
     -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_ENABLE_ONDISK_CAS=OFF \
+    -DLLVM_FORCE_VC_REVISION="$LLVM_SHA" -DLLVM_FORCE_VC_REPOSITORY="$LLVM_REPO_URL" -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON \
     -DCMAKE_LINKER="$NATIVE/bin/ld64.lld" -DCLANG_DEFAULT_LINKER=lld -DHOST_LINK_VERSION="$HOST_LINK_VERSION"
 fi
 ninja -C "$L" -j "$JOBS" llvm-libraries clang-libraries clang-resource-headers lld clang
 
 echo "==> 2. swift-cmark"
-check_release_pin swift-cmark "$CMARK_SWIFT_RELEASE" "$CMARK_TAG" "$CMARK_SHA" https://github.com/swiftlang/swift-cmark.git
-sh "$SHIPYARD/clone_pinned.sh" https://github.com/swiftlang/swift-cmark.git "$CMARK_TAG" "$CMARK_SHA" cmark
+check_release_pin swift-cmark "$CMARK_SWIFT_RELEASE" "$CMARK_TAG" "$CMARK_SHA" "$CMARK_REPO_URL"
+fetch_source cmark "$CMARK_REPO_URL" "$CMARK_SHA" "$CMARK_TARBALL_SHA256" CMARK_TARBALL_SHA256 || exit 1
 if [ "$HOST" = x86_64 ]; then
   x86_cmake -S cmark -B "$CM" -DBUILD_TESTING=OFF -DCMARK_TESTS=OFF -DBUILD_SHARED_LIBS=OFF
 else
@@ -168,17 +175,13 @@ else
 fi
 ninja -C "$CM" -j "$JOBS"
 
-echo "==> 3. the compiler's own Swift checkout ($SC), pristine, plus its patches/compiler"
-sh "$SHIPYARD/clone_pinned.sh" https://github.com/swiftlang/swift.git "$SWIFT_TAG" "$SWIFT_SHA" "$SC"
-# platform: some macOS checkouts fail `git apply` with iconv_open(UTF-8, UTF-8-MAC) on unicode paths.
-git -C "$SC" config core.precomposeunicode false
-git -C "$SC" reset -q --hard "$SWIFT_SHA"
-git -C "$SC" clean -q -fdx
+echo "==> 3. the compiler's own Swift source ($SC), extracted afresh, plus its patches/compiler"
+fetch_source "$SC" "$SWIFT_REPO_URL" "$SWIFT_SHA" "$SWIFT_TARBALL_SHA256" SWIFT_TARBALL_SHA256 || exit 1
 # The patch paths hold no newline (they are this checkout's), so newline alone splits them.
 _ifs="$IFS"; IFS='
 '
 for p in $PATCHES; do
-  git -C "$SC" apply -p0 --check "$p" && git -C "$SC" apply -p0 "$p" || { echo "FAIL: patch did not apply: $p"; exit 1; }
+  patch_source "$W/$SC" "$p" || exit 1
 done
 IFS="$_ifs"
 grep -q 'any macOS SDK back to 10.9 is accepted' "$SC/lib/Driver/Driver.cpp" || { echo "FAIL: compiler patch 0001 not applied"; exit 1; }
@@ -198,6 +201,10 @@ else
   echo "==> 4. no native helper tools: this build runs the helpers it builds"
 fi
 
+# Both hosts' Swift build: the revision stamp off (the source is a tarball, and its SwiftRevision.inc is
+# dead-stripped from swift-frontend, T5a recheck row 3), and git, LibEdit, LibXml2 and pkg-config never
+# looked for, so what the host has on PATH changes nothing. Word-split on use: no spaces.
+SWIFT_UNFOUND="-DSWIFT_APPEND_VC_REV=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibEdit=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibXml2=ON -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON"
 if [ "$HOST" = x86_64 ]; then
   echo "==> 5. swift-frontend (HOSTTOOLS: $HTC compiles the Swift-written half)"
   "$HTC/bin/swift-frontend" -version 2>&1 | sed 's/^/    host: /'
@@ -213,7 +220,7 @@ if [ "$HOST" = x86_64 ]; then
   # SwiftShims-era overlays (T4 spike Q5). Its module cache stays in the build root. libc++ ABI v1 is
   # shared by both halves.
   x86_cmake -S "$SC" -B "$S" \
-    -DCMAKE_Swift_COMPILER="$HTC/bin/swiftc" "-DCMAKE_EXE_LINKER_FLAGS=-L$DARWIN_LIB" \
+    -DCMAKE_Swift_COMPILER="$HTC/bin/swiftc" "-DCMAKE_EXE_LINKER_FLAGS=-L$DARWIN_LIB" -DSWIFT_LIPO="$X/llvm-lipo" \
     -DLLVM_DIR="$L/lib/cmake/llvm" -DClang_DIR="$L/lib/cmake/clang" \
     -DLLVM_BUILD_LIBRARY_DIR="$L/lib" -DLLVM_BUILD_BINARY_DIR="$L" \
     -DLLVM_BUILD_MAIN_SRC_DIR="$W/llvm-project/llvm" -DLLVM_MAIN_SRC_DIR="$W/llvm-project/llvm" \
@@ -231,7 +238,8 @@ if [ "$HOST" = x86_64 ]; then
     -DSWIFT_BUILD_SDK_OVERLAY=OFF -DSWIFT_BUILD_DYNAMIC_SDK_OVERLAY=OFF -DSWIFT_BUILD_STATIC_SDK_OVERLAY=OFF \
     -DSWIFT_BUILD_REMOTE_MIRROR=OFF -DSWIFT_BUILD_SOURCEKIT=OFF -DSWIFT_BUILD_SWIFT_SYNTAX=OFF \
     -DSWIFT_BUILD_REGEX_PARSER_IN_COMPILER=OFF -DSWIFT_ENABLE_BACKTRACING=OFF \
-    -DSWIFT_INCLUDE_TESTS=OFF -DSWIFT_INCLUDE_DOCS=OFF -DSWIFT_BUILD_PERF_TESTSUITE=OFF -DSWIFT_ENABLE_LIBXML2=OFF
+    -DSWIFT_INCLUDE_TESTS=OFF -DSWIFT_INCLUDE_DOCS=OFF -DSWIFT_BUILD_PERF_TESTSUITE=OFF -DSWIFT_ENABLE_LIBXML2=OFF \
+    $SWIFT_UNFOUND
   printf '%s\n' "$HOST_STAMP" > "$S/mavergreen-host.stamp"
 else
   echo "==> 5. swift-frontend (HOSTTOOLS: the swift.org compiler builds the Swift-written half), for arm64 / macOS 11.0"
@@ -260,19 +268,24 @@ else
     -DSWIFT_BUILD_SDK_OVERLAY=OFF -DSWIFT_BUILD_DYNAMIC_SDK_OVERLAY=OFF -DSWIFT_BUILD_STATIC_SDK_OVERLAY=OFF \
     -DSWIFT_BUILD_REMOTE_MIRROR=OFF -DSWIFT_BUILD_SOURCEKIT=OFF -DSWIFT_BUILD_SWIFT_SYNTAX=OFF \
     -DSWIFT_BUILD_REGEX_PARSER_IN_COMPILER=OFF -DSWIFT_ENABLE_BACKTRACING=OFF \
-    -DSWIFT_INCLUDE_TESTS=OFF -DSWIFT_INCLUDE_DOCS=OFF -DSWIFT_BUILD_PERF_TESTSUITE=OFF -DSWIFT_ENABLE_LIBXML2=OFF
+    -DSWIFT_INCLUDE_TESTS=OFF -DSWIFT_INCLUDE_DOCS=OFF -DSWIFT_BUILD_PERF_TESTSUITE=OFF -DSWIFT_ENABLE_LIBXML2=OFF \
+    $SWIFT_UNFOUND
 fi
 ninja -C "$S" -j "$JOBS" swift-frontend
 
-# platform: OS X 10.9 has no dyld_info; there lib.sh's readers fall back to otool.
-DI="$(xcrun -f dyld_info 2>/dev/null || :)"
+# platform: OS X 10.9 has no dyld_info (nor, without the Command Line Tools, an xcrun to find one); there
+#           lib.sh's readers fall back to OTOOL, clang22's llvm-otool.
+DI=""
+if [ "$MODE" = cross ]; then DI="$(xcrun -f dyld_info 2>/dev/null || :)"; fi
 if [ "$HOST" = x86_64 ]; then
   echo "==> 6. check: minOS and SDK $DEPLOYMENT, 10.9-safe imports, the frontend's own rpath"
+  OTOOL="$X/llvm-otool"; export OTOOL
   for b in "$S/bin/swift-frontend" "$L/bin/lld" "$L/bin/clang"; do
     vers="$(DYLDINFO="$DI" macho_version "$b")" || { echo "FAIL: cannot read $b's minOS and SDK"; exit 1; }
     [ "$vers" = "$DEPLOYMENT $DEPLOYMENT" ] || { echo "FAIL: $b records minOS/SDK '$vers', not $DEPLOYMENT/$DEPLOYMENT"; exit 1; }
   done
-  MAVERICKS_DEVIATIONS_ROOT="$HERE" sh "$HERE/scripts/guard.sh" "$S/bin/swift-frontend" "$L/bin/lld" "$L/bin/clang"
+  LIPO="$X/llvm-lipo" NM="$X/llvm-nm" STRINGS="$X/llvm-strings" \
+    MAVERICKS_DEVIATIONS_ROOT="$HERE" sh "$HERE/scripts/guard.sh" "$S/bin/swift-frontend" "$L/bin/lld" "$L/bin/clang"
   RPATHS="$(DYLDINFO="$DI" macho_rpaths "$S/bin/swift-frontend")" || { echo "FAIL: cannot read swift-frontend's rpaths"; exit 1; }
   printf '%s\n' "$RPATHS" | grep -qx '@loader_path/../lib/swift/macosx' \
     || { echo "FAIL: swift-frontend's rpath is not @loader_path/../lib/swift/macosx"; exit 1; }

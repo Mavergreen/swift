@@ -15,7 +15,12 @@
 #   checkout, configures for an arm64 / macOS 11.0 host against the 11.3 SDK with no native helpers and no
 #   -runtime-compatibility-version, pins the same clang defaults, and its check refuses a frontend that
 #   does not run on the OS's /usr/lib/swift. A missing host swiftc, either host's, is refused before
-#   anything is configured. Any other host is refused before anything runs. "The installed toolchain" is
+#   anything is configured. Any other host is refused before anything runs. Both hosts take cmark and the
+#   compiler's swift as GitHub's tarballs of their pinned commits through shipyard's fetch_pinned_source.sh,
+#   check cmark's release pin with curl, patch with patch, and never run git; force LLVM's version stamp to
+#   LLVM_SHA and its repository, turn Swift's off, and look for no git, LibEdit, LibXml2 or pkg-config.
+#   Natively nothing runs xcrun, and the x86_64 checks read with clang22's llvm-otool, llvm-lipo, llvm-nm
+#   and llvm-strings in both modes. "The installed toolchain" is
 #   SWIFT_INSTALLED_TOOLCHAIN, here always a prefix under this test's own dir, so whether this machine has
 #   /usr/local/mavergreen/swift-toolchain (OS X 10.9 does, as does a Mac with the pkg) changes nothing.
 set -eu
@@ -25,23 +30,25 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/build-toolchain-host.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 T="$(CDPATH='' cd -P -- "$T" && pwd -P)"
 . "$REPO/pins.env"
+. "$REPO/lib.sh"   # -> LLVM_REPO_URL, SWIFT_REPO_URL, CMARK_REPO_URL
 
 # A copy of the script under test, with its own sources, beside fakes for what it runs.
 R="$T/repo"; mkdir -p "$R/scripts" "$R/patches"
 cp "$REPO/build-toolchain.sh" "$REPO/lib.sh" "$REPO/pins.env" "$REPO/msc.sh" "$R/"
 cp -R "$REPO/patches/compiler" "$R/patches/"
 printf '#!/bin/sh\necho "%s/clang22"\n' "$T" > "$R/fetch-clang22.sh"
-printf '#!/bin/sh\necho "guard ALLOW=${MAVERICKS_ALLOW_ARCHS:-} $*" >> "%s/log"\n' "$T" > "$R/scripts/guard.sh"
+printf '#!/bin/sh\necho "guard ALLOW=${MAVERICKS_ALLOW_ARCHS:-} LIPO=${LIPO:-} OTOOL=${OTOOL:-} NM=${NM:-} STRINGS=${STRINGS:-} $*" >> "%s/log"\n' "$T" > "$R/scripts/guard.sh"
 mkdir -p "$T/bin" "$T/shipyard"
 for P in "$T/clang22" "$T/clang22n"; do
   mkdir -p "$P/bin"
-  for t in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-nm llvm-otool llvm-strings; do printf '#!/bin/sh\n' > "$P/bin/$t"; done
+  for t in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-nm llvm-strings; do printf '#!/bin/sh\n' > "$P/bin/$t"; done
   chmod +x "$P/bin/"*
 done
-cat > "$T/shipyard/clone_pinned.sh" <<F
+cat > "$T/shipyard/fetch_pinned_source.sh" <<F
 #!/bin/sh
-echo "clone_pinned \$*" >> "$T/log"
-mkdir -p "\$4/lib/Driver" "\$4/cmake/modules"; : >> "\$4/lib/Driver/Driver.cpp"; : >> "\$4/cmake/modules/AddSwift.cmake"
+echo "fetch_pinned_source \$*" >> "$T/log"
+rm -rf "\$4"; mkdir -p "\$4/lib/Driver" "\$4/cmake/modules"; : > "\$4/lib/Driver/Driver.cpp"; : > "\$4/cmake/modules/AddSwift.cmake"
+echo "\$1 \$2 \$3" > "\$4/.mavergreen-source"
 F
 cat > "$T/shipyard/fetch_sdk.sh" <<F
 #!/bin/sh
@@ -51,17 +58,25 @@ F
 printf 'mav_fetch_pinned() { echo "fetched $*" >> "%s/log"; return 1; }\n' "$T" > "$T/shipyard/mavericks_fetch.sh"
 printf 'mav_sdk_pin() { echo "https://example.invalid/x.tar.xz 0 MacOSX10.9.sdk.tar.xz MacOSX10.9.sdk"; }\n' > "$T/shipyard/sdk-pins.sh"
 mkdir -p "$T/sdkcache/stubs/MacOSX10.9.sdk/usr/lib"
-cat > "$T/bin/git" <<F
+printf '#!/bin/sh\necho "git $*" >> "%s/log"\nexit 1\n' "$T" > "$T/bin/git"
+cat > "$T/bin/curl" <<F
 #!/bin/sh
-echo "git \$*" >> "$T/log"
-case "\$*" in
-  ls-remote*) echo "$CMARK_SHA	refs/tags/$CMARK_TAG" ;;
-  *' apply -p0 --check '*) : ;;
-  *' apply -p0 '*) d="\$2"; p="\$5"
-     case "\${p##*/}" in
-       0001-*) echo 'any macOS SDK back to 10.9 is accepted' >> "\$d/lib/Driver/Driver.cpp" ;;
-       0002-*) echo "host tools run on the toolchain's own bundled runtime" >> "\$d/cmake/modules/AddSwift.cmake" ;;
-     esac ;;
+o=""; u=""
+while [ \$# -gt 0 ]; do case "\$1" in -o) o="\$2"; shift 2 ;; -*) shift ;; *) u="\$1"; shift ;; esac; done
+echo "curl \$u" >> "$T/log"
+{ printf '001e# service=git-upload-pack\\n0000'; printf '003d%s refs/tags/%s\\n0000' "$CMARK_SHA" "$CMARK_TAG"; } > "\$o"
+F
+# patch: a dry run applies; a real one, in the tree it runs in, writes the marker build-toolchain.sh greps.
+cat > "$T/bin/patch" <<F
+#!/bin/sh
+p=""; dry=0
+for a in "\$@"; do case "\$a" in --dry-run) dry=1 ;; esac; done
+while [ \$# -gt 0 ]; do case "\$1" in -i) p="\$2"; shift 2 ;; *) shift ;; esac; done
+[ "\$dry" = 1 ] && exit 0
+echo "patch \$(basename "\$PWD") \$p" >> "$T/log"
+case "\${p##*/}" in
+  0001-*) echo 'any macOS SDK back to 10.9 is accepted' >> lib/Driver/Driver.cpp ;;
+  0002-*) echo "host tools run on the toolchain's own bundled runtime" >> cmake/modules/AddSwift.cmake ;;
 esac
 F
 # shipyard-cmake records its arguments and, like a configure, leaves a CMakeCache.txt in its -B dir.
@@ -74,6 +89,7 @@ printf '#!/bin/sh\n{ echo "ninja"; for a in "$@"; do echo "  $a"; done; } >> "%s
 printf '#!/bin/sh\necho "python3 $*" >> "%s/log"\nexit "${FAKE_AUDIT_RC:-0}"\n' "$T" > "$T/bin/python3"
 cat > "$T/bin/xcrun" <<F
 #!/bin/sh
+echo "xcrun \$*" >> "$T/xcrun.log"
 case "\$*" in
   '-f dyld_info') [ -z "\${FAKE_NO_DYLDINFO:-}" ] || exit 1; echo "$T/bin/dyld_info" ;;
   *) echo "xcrun \$*" >> "$T/log"; exit 9 ;;
@@ -91,13 +107,18 @@ case "$1" in
      done ;;
 esac
 F
-# OS X 10.9 has no dyld_info: the native check reads otool's load commands.
-cat > "$T/bin/otool" <<'F'
+# OS X 10.9 has no dyld_info: the native check reads clang22's llvm-otool's load commands (a header table
+# first, then LC_BUILD_VERSION's sdk before its minos, as llvm-otool prints them); the host's otool must
+# never run.
+cat > "$T/llvm-otool" <<'F'
 #!/bin/sh
 [ "$1" = -l ] || exit 9
-printf '      cmd LC_VERSION_MIN_MACOSX\n  cmdsize 16\n  version %s\n      sdk 10.9\n' "${FAKE_OTOOL_MIN:-10.9}"
+printf 'Mach header\n      magic cputype cpusubtype  caps    filetype ncmds sizeofcmds      flags\n'
+printf '       cmd LC_BUILD_VERSION\n   cmdsize 32\n  platform 1\n       sdk 10.9\n     minos %s\n    ntools 1\n      tool 3\n   version 1267.0\n' "${FAKE_OTOOL_MIN:-10.9}"
 printf '          cmd LC_RPATH\n      cmdsize 48\n         path @loader_path/../lib/swift/macosx (offset 12)\n'
 F
+printf '#!/bin/sh\necho "otool $*" >> "%s/log"\nexit 9\n' "$T" > "$T/bin/otool"
+for P in "$T/clang22" "$T/clang22n"; do cp "$T/llvm-otool" "$P/bin/llvm-otool"; chmod +x "$P/bin/llvm-otool"; done
 chmod +x "$T/bin/"* "$T/shipyard/"* "$R/fetch-clang22.sh" "$R/scripts/guard.sh"
 # A host Swift toolchain: what host_swiftc_stamp hashes, and a frontend that prints its version.
 H="$T/host"; mkdir -p "$H/bin" "$H/lib/swift/macosx/Swift.swiftmodule"
@@ -111,7 +132,7 @@ SWIFT_INSTALLED_TOOLCHAIN="$T/installed"; export SWIFT_INSTALLED_TOOLCHAIN
 echo "swiftlang's fork refuses every Apple-platform input" > "$W/llvm-project/lld/MachO/InputFiles.cpp"
 run() {  # run <log-name> <mode> [build-toolchain.sh args] -- a fresh checkout state and log each time
   _n="$1"; _m="$2"; shift 2
-  rm -rf "$W/swift-compiler" "$W/swift-compiler-arm64" "$W/cmark" "$T/log"; : > "$T/log"
+  rm -rf "$W/swift-compiler" "$W/swift-compiler-arm64" "$W/cmark" "$T/log" "$T/xcrun.log"; : > "$T/log"
   _rc=0
   PATH="$T/bin:$PATH" SHIPYARD_SCRIPTS="$T/shipyard" SWIFT_WORK="$W" JOBS=2 MAVERICKS_USE_CCACHE=0 MAVERICKS_MODE="$_m" \
     MAVERICKS_SDK_CACHE="$T/sdkcache" CLANG22_PREFIX="$T/clang22n" sh "$R/build-toolchain.sh" "$@" > "$T/$_n.out" 2>&1 || _rc=$?
@@ -120,9 +141,21 @@ run() {  # run <log-name> <mode> [build-toolchain.sh args] -- a fresh checkout s
 }
 has() { grep -qxF -- "$2" "$T/$1.log" || fail "$1: never ran [$2]: $(cat "$T/$1.out")"; }
 lacks() { if grep -qF -- "$2" "$T/$1.log"; then fail "$1: ran [$2]"; fi; }
+sources() {  # what both hosts' builds fetch, check and never run; $2 is that host's compiler checkout
+  has "$1" "curl $CMARK_REPO_URL/info/refs?service=git-upload-pack"
+  has "$1" "fetch_pinned_source $CMARK_REPO_URL $CMARK_SHA $CMARK_TARBALL_SHA256 cmark"
+  has "$1" "fetch_pinned_source $SWIFT_REPO_URL $SWIFT_SHA $SWIFT_TARBALL_SHA256 $2"
+  has "$1" "  -DLLVM_FORCE_VC_REVISION=$LLVM_SHA"
+  has "$1" "  -DLLVM_FORCE_VC_REPOSITORY=$LLVM_REPO_URL"
+  for f in -DSWIFT_APPEND_VC_REV=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibEdit=ON \
+           -DCMAKE_DISABLE_FIND_PACKAGE_LibXml2=ON -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON; do has "$1" "  $f"; done
+  if grep -q '^git ' "$T/$1.log"; then fail "$1 ran git: $(grep '^git ' "$T/$1.log" | head -1)"; fi
+}
 x86_both() {  # what the x86_64 toolchain's configure is in either mode; $2 is that mode's clang22
-  has "$1" "git -C swift-compiler apply -p0 <T>/repo/patches/compiler/0001-accept-10.9-sdk.patch"
-  has "$1" "git -C swift-compiler apply -p0 <T>/repo/patches/compiler/0002-hosttools-rpath-loader-path.patch"
+  sources "$1" swift-compiler
+  has "$1" "patch swift-compiler <T>/repo/patches/compiler/0001-accept-10.9-sdk.patch"
+  has "$1" "patch swift-compiler <T>/repo/patches/compiler/0002-hosttools-rpath-loader-path.patch"
+  has "$1" "  -DSWIFT_LIPO=<T>/$2/bin/llvm-lipo"
   has "$1" "  -DCMAKE_C_COMPILER=<T>/$2/bin/clang"
   has "$1" "  -DCMAKE_AR=<T>/$2/bin/llvm-ar"
   has "$1" "  -DCMAKE_RANLIB=<T>/$2/bin/llvm-ranlib"
@@ -137,7 +170,8 @@ x86_both() {  # what the x86_64 toolchain's configure is in either mode; $2 is t
   has "$1" "  -DCMAKE_Swift_COMPILER=<T>/host/bin/swiftc"
   has "$1" "  -DCMAKE_EXE_LINKER_FLAGS=-L<T>/w/swiftdarwin-x86"
   has "$1" "  -DSWIFT_COMPILER_SOURCES_SDK_FLAGS=-sdk;<T>/sdk/MacOSX11.3.sdk;-Xcc;-D_LIBCPP_DISABLE_AVAILABILITY;-Xfrontend;-disable-availability-checking;-runtime-compatibility-version;none;-module-cache-path;<T>/w/swift-x86-modcache"
-  has "$1" "guard ALLOW= <T>/w/swift-x86/bin/swift-frontend <T>/w/llvm-x86/bin/lld <T>/w/llvm-x86/bin/clang"
+  has "$1" "guard ALLOW= LIPO=<T>/$2/bin/llvm-lipo OTOOL=<T>/$2/bin/llvm-otool NM=<T>/$2/bin/llvm-nm STRINGS=<T>/$2/bin/llvm-strings <T>/w/swift-x86/bin/swift-frontend <T>/w/llvm-x86/bin/lld <T>/w/llvm-x86/bin/clang"
+  lacks "$1" "otool -l"
   lacks "$1" "<T>/sdk/MacOSX10.9.sdk"
   lacks "$1" "toolchain/usr/bin/swiftc"
   lacks "$1" "xcrun"
@@ -186,6 +220,7 @@ lacks native "llvm-build"
 lacks native "native-helpers"
 lacks native "SWIFT_NATIVE_"
 lacks native "<T>/clang22/"
+[ ! -f "$T/xcrun.log" ] || fail "native ran xcrun: $(cat "$T/xcrun.log")"
 if (SWIFT_HOST_TOOLCHAIN="$H" FAKE_NO_DYLDINFO=1 FAKE_OTOOL_MIN=10.10 run native1010 native); then fail "passed a binary otool reads as minOS 10.10"; fi
 grep -q "records minOS/SDK '10.10 10.9'" "$T/native1010.out" || fail "native1010: $(cat "$T/native1010.out")"
 if (FAKE_NO_DYLDINFO=1 run default native); then fail "built with the installed toolchain, which is not there"; fi
@@ -202,9 +237,11 @@ rc=0; run narm native --host arm64 || rc=$?
 echo "-- arm64: 0001 alone in its own checkout, Apple clang for arm64 / 11.0 on the 11.3 SDK, no native helpers"
 export FAKE_ARCH=arm64 FAKE_PLATFORM='11.0      11.3' FAKE_RPATH=/usr/lib/swift
 run arm64 cross --host arm64 || fail "the arm64 build failed: $(cat "$T/arm64.out")"
-has arm64 "git -C swift-compiler-arm64 apply -p0 <T>/repo/patches/compiler/0001-accept-10.9-sdk.patch"
+sources arm64 swift-compiler-arm64
+has arm64 "patch swift-compiler-arm64 <T>/repo/patches/compiler/0001-accept-10.9-sdk.patch"
 lacks arm64 "0002-hosttools-rpath-loader-path.patch"
-lacks arm64 "git -C swift-compiler "
+lacks arm64 "patch swift-compiler "
+lacks arm64 "SWIFT_LIPO"
 has arm64 "  -DCMAKE_C_COMPILER=/usr/bin/clang"
 has arm64 "  -DCMAKE_OSX_SYSROOT=<T>/sdk/MacOSX11.3.sdk"
 has arm64 "  -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"
@@ -229,7 +266,7 @@ lacks arm64 "runtime-compatibility-version"
 lacks arm64 "clang22"
 lacks arm64 "llvm-x86"
 lacks arm64 "stubs"
-has arm64 "guard ALLOW=arm64 <T>/w/swift-arm64/bin/swift-frontend <T>/w/llvm-arm64/bin/lld <T>/w/llvm-arm64/bin/clang"
+has arm64 "guard ALLOW=arm64 LIPO= OTOOL= NM= STRINGS= <T>/w/swift-arm64/bin/swift-frontend <T>/w/llvm-arm64/bin/lld <T>/w/llvm-arm64/bin/clang"
 has arm64 "python3 <T>/repo/scripts/audit-imports.py <T>/w/swift-arm64/bin/swift-frontend <T>/sdk/MacOSX11.3.sdk"
 grep -qx 'OK: swift-frontend, lld and clang for arm64 / macOS 11.0, targeting x86_64 / OS X 10.9' "$T/arm64.out" \
   || fail "arm64 did not finish OK: $(cat "$T/arm64.out")"
