@@ -25,8 +25,14 @@ Each of these pins removes one such difference:
 
 - the same mavericks-clang-22 release on both hosts: its cross package in CI, its native package on
   10.9;
-- its `llvm-libtool-darwin`, `llvm-ar`, `llvm-ranlib` and `llvm-lipo` make every archive. Apple's tools
-  differ between 10.9 and a modern Mac, and an archive's symbol table orders what lld writes;
+- its `llvm-libtool-darwin`, `llvm-ar`, `llvm-ranlib` and `llvm-lipo` make every archive the toolchains
+  and the standard library link. Apple's tools differ between 10.9 and a modern Mac, and an archive's
+  symbol table orders what lld writes;
+- the sources as GitHub's tarballs of the pinned commits (`pins.env`'s `*_SHA`), verified by the
+  SHA-256s beside them, extracted afresh on every build and patched with the OS's `patch` (10.9's GNU
+  patch 2.5.8 and a modern Mac's BSD patch 2.0 write the same bytes);
+- LLVM's, clang's and lld's version stamp, forced to the pinned llvm-project commit and its repository
+  (`clang --version` names them), where git used to read them from a checkout;
 - the 10.9 SDK in its original stub form (`lib.sh`'s `sdk109_stubs`). shipyard's `fetch_sdk.sh` converts
   the stubs to `.tbd` on a modern Mac but not on 10.9, and lld orders the two forms' symbols differently;
 - the pinned MacOSX11.3.sdk for the compiler's Swift half and for the standard library;
@@ -42,8 +48,6 @@ their inputs by host (shipyard's `mavericks_mode.sh`).
 
 Once, install:
 
-- Command Line Tools for Xcode 6.2, the last for 10.9. The build runs `otool`, `strings`, `xcrun` and
-  10.9's own `git`, which without them are stubs that offer to install them;
 - the toolchain package of the newest release of the Swift version in `pins.env` (`SWIFT_VERSION`). For
   6.4.0 that is the newest `6.4.0-mavericks.N`. `build.sh` prints the release it builds with, and refuses
   one of another Swift version. The same release's runtime package runs the programs its `swiftc`
@@ -52,17 +56,31 @@ Once, install:
   clang, lld and compiler-rt's builtins; `self-host.sh` refuses any other release's receipt);
 - the shipyard package (`shipyard-cmake`).
 
-pkgsrc supplies `python3` (gyb, line-directive, LLVM's CMake), `ninja`, and a `git` newer than 10.9's
-own. The newer `git` is needed only while `~/.gitconfig` uses options that 10.9's git 1.9.5 rejects. CMake
-picks gyb's python, and `build.sh` names it; 3.13 on 10.9, 3.14 in CI and 3.9 on a modern Mac have built
-the same runtime.
+Two tools still come from pkgsrc, `python3` (gyb, line-directive, LLVM's CMake) and `ninja`, until their
+Mavergreen packages exist (`Mavergreen/python-312` and `Mavergreen/ninja`). Nothing else: no git, no
+pkg-config or libxml2, and none of Xcode's Command Line Tools. The build fetches its sources with 10.9's
+own `curl`, unpacks them with its `tar`, patches them with its `patch`, and reads the Mach-O files it
+checks with mavericks-clang-22's `llvm-otool`, `llvm-nm`, `llvm-lipo` and `llvm-strings`. CMake picks
+gyb's python, and `build.sh` names it; 3.13 on 10.9, 3.14 in CI and 3.9 on a modern Mac have built the
+same runtime.
+
+No git is needed for the checkout either. 10.9's `curl` and `tar` unpack any commit, branch or tag:
+
+```sh
+curl -fsSL https://github.com/Mavergreen/swift/archive/refs/heads/main.tar.gz | tar xzf -   # into swift-main/
+```
 
 Run everything in a Terminal window (a login shell, so `/usr/local/mavergreen/bin` is on `PATH`), from
 the checkout, with the build root on local disk:
 
 ```sh
 export MAVERICKS_BUILD_ROOT="$HOME/mm-build"   # not /tmp (a reboot wipes it), not the checkout; no spaces
+export SHIPYARD_SCRIPTS=/usr/local/mavergreen/shipyard/share/cmake/MavericksShipyard/scripts
 ```
+
+`SHIPYARD_SCRIPTS` names the shipyard package's scripts, as CI names them. Without it each script asks
+CMake where shipyard is, with a probe that names no SDK, and CMake then asks `xcrun` for one: 10.9 has no
+`xcrun` to ask without the Command Line Tools.
 
 ### The runtime
 
@@ -76,10 +94,11 @@ SWIFTC=/usr/local/mavergreen/bin/swiftc SWIFT_RUNTIME_PREFIX="$R" DIST="$S/dist"
 
 From nothing to a gated runtime takes about 35 minutes on a 6-core Mac Pro. `build-llvm.sh` is the long
 one-time step; each later runtime build takes about 5 minutes. The first runs also fetch the two SDKs and
-clone llvm-project and swift.
+GitHub's tarballs of llvm-project (250 MB) and swift (39 MB) into `~/Library/Caches/mavericks-sources`
+(`MAVERICKS_SOURCE_CACHE`), about 40 seconds on the Mac Pro's connection.
 
-`build.sh` resets its swift checkout to the pin and applies `patches/runtime/` on every run, so a change
-to the runtime is a patch there. A new patch also needs its number in `build.sh`'s `RUNTIME_PATCHES` and
+`build.sh` extracts its swift source afresh from the cached tarball and applies `patches/runtime/` on
+every run, so a change to the runtime is a patch there. A new patch also needs its number in `build.sh`'s `RUNTIME_PATCHES` and
 a marker grep after the list (`build.sh` refuses a patch file the list lacks). After adding one, rerun
 `./build.sh` and the last three commands.
 
@@ -130,7 +149,7 @@ Budget on a 6-core Mac Pro (Xeon E5-1650 v2, 12 threads), from nothing:
 | in all | about 2 h 40 min |
 
 It needs about 8 GB under the build root, and 1 GB more for the two SDKs (fetched once into
-`~/Library/Caches/mavericks-sdk`). A later run reuses LLVM, clang, lld and the compiler's C++ half,
+`~/Library/Caches/mavericks-sdk`) and 300 MB for the source tarballs. A later run reuses LLVM, clang, lld and the compiler's C++ half,
 so it should take much less; that is an estimate, not a measurement.
 
 Since the seed must compile this checkout's compiler, a seed of an earlier Swift release (6.4 building
@@ -140,11 +159,11 @@ Since the seed must compile this checkout's compiler, a seed of an earlier Swift
 
 To check, on your own 10.9 Mac, that the installed release is what its source builds, first install the
 mavericks-clang-22 release that tag's `pins.env` names as `CLANG22_VERSION` (`self-host.sh` fails when the
-installed one differs):
+installed one differs). A release before 6.4.0-mavericks.11 builds only with git and the Command Line Tools installed.
 
 ```sh
 V="$(pkgutil --pkg-info dev.mavergreen.swift-toolchain | sed -n 's/^version: //p')"   # the installed release
-git checkout "$V"                 # its tag (afterwards, `git checkout -` returns to your branch)
+curl -fsSL "https://github.com/Mavergreen/swift/archive/refs/tags/$V.tar.gz" | tar xzf - && cd "swift-$V"
 ./self-host.sh --compare /usr/local/mavergreen/swift-toolchain
 ```
 
@@ -182,3 +201,17 @@ sh scripts/stage-toolchain.sh --stdlib "$S/payload/toolchain-cross/$X/lib/swift"
 release of one no package installed. The 10.9 toolchain cannot run on a modern Mac (its compiler loads
 its own 10.9 runtime beside the OS's, and crashes), so it is tested on 10.9, and CI runs only a
 translated smoke of it (`tests/toolchain-smoke-test.sh`).
+
+## A Swift bump
+
+Renovate moves the Swift, llvm-project and swift-cmark pins together, in one pull request. It cannot
+compute the SHA-256 of GitHub's tarball of each new commit; `.github/workflows/pins-bot.yml` does, on
+the PR's branch, and runs `release.yml` on its commit (INGREDIENTS.md says how). If that bot failed, do
+by hand on the branch what it does, and push the `pins.env` this writes:
+
+```sh
+sh scripts/pin-source-tarballs.sh     # needs git: it checks each tarball is its commit's tree
+```
+
+Until the pins are right CI fails at the first fetch, naming the pin. `sh scripts/pin-source-tarballs.sh
+--check` writes nothing and says which pin is stale.

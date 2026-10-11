@@ -11,9 +11,9 @@ was merged in (2026-09) and deleted (2026-10). Its 6.4.0 installer mirror is now
 
 | Ingredient | Pinned in | Renovate | On a bump |
 |---|---|---|---|
-| Swift release (own upstream) | `SWIFT_VERSION` + `SWIFT_SHA` in `pins.env` | ✅ `github-tags` on `swiftlang/swift`, grouped with llvm-project; minor/major held for a human (below) | auto-cuts `<upstream>-mavericks.1` on the push to main |
-| swiftlang/llvm-project commit | `LLVM_SWIFT_RELEASE` + `LLVM_SHA` in `pins.env` | ✅ `github-tags` on `swiftlang/llvm-project`, in the same "Swift release" PR | moves only WITH the Swift pin: `build-llvm.sh` fails unless `LLVM_SWIFT_RELEASE` equals `SWIFT_VERSION` and `LLVM_SHA` is llvm-project's `swift-<SWIFT_VERSION>-RELEASE` |
-| swiftlang/swift-cmark commit | `CMARK_SWIFT_RELEASE` + `CMARK_SHA` in `pins.env` | ✅ `github-tags` on `swiftlang/swift-cmark`, in the same "Swift release" PR | moves only WITH the Swift pin: `build-toolchain.sh` runs `check_release_pin` on it |
+| Swift release (own upstream) | `SWIFT_VERSION` + `SWIFT_SHA` + `SWIFT_TARBALL_SHA256` in `pins.env` | ✅ `github-tags` on `swiftlang/swift`, grouped with llvm-project; minor/major held for a human (below); the tarball's SHA-256 is written on the PR's branch by the pins bot (below) | auto-cuts `<upstream>-mavericks.1` on the push to main |
+| swiftlang/llvm-project commit | `LLVM_SWIFT_RELEASE` + `LLVM_SHA` + `LLVM_TARBALL_SHA256` in `pins.env` | ✅ `github-tags` on `swiftlang/llvm-project`, in the same "Swift release" PR; the SHA-256 as for Swift | moves only WITH the Swift pin: `build-llvm.sh` fails unless `LLVM_SWIFT_RELEASE` equals `SWIFT_VERSION` and `LLVM_SHA` is llvm-project's `swift-<SWIFT_VERSION>-RELEASE` |
+| swiftlang/swift-cmark commit | `CMARK_SWIFT_RELEASE` + `CMARK_SHA` + `CMARK_TARBALL_SHA256` in `pins.env` | ✅ `github-tags` on `swiftlang/swift-cmark`, in the same "Swift release" PR; the SHA-256 as for Swift | moves only WITH the Swift pin: `build-toolchain.sh` runs `check_release_pin` on it |
 | mavericks-clang-22 cross toolchain (compiles the 10.9-hosted toolchain and compiler-rt's builtins, and its `llvm-libtool-darwin`, `llvm-ar`, `llvm-ranlib` and `llvm-lipo` make their archives; on OS X 10.9, `self-host.sh` uses the native package of the same release) | `CLANG22_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/clang-22`, `-mavericks.N` versioning | auto-repackages `-mavericks.(N+1)` |
 | LLVM and compiler source patches (`patches/llvm/`, `patches/compiler/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | swift.org toolchain `.pkg` (CI's one seed: it compiles the cross toolchain's Swift half, and a first stdlib that only makes that toolchain runnable; everything the release ships is compiled by this repo's own compilers, below) | `TOOLCHAIN_URL`, derived from `SWIFT_VERSION` | ✅ moves with the Swift pin | verified by **signer identity**, not a hash (below) |
@@ -31,8 +31,16 @@ rebuilds the 10.9 toolchain with the previous release, and the result must be th
 (`self-host.sh --compare`; DEVELOPING.md). These settings, none of them an ingredient Renovate moves, keep
 the two hosts' builds the same bytes:
 
-- **Archives:** clang22's `llvm-libtool-darwin`, `llvm-ar` and `llvm-ranlib` in `build-toolchain.sh`, and
-  its `llvm-libtool-darwin` and `llvm-lipo` in `build-builtins.sh`, never the host's Apple tools.
+- **Archives:** clang22's `llvm-libtool-darwin`, `llvm-ar` and `llvm-ranlib` in `build-toolchain.sh`, its
+  `llvm-libtool-darwin` and `llvm-lipo` in `build-builtins.sh`, and its `llvm-ar` and `llvm-ranlib` for the
+  standard library's archive in `build.sh`, never the host's Apple tools.
+- **Sources:** GitHub's tarballs of the pinned commits, verified by `pins.env`'s SHA-256s and extracted
+  afresh on every build, patched with the OS's `patch` (OS X 10.9's GNU patch 2.5.8 and a modern Mac's BSD
+  patch 2.0 write the same bytes, and the same as `git apply` did).
+- **Version stamps:** LLVM's, clang's and lld's are forced to `LLVM_SHA` and
+  `https://github.com/swiftlang/llvm-project.git` (`LLVM_FORCE_VC_REVISION` and
+  `LLVM_FORCE_VC_REPOSITORY`), the strings git read from a checkout; Swift's own (`SWIFT_APPEND_VC_REV`) is
+  off: it reaches no shipped byte.
 - **The 10.9 SDK's stubs:** `lib.sh`'s `sdk109_stubs` fetches shipyard's pinned tarball with shipyard's
   own `sdk-pins.sh` and `mavericks_fetch.sh`, and leaves its `MH_DYLIB_STUB` files as they are.
   `fetch_sdk.sh` converts them to `.tbd` where `tapi` exists, which is every modern Mac and never 10.9
@@ -41,10 +49,35 @@ the two hosts' builds the same bytes:
   `build-toolchain.sh`, for both toolchains.
 - **Paths:** the build root is mapped to `/mavergreen-build` in every compile.
 
+## Why the sources are tarballs, and their SHA-256s a script's
+
+The builds run on OS X 10.9 with nothing from Xcode's Command Line Tools, and 10.9's only git is one of
+their stubs. So they fetch each pinned commit as GitHub's tarball of it (shipyard's
+`fetch_pinned_source.sh`), verified by a SHA-256 in `pins.env`, and check the tags with `curl` against the
+repository's ref advertisement (`<repo>/info/refs`, what `git ls-remote` reads). Renovate moves a commit
+but cannot compute a hash, so a bot writes them on the Swift bump's own branch
+(`.github/workflows/pins-bot.yml`, on pushes to `renovate/**`). Its first job, with read access only,
+runs `scripts/pin-source-tarballs.sh`: it fetches each tarball and, with git, the commit itself, and
+computes the SHA-256 only for a tarball that holds exactly the commit's tree; upstream's bytes never sit
+beside a token that can write. Its second job, which reads no upstream byte, writes those three values
+into `pins.env` (`scripts/pins-bot.sh`), commits them as `github-actions[bot]` and pushes. A push made
+with `GITHUB_TOKEN` starts no workflow, so that job then dispatches `release.yml` on the branch; that
+run's `build` is the check `main` requires, on the new head, and a Swift patch bump automerges on green
+as the family rule says (minor and major still wait for a human, below). The token rule is the bot's
+two jobs': the dispatched `release.yml` run builds upstream with the permissions every `release.yml` run
+has (`contents: write` workflow-wide, its checkouts keeping the token), as the push that opened the
+branch already did. `gitIgnoredAuthors` in
+`.github/renovate.json` keeps the bot's commit from marking the branch as edited by someone else. Until
+the bot has run, CI fails at the first fetch, naming the pin; if the bot fails, `sh
+scripts/pin-source-tarballs.sh` on the branch does by hand what it does, and `--check` writes nothing. GitHub's
+generated archives have been byte-stable (10.9's curl and a modern Mac's fetched the same SHA-256s); if
+GitHub ever regenerates them, the fetch fails rather than build other bytes.
+
 ## How a bump reaches a release
 
 - **`SWIFT_VERSION` moved** → a new upstream. `version.sh` reports `RELEASE=yes` because that upstream
   has no tag yet, so the push to main auto-cuts `-mavericks.1`.
+- **a Swift bump's tarball SHA-256s** move with it, in the same push: still a new upstream.
 - **any other pin in `pins.env`, or anything under `patches/`, moved** → an ingredient bump.
   `repackage-on-ingredient-bump.yml` dispatches `release.yml` with `local_release=true`, which cuts
   `-mavericks.(N+1)`.
