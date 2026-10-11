@@ -9,7 +9,11 @@
 #   the toolchain SWIFT_HOST_TOOLCHAIN names the same way, never the swift.org pkg, and stops at the SDK
 #   fetch (this test's shipyard has none), and passes CMAKE_OSX_ARCHITECTURES=x86_64 to the stdlib configure
 #   (an arm64 Mac's CMake probe would ask the x86_64-only toolchain clang for arm64; step 1 reports the flag
-#   it will pass); without it, it wants the swift.org pkg and passes none.
+#   it will pass); without it, it wants the swift.org pkg and passes none. Past step 1, natively (fakes for
+#   everything), it must take the swift source as GitHub's tarball of SWIFT_SHA through shipyard's
+#   fetch_pinned_source.sh, apply patches/runtime in RUNTIME_PATCHES' order with patch, configure the stdlib
+#   with clang22's llvm-ar, llvm-ranlib and llvm-lipo and with LibXml2, LibEdit and pkg-config not looked
+#   for, and never run git or xcrun (OS X 10.9 has neither without the Command Line Tools).
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -97,4 +101,62 @@ configure_args "-DCMAKE_OSX_ARCHITECTURES=x86_64"
 grep -qxF -e '-DCMAKE_OSX_ARCHITECTURES=x86_64' "$T/cmake-args" || fail "the configure call dropped CMAKE_ARCH_ARGS: $(cat "$T/cmake-args")"
 configure_args ""
 if grep -q 'CMAKE_OSX_ARCHITECTURES' "$T/cmake-args"; then fail "the configure call passes an architecture of its own"; fi
+
+echo "-- natively, past step 1: the swift tarball, patch in RUNTIME_PATCHES' order, clang22's archiver; no git, no xcrun"
+C22="$T/clang22n"; mkdir -p "$C22/bin"
+for t in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-nm llvm-otool llvm-strings; do
+  printf '#!/bin/sh\n' > "$C22/bin/$t"; chmod +x "$C22/bin/$t"
+done
+printf '#!/bin/sh\necho "%s/sdk/MacOSX11.3.sdk"\n' "$T" > "$T/shipyard/fetch_sdk.sh"
+cat > "$T/shipyard/fetch_pinned_source.sh" <<F
+#!/bin/sh
+echo "fetch_pinned_source \$*" >> "$T/log"
+rm -rf "\$4"; mkdir -p "\$4/stdlib/public/stubs" "\$4/stdlib/public/runtime" "\$4/stdlib/public/core" "\$4/include/swift/Runtime"
+for f in CMakeLists.txt stdlib/public/stubs/Availability.mm stdlib/public/runtime/SwiftObject.mm stdlib/public/runtime/Metadata.cpp \
+         include/swift/Runtime/Config.h stdlib/public/core/StringBridge.swift; do : > "\$4/\$f"; done
+echo "\$1 \$2 \$3" > "\$4/.mavergreen-source"
+F
+# patch: a dry run applies; a real one writes the marker build.sh greps for that patch.
+cat > "$T/fakebin/patch" <<'F'
+#!/bin/sh
+p=""; dry=0
+for a in "$@"; do case "$a" in --dry-run) dry=1 ;; esac; done
+while [ $# -gt 0 ]; do case "$1" in -i) p="$2"; shift 2 ;; *) shift ;; esac; done
+[ "$dry" = 1 ] && exit 0
+echo "patch $(basename "$p")" >> "$FAKE_LOG"
+case "$(basename "$p")" in
+  0001-*) echo fno-sized-deallocation >> CMakeLists.txt ;;
+  0002-*) echo CFPropertyListCreateWithStream >> stdlib/public/stubs/Availability.mm ;;
+  0003-*) echo mav_minimalRealize >> stdlib/public/runtime/SwiftObject.mm ;;
+  0004-*) echo mav_roFromClassData >> stdlib/public/runtime/Metadata.cpp ;;
+  0005-*) echo 'class_getInstanceSize((Class)const_cast' >> stdlib/public/runtime/Metadata.cpp ;;
+  0007-*) echo 'ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101404' >> include/swift/Runtime/Config.h ;;
+  0008-*) echo 'was: hasFeature(Macros)' >> stdlib/public/core/StringBridge.swift ;;
+esac
+F
+# The stdlib configure records its arguments and leaves a cache; the build (ninja) stops the run.
+cat > "$T/fakebin/shipyard-cmake" <<F
+#!/bin/sh
+{ echo "shipyard-cmake"; for a in "\$@"; do echo "  \$a"; done; } >> "$T/log"
+b=""; for a in "\$@"; do if [ "\$b" = next ]; then mkdir -p "\$a" && : > "\$a/CMakeCache.txt"; b=""; elif [ "\$a" = -B ]; then b=next; fi; done
+F
+printf '#!/bin/sh\nexit 3\n' > "$T/fakebin/ninja"
+for c in git xcrun; do printf '#!/bin/sh\necho "%s $*" >> "%s/log"\nexit 1\n' "$c" "$T" > "$T/fakebin/$c"; done
+chmod +x "$T/shipyard/"* "$T/fakebin/"*
+receipt "$SWIFT_VERSION-mavericks.9"; : > "$T/log"
+if ( export PATH="$T/fakebin:$PATH" FAKE_LOG="$T/log" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=native \
+      SWIFT_HOST_TOOLCHAIN="$H" CLANG22_PREFIX="$C22"
+    unset SWIFT_WORK SWIFT_BUILTINS NM
+    sh "$REPO/build.sh" ) > "$T/out" 2>&1; then fail "build.sh got past a build that failed: $(cat "$T/out")"; fi
+grep -qxF "fetch_pinned_source https://github.com/swiftlang/swift.git $SWIFT_SHA $SWIFT_TARBALL_SHA256 swift" "$T/log" \
+  || fail "did not fetch the swift tarball by its pin: $(cat "$T/out")"
+[ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0001 0002 0003 0004 0005 0007 0008 " ] \
+  || fail "patched in another order: $(grep '^patch' "$T/log" | tr '\n' ' ')"
+for a in "-DCMAKE_AR=$C22/bin/llvm-ar" "-DCMAKE_RANLIB=$C22/bin/llvm-ranlib" "-DSWIFT_LIPO=$C22/bin/llvm-lipo" -DSWIFT_ENABLE_LIBXML2=OFF \
+         -DCMAKE_DISABLE_FIND_PACKAGE_LibXml2=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibEdit=ON -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON; do
+  grep -qxF -e "  $a" "$T/log" || fail "the stdlib configure lacks $a: $(cat "$T/log")"
+done
+if grep -q '^git \|^xcrun ' "$T/log"; then fail "ran $(grep '^git \|^xcrun ' "$T/log" | head -1)"; fi
+grep -q '^archiver ' "$R/swift/work/stdlib-build/mavergreen-inputs.stamp" \
+  || fail "the stdlib-build's stamp does not record the archiver: $(cat "$R/swift/work/stdlib-build/mavergreen-inputs.stamp")"
 echo "PASS"

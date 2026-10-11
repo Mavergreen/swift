@@ -14,15 +14,19 @@
 #     /usr/local/mavergreen/swift-toolchain), or a stage of self-host.sh.
 #   Both: LLVM build support and ld64.lld from build-llvm.sh; the pinned modern SDK (shipyard's
 #   fetch_sdk.sh --arch arm64, MacOSX11.3.sdk); the runtime linked by that lld with the builtins archive
-#   where the driver puts its own; the build root prefix-mapped to /mavergreen-build.
+#   where the driver puts its own; the build root prefix-mapped to /mavergreen-build; the swift source as
+#   GitHub's tarball of SWIFT_SHA, verified by SWIFT_TARBALL_SHA256 and patched with the OS's patch;
+#   mavericks-clang-22's llvm-ar and llvm-ranlib make the stdlib's archives (pins.env's CLANG22_VERSION:
+#   cross, fetch-clang22.sh's; native, the installed one, CLANG22_PREFIX).
 # Env: MAVERICKS_BUILD_ROOT (build root, see lib.sh), SWIFT_WORK (sources and build trees, default
 #   $SWIFT_BUILD/work), SWIFT_RUNTIME_OUT (the staged payload, default $SWIFT_BUILD/payload/runtime),
 #   MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_HOST_TOOLCHAIN_VERSION (the release of a host toolchain no
 #   pkg installed, a copy; see lib.sh's host_toolchain_release), SWIFT_BUILTINS (a libclang_rt.osx.a to
-#   link instead of the mode's own), NM (native mode's nm), MAVERICKS_SDK_CACHE (fetch_sdk.sh's cache).
-# Host: cmake through shipyard-cmake, ninja, git, python3 (gyb). On OS X 10.9 pkgsrc supplies python3
-# (gyb, line-directive, LLVM's CMake), ninja, and git (while ~/.gitconfig uses options that git 1.9.5
-# rejects); see DEVELOPING.md.
+#   link instead of the mode's own), NM (native mode's nm), CLANG22_PREFIX, MAVERICKS_SDK_CACHE
+#   (fetch_sdk.sh's cache), MAVERICKS_SOURCE_CACHE (fetch_pinned_source.sh's).
+# Host: cmake through shipyard-cmake, ninja, python3 (gyb), curl, patch, tar. No git and, on OS X 10.9,
+# none of Xcode's Command Line Tools: natively the checks read with clang22's llvm-otool, llvm-nm and
+# llvm-strings. On 10.9 pkgsrc still supplies python3 and ninja; see DEVELOPING.md.
 # Output: $SWIFT_RUNTIME_OUT, in scripts/stage-runtime.sh's layout, for package.sh.
 set -eu
 
@@ -31,14 +35,16 @@ HERE="$(cd "$(dirname "$0")" && pwd)"   # capture BEFORE the cd below: $0 is rel
 . "$HERE/lib.sh"    # -> $SWIFT_BUILD, verify_toolchain_signature, expand_toolchain, the build helpers
 . "$HERE/msc.sh"    # -> $SHIPYARD (clone_pinned.sh, mavericks_mode.sh, fetch_sdk.sh)
 ROOT="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$ROOT"; cd "$ROOT"
-# platform: OS X 10.9 has no dyld_info; step 7 then reads the runtime with otool and nm (lib.sh).
-DYLDINFO="$(xcrun -f dyld_info 2>/dev/null || :)"
 LLVMB="$SWIFT_BUILD/out/llvm"
 LLD="$ROOT/llvm-build/bin/ld64.lld"
 # gyb generates stdlib sources with Python; a fixed hash seed keeps set and dict order, and so those
 # sources, the same from run to run (a two-root build once differed by 48 bytes of reordered strings).
 PYTHONHASHSEED=0; export PYTHONHASHSEED
 MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
+# platform: OS X 10.9 has no dyld_info (nor, without the Command Line Tools, any xcrun to find a tool);
+#           step 7 then reads the runtime with otool, nm and strings (lib.sh), clang22's below.
+DYLDINFO=""
+if [ "$MODE" = cross ]; then DYLDINFO="$(xcrun -f dyld_info 2>/dev/null || :)"; fi
 
 echo "==> 1. host build environment ($MODE: LLVM build support and lld built here, the pinned SDK fetched, a host compiler)"
 # Reported, not required: CMake finds gyb's python itself (step 4 names the one it found), and 3.14
@@ -81,20 +87,22 @@ fi
 if [ "$MODE" = native ]; then
   # platform: step 7 reads imports with nm when there is no dyld_info; clang22's llvm-nm is the one
   #           proven on the box (the spike), and a GNU nm earlier on PATH would not know -m.
-  NM="${NM:-/usr/local/mavergreen/clang22/bin/llvm-nm}"
+  NM="${NM:-${CLANG22_PREFIX:-/usr/local/mavergreen/clang22}/bin/llvm-nm}"
   command -v "$NM" >/dev/null 2>&1 || { echo "FAIL: no $NM (mavericks-clang-22's native pkg provides it; NM names another)"; exit 1; }
 fi
 SDK_RUNTIME="$(sh "$SHIPYARD/fetch_sdk.sh" --arch arm64)" || { echo "FAIL: could not fetch the pinned modern SDK"; exit 1; }
+# The stdlib's archives (libswiftCommandLineSupport.a, which libswiftCore links) are made by clang22's
+# llvm-ar and llvm-ranlib in both modes: the Command Line Tools' ar is a stub on 10.9 without them, and
+# one archiver on both hosts makes the same archive bytes. llvm-lipo answers Swift's configure-time
+# lipo lookup, which would otherwise ask xcrun. Natively, step 7 reads with clang22's llvm-otool and
+# llvm-strings.
+X="$(clang22_prefix "$MODE" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
+if [ "$MODE" = native ]; then OTOOL="$X/llvm-otool"; STRINGS="$X/llvm-strings"; export OTOOL; else STRINGS=strings; fi
 clang_resource_shim "$CLANG_INC" "$BUILTINS" "$ROOT/clang-resource" || { echo "FAIL: could not lay out $ROOT/clang-resource"; exit 1; }
 echo "    host compiler $TC; SDK $SDK_RUNTIME; linker $LLD; builtins $BUILTINS"
 
-echo "==> 2. pinned swift source, reset to pristine (a previous run left it patched)"
-sh "$SHIPYARD/clone_pinned.sh" https://github.com/swiftlang/swift.git "$SWIFT_TAG" "$SWIFT_SHA" swift
-test "$(git -C swift rev-parse HEAD)" = "$SWIFT_SHA" || { echo "FAIL: swift SHA mismatch (want $SWIFT_SHA)"; exit 1; }
-# platform: some macOS checkouts fail `git apply` with iconv_open(UTF-8, UTF-8-MAC) on unicode paths.
-git -C swift config core.precomposeunicode false
-git -C swift reset -q --hard "$SWIFT_SHA"
-git -C swift clean -q -fdx
+echo "==> 2. pinned swift source (GitHub's tarball of SWIFT_SHA, verified by SWIFT_TARBALL_SHA256, extracted afresh)"
+fetch_source swift "$SWIFT_REPO_URL" "$SWIFT_SHA" "$SWIFT_TARBALL_SHA256" SWIFT_TARBALL_SHA256 || exit 1
 
 echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order)"
 #  0001 unsized operator delete  — 10.9's libc++ lacks __ZdlPvm (sized delete).
@@ -128,7 +136,7 @@ echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order
 #       __TEXT,__lldbsummaries) and drops a String fast path in StringBridge.swift. 0008 drops
 #       the file and keeps the fast path in both modes, so both build the same Swift code. Lost:
 #       LLDB's ObjectIdentifier summary. Undone when the toolchain gains macros (milestone L).
-# Patches are --no-prefix format; apply with -p0. A new patch needs its number here and a marker grep
+# Patches are --no-prefix format; patch_source applies them with -p0. A new patch needs its number here and a marker grep
 # below: a patch file this list lacks fails the build rather than being skipped, and
 # tests/runtime-patch-list-test.sh holds the list, the files and the marker greps together.
 RUNTIME_PATCHES="0001 0002 0003 0004 0005 0007 0008"
@@ -138,7 +146,7 @@ UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $RUNTIME_PATCHES)" || {
   echo "FAIL: build.sh's RUNTIME_PATCHES does not list every patch in $PATCHES_DIR (listed above) -- add its number, and a marker grep"; exit 1; }
 for n in $RUNTIME_PATCHES; do
   for p in "$PATCHES_DIR/$n"-*.patch; do
-    git -C swift apply -p0 --check "$p" && git -C swift apply -p0 "$p" || { echo "patch failed: $p"; exit 1; }
+    patch_source "$ROOT/swift" "$p" || exit 1
   done
 done
 grep -q 'fno-sized-deallocation' swift/CMakeLists.txt || { echo "patch 0001 not applied"; exit 1; }
@@ -158,10 +166,10 @@ echo "==> 4. Swift STDLIB-ONLY configure (prebuilt toolchain as native tools)"
 PM_C="$(prefix_map_flags c "$ROOT")"
 PM_SWIFT="$(prefix_map_flags swift "$ROOT")"
 LINK="-fuse-ld=lld --ld-path=$LLD"
-# A reused stdlib-build is kept only while the host compiler, clang, clang's cfgs and builtins archive are
-# the bytes it was configured with: ninja cannot see them change (a toolchain update, say), and would keep the objects
-# the previous ones built.
-STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS")" || { echo "FAIL: could not stamp the host inputs"; exit 1; }
+# A reused stdlib-build is kept only while the host compiler, clang, clang's cfgs, builtins archive and
+# archiver are the bytes it was configured with: ninja cannot see them change (a toolchain update, say),
+# and would keep the objects the previous ones built; and a configured tree keeps its first CMAKE_AR.
+STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS" "$X/llvm-ar")" || { echo "FAIL: could not stamp the host inputs"; exit 1; }
 reuse_build_dir "$ROOT/stdlib-build" "$STAMP" || exit 1
 # LLVM_BUILD_* are build-tree-only variables that an install tree does not define, but
 # SwiftSharedCMakeConfig.cmake preconditions on them. LLVM_BUILD_MAIN_SRC_DIR only needs to be
@@ -169,12 +177,16 @@ reuse_build_dir "$ROOT/stdlib-build" "$STAMP" || exit 1
 # skipped under SWIFT_INCLUDE_TESTS=OFF / SWIFT_INCLUDE_TOOLS=OFF -- so no LLVM source is needed.
 # Clang_DIR, LLVM_TABLEGEN and CLANG_TABLEGEN are deliberately absent: CMake reports them
 # unused in this configuration, since the branch that would read them is behind SWIFT_INCLUDE_TOOLS.
+# LibXml2, LibEdit and pkg-config are not looked for, so what the host has on PATH changes nothing.
 shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER="$TC/bin/clang" -DCMAKE_CXX_COMPILER="$TC/bin/clang++" \
   -DCMAKE_OSX_SYSROOT="$SDK_RUNTIME" -DSWIFT_SDK_OSX_PATH="$SDK_RUNTIME" \
   $CMAKE_ARCH_ARGS \
   -DCMAKE_IGNORE_PREFIX_PATH=/opt/pkg \
+  -DCMAKE_AR="$X/llvm-ar" -DCMAKE_RANLIB="$X/llvm-ranlib" -DSWIFT_LIPO="$X/llvm-lipo" \
+  -DSWIFT_ENABLE_LIBXML2=OFF -DCMAKE_DISABLE_FIND_PACKAGE_LibXml2=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibEdit=ON \
+  -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON \
   "-DCMAKE_C_FLAGS=$PM_C" "-DCMAKE_CXX_FLAGS=$PM_C" \
   "-DCMAKE_EXE_LINKER_FLAGS=$LINK" "-DCMAKE_MODULE_LINKER_FLAGS=$LINK" \
   "-DCMAKE_SHARED_LINKER_FLAGS=$LINK -resource-dir $ROOT/clang-resource" \
@@ -216,7 +228,7 @@ echo "==> 7. self pre-flight (must show minOS 10.9 and NO os_unfair_lock)"
 # os_unfair_lock, no hard objc_readClassPair" and this step printed OK having checked nothing.
 MINOS="$(DYLDINFO="$DYLDINFO" macho_minos "$CORE")"
 IMPORTS_OUT="$(DYLDINFO="$DYLDINFO" macho_imports "$CORE")" || { echo "FAIL: could not read $CORE's imports"; exit 1; }
-echo "minOS $MINOS; $(printf '%s\n' "$IMPORTS_OUT" | grep -c .) imports (read with ${DYLDINFO:-otool and ${NM:-nm}})"
+echo "minOS $MINOS; $(printf '%s\n' "$IMPORTS_OUT" | grep -c .) imports (read with ${DYLDINFO:-${OTOOL:-otool} and ${NM:-nm}})"
 [ "$MINOS" = "$DEPLOYMENT" ] || { echo "FAIL: built runtime is minOS '$MINOS', not $DEPLOYMENT"; exit 1; }
 [ -n "$IMPORTS_OUT" ] || { echo "FAIL: read no imports from $CORE"; exit 1; }
 if printf '%s\n' "$IMPORTS_OUT" | grep -q 'os_unfair_lock'; then
@@ -230,7 +242,7 @@ fi
 # would otherwise read as "no MAV_, no paths".
 # release build must carry no debug-logging leftovers.
 [ -f "$CORE" ] || { echo "FAIL: no $CORE to check"; exit 1; }
-CORE_S="$(strings "$CORE")" || { echo "FAIL: could not read $CORE's strings"; exit 1; }
+CORE_S="$("$STRINGS" "$CORE")" || { echo "FAIL: could not read $CORE's strings ($STRINGS)"; exit 1; }
 if printf '%s\n' "$CORE_S" | grep -q 'MAV_'; then
   echo "FAIL: debug (MAV_) strings present in shipped dylib"; exit 1
 fi
@@ -241,7 +253,7 @@ fi
 RP="$(CDPATH='' cd -P -- "$ROOT" && pwd -P)"; LP="$(CDPATH='' cd -L -- "$ROOT" && pwd -L)"
 for lib in "$CORE" "$(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib"; do
   [ -f "$lib" ] || { echo "FAIL: no $lib to check"; exit 1; }
-  S="$(strings -a "$lib")" || { echo "FAIL: could not read $lib's strings"; exit 1; }
+  S="$("$STRINGS" -a "$lib")" || { echo "FAIL: could not read $lib's strings ($STRINGS)"; exit 1; }
   if printf '%s\n' "$S" | grep -F -e "$ROOT" -e "$RP" -e "$LP"; then
     echo "FAIL: $lib carries the build root's path (listed above)"; exit 1
   fi
