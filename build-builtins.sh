@@ -12,7 +12,8 @@
 #     /usr/local/mavergreen/clang22).
 #   Both: that toolchain's llvm-libtool-darwin and llvm-lipo make the archive, and its llvm-nm, llvm-lipo
 #   and llvm-ar read it back, so the archive is the same bytes on both hosts (Apple's libtool differs
-#   between them: T4 spike Q1).
+#   between them: T4 spike Q1); the compat guard reads it with its llvm-lipo, llvm-otool, llvm-nm and
+#   llvm-strings, never the Command Line Tools', which OS X 10.9 has only as stubs without them.
 # Run after build-llvm.sh. Output: $SWIFT_WORK/builtins-x86/lib/darwin/libclang_rt.osx.a.
 # Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, MAVERICKS_MODE, CLANG22_PREFIX.
 set -eu
@@ -23,7 +24,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 W="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$W"; cd "$W"
 MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
 case "$MODE" in cross|native) ;; *) echo "FAIL: mode '$MODE' is neither cross nor native"; exit 1 ;; esac
-test "$(git -C llvm-project rev-parse HEAD 2>/dev/null)" = "$LLVM_SHA" \
+[ "$(source_commit llvm-project)" = "$LLVM_SHA" ] \
   && grep -q "swiftlang's fork refuses every Apple-platform input" llvm-project/lld/MachO/InputFiles.cpp \
   && grep -q 'Mavergreen: extra flags for the Darwin builtins' llvm-project/compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake \
   || { echo "FAIL: no patched llvm-project at $LLVM_SHA in $W -- run ./build-llvm.sh"; exit 1; }
@@ -71,7 +72,8 @@ ninja -C "$B"
 
 echo "==> 3. check: $ARCH only, minOS and SDK per the pin, and the symbols the runtime links"
 [ -f "$A" ] || { echo "FAIL: the build made no $A"; exit 1; }
-MAVERICKS_DEVIATIONS_ROOT="$HERE" sh "$HERE/scripts/guard.sh" "$A"
+LIPO="$X/llvm-lipo" OTOOL="$X/llvm-otool" NM="$X/llvm-nm" STRINGS="$X/llvm-strings" \
+  MAVERICKS_DEVIATIONS_ROOT="$HERE" sh "$HERE/scripts/guard.sh" "$A"
 # The two entry points #available calls, which the runtime takes from here, and the four 128-bit
 # division helpers every complete builtins archive defines (the spike found all six): a build missing
 # any of them is broken. (The runtime imports the four from libSystem: the driver puts this archive last.)

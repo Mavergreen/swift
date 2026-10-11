@@ -6,7 +6,9 @@
 #   toolchain (CLANG22_PREFIX), and in both the archive made by that toolchain's llvm-libtool-darwin and
 #   llvm-lipo and read back by its llvm-nm, llvm-lipo and llvm-ar, never by the host's Apple tools. Its
 #   check must refuse an archive whose members keep a date or owner, or that lacks a symbol the runtime
-#   links. Nothing is built: every tool is a fake that records its arguments.
+#   links, and run the compat guard with that toolchain's readers. It must refuse an llvm-project that is
+#   not build-llvm.sh's extraction of LLVM_SHA, and never run git. Nothing is built: every tool is a fake
+#   that records its arguments.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -18,10 +20,10 @@ T="$(CDPATH='' cd -P -- "$T" && pwd -P)"
 R="$T/repo"; mkdir -p "$R/scripts"
 cp "$REPO/build-builtins.sh" "$REPO/lib.sh" "$REPO/pins.env" "$REPO/msc.sh" "$R/"
 printf '#!/bin/sh\necho "fetch-clang22" >> "%s/log"\necho "%s/cross"\n' "$T" "$T" > "$R/fetch-clang22.sh"
-printf '#!/bin/sh\necho "guard $*" >> "%s/log"\n' "$T" > "$R/scripts/guard.sh"
+printf '#!/bin/sh\necho "guard LIPO=$LIPO OTOOL=$OTOOL NM=$NM STRINGS=$STRINGS $*" >> "%s/log"\n' "$T" > "$R/scripts/guard.sh"
 mkdir -p "$T/bin" "$T/shipyard"
 printf '#!/bin/sh\necho "%s/sdk/MacOSX10.9.sdk"\n' "$T" > "$T/shipyard/fetch_sdk.sh"
-printf '#!/bin/sh\necho "git $*" >> "%s/log"\necho %s\n' "$T" "$LLVM_SHA" > "$T/bin/git"
+printf '#!/bin/sh\necho "git $*" >> "%s/log"\nexit 1\n' "$T" > "$T/bin/git"
 for c in shipyard-cmake ninja; do
   printf '#!/bin/sh\n{ echo "%s"; for a in "$@"; do echo "  $a"; done; } >> "%s/log"\n' "$c" "$T" > "$T/bin/$c"
 done
@@ -54,6 +56,7 @@ chmod +x "$T/bin/"* "$T/shipyard/"* "$R/fetch-clang22.sh" "$R/scripts/guard.sh"
 W="$T/w"; mkdir -p "$W/llvm-project/lld/MachO" "$W/llvm-project/compiler-rt/cmake/Modules"
 echo "swiftlang's fork refuses every Apple-platform input" > "$W/llvm-project/lld/MachO/InputFiles.cpp"
 echo 'Mavergreen: extra flags for the Darwin builtins' > "$W/llvm-project/compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake"
+echo "https://github.com/swiftlang/llvm-project.git $LLVM_SHA $LLVM_TARBALL_SHA256" > "$W/llvm-project/.mavergreen-source"
 run() {  # run <log-name> <mode> -- a fresh log each time
   _n="$1"; rm -f "$T/log"; : > "$T/log"; _rc=0
   PATH="$T/bin:$PATH" SHIPYARD_SCRIPTS="$T/shipyard" SWIFT_WORK="$W" MAVERICKS_MODE="$2" CLANG22_PREFIX="$T/native" \
@@ -73,7 +76,9 @@ for m in cross native; do
   has "$m" "  -DCMAKE_LIPO=<T>/$m/bin/llvm-lipo"
   has "$m" "  -DCMAKE_OSX_SYSROOT=<T>/sdk/MacOSX10.9.sdk"
   has "$m" "<T>/$m/bin/llvm-lipo -thin x86_64 <T>/w/builtins-x86/lib/darwin/libclang_rt.osx.a -output <T>/w/builtins-x86/thin.a"
+  has "$m" "guard LIPO=<T>/$m/bin/llvm-lipo OTOOL=<T>/$m/bin/llvm-otool NM=<T>/$m/bin/llvm-nm STRINGS=<T>/$m/bin/llvm-strings <T>/w/builtins-x86/lib/darwin/libclang_rt.osx.a"
   lacks "$m" "APPLE"
+  if grep -q "^git " "$T/$m.log"; then fail "$m ran git"; fi
   grep -qx "OK: $W/builtins-x86/lib/darwin/libclang_rt.osx.a (8 bytes)" "$T/$m.out" || fail "$m did not finish OK: $(cat "$T/$m.out")"
 done
 lacks native "fetch-clang22"
@@ -84,6 +89,15 @@ if (FAKE_OWNER=501/20 run dated native); then fail "passed an archive whose memb
 grep -q 'keep a date or owner' "$T/dated.out" || fail "dated: $(cat "$T/dated.out")"
 if (FAKE_MISSING=___divti3 run missing cross); then fail "passed an archive without ___divti3"; fi
 grep -q 'does not define ___divti3' "$T/missing.out" || fail "missing: $(cat "$T/missing.out")"
+
+echo "-- an llvm-project that is not build-llvm.sh's extraction of LLVM_SHA is refused before anything runs"
+echo "https://github.com/swiftlang/llvm-project.git 0000000000000000000000000000000000000000 x" > "$W/llvm-project/.mavergreen-source"
+if run other native; then fail "built from llvm-project at another commit"; fi
+grep -q "no patched llvm-project at $LLVM_SHA" "$T/other.out" || fail "other: $(cat "$T/other.out")"
+lacks other "shipyard-cmake"
+rm "$W/llvm-project/.mavergreen-source"
+if run nostamp native; then fail "built from an llvm-project no fetch stamped"; fi
+echo "https://github.com/swiftlang/llvm-project.git $LLVM_SHA $LLVM_TARBALL_SHA256" > "$W/llvm-project/.mavergreen-source"
 
 echo "-- a mode that is neither is refused before anything runs"
 if run bad sideways; then fail "ran in mode 'sideways'"; fi
