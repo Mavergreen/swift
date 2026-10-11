@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- BSD sed -i '', otool and shipyard-cmake; runs on a modern Mac and on OS X 10.9
+# platform: macOS-only -- BSD sed -i '', otool (llvm-otool on 10.9) and shipyard-cmake; runs on a modern Mac and on OS X 10.9
 # build-llvm.sh — build a RELOCATABLE LLVM build-support tree for the Swift stdlib build, and the lld
 # that links the runtime.
 #
@@ -8,9 +8,13 @@
 # $SWIFT_WORK/llvm-build/bin/ld64.lld, which build.sh links the runtime with in both modes, so a CI
 # build and an OS X 10.9 build of the same release are the same bytes.
 # Runs on a modern Mac (cross mode: /usr/bin/clang) and on OS X 10.9 (native mode: mavericks-clang-22's
-# native clang, with the fetched 10.9 SDK, since that pkg leaves its own SDKs/ empty); MAVERICKS_MODE
-# overrides shipyard's mavericks_mode.sh, HOST_TOOLS_CC and HOST_TOOLS_CXX the compiler.
-# Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, MAVERICKS_MODE, HOST_TOOLS_CC, HOST_TOOLS_CXX.
+# native clang, with the fetched 10.9 SDK, since that pkg leaves its own SDKs/ empty, and its
+# llvm-libtool-darwin, llvm-ar, llvm-ranlib and llvm-otool, since 10.9's are the Command Line Tools');
+# MAVERICKS_MODE overrides shipyard's mavericks_mode.sh, HOST_TOOLS_CC and HOST_TOOLS_CXX the compiler.
+# The source is GitHub's tarball of LLVM_SHA, verified by LLVM_TARBALL_SHA256 (no git), patched with the
+# OS's patch; LLVM's version stamp is forced to that commit and its repository.
+# Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, MAVERICKS_MODE, HOST_TOOLS_CC, HOST_TOOLS_CXX, CLANG22_PREFIX,
+# MAVERICKS_SDK_CACHE, MAVERICKS_SOURCE_CACHE.
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -21,26 +25,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$ROOT"; cd "$ROOT"
 OUT="$SWIFT_BUILD/out/llvm"
 
-echo "==> 1. pinned llvm-project source (fetched BY SHA via shared clone_pinned.sh)"
-check_release_pin llvm-project "$LLVM_SWIFT_RELEASE" "$LLVM_TAG" "$LLVM_SHA" \
-  https://github.com/swiftlang/llvm-project.git || exit 1
-# clone_pinned fetches the pinned commit DIRECTLY, so where a branch or tag moves later never matters.
-# Guard on llvm/ existing, not on .git -- an interrupted checkout leaves a .git whose HEAD passes the
-# SHA test while the worktree is empty (cmake then dies confusingly), so re-fetch from scratch then.
-if [ ! -d llvm-project/llvm ]; then
-  rm -rf llvm-project
-  sh "$SHIPYARD/clone_pinned.sh" https://github.com/swiftlang/llvm-project.git "$LLVM_TAG" "$LLVM_SHA" llvm-project
-fi
-test "$(git -C llvm-project rev-parse HEAD)" = "$LLVM_SHA" || {
-  echo "FAIL: llvm-project SHA mismatch (want $LLVM_SHA)"; exit 1; }
-[ -d llvm-project/llvm ] || { echo "FAIL: llvm-project checkout incomplete"; exit 1; }
+echo "==> 1. pinned llvm-project source (GitHub's tarball of LLVM_SHA, verified by LLVM_TARBALL_SHA256)"
+check_release_pin llvm-project "$LLVM_SWIFT_RELEASE" "$LLVM_TAG" "$LLVM_SHA" "$LLVM_REPO_URL" || exit 1
+# Extracted afresh every run, so the patches below start from upstream's bytes.
+fetch_source llvm-project "$LLVM_REPO_URL" "$LLVM_SHA" "$LLVM_TARBALL_SHA256" LLVM_TARBALL_SHA256 || exit 1
 
-echo "==> 1b. LLVM patches (patches/llvm, on a pristine checkout: a previous run left it patched)"
-git -C llvm-project reset -q --hard "$LLVM_SHA"
-git -C llvm-project clean -q -fdx
-for p in "$HERE"/patches/llvm/*.patch; do
-  git -C llvm-project apply -p0 --check "$p" && git -C llvm-project apply -p0 "$p" || { echo "FAIL: patch did not apply: $p"; exit 1; }
-done
+echo "==> 1b. LLVM patches (patches/llvm)"
+patch_source "$ROOT/llvm-project" "$HERE"/patches/llvm/*.patch || exit 1
 grep -q 'absent before macOS 10.10' llvm-project/llvm/lib/CAS/OnDiskCommon.cpp || { echo "FAIL: llvm patch 0001 not applied"; exit 1; }
 grep -q 'LLVM_LINKER_IS_LLD AND NOT APPLE' llvm-project/llvm/cmake/modules/AddLLVM.cmake || { echo "FAIL: llvm patch 0002 not applied"; exit 1; }
 grep -q "swiftlang's fork refuses every Apple-platform input" llvm-project/lld/MachO/InputFiles.cpp || { echo "FAIL: llvm patch 0003 not applied"; exit 1; }
@@ -53,21 +44,34 @@ echo "==> 2. configure + build TableGen and lld (libswiftCore does not link LLVM
 #       so the same pinned shipyard-cmake writes them.
 MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
 case "$MODE" in
-  cross) CC_="${HOST_TOOLS_CC:-/usr/bin/clang}"; CXX_="${HOST_TOOLS_CXX:-/usr/bin/clang++}"; SYSROOT_ARG="" ;;
+  cross) CC_="${HOST_TOOLS_CC:-/usr/bin/clang}"; CXX_="${HOST_TOOLS_CXX:-/usr/bin/clang++}" ;;
   # platform: OS X 10.9's Apple clang is too old to build LLVM; mavericks-clang-22's static libc++
   #           fills what 10.9's libc++ lacks. Its pkg leaves SDKs/ empty, so the sysroot is named.
-  native) CC_="${HOST_TOOLS_CC:-/usr/local/mavergreen/clang22/bin/clang}"; CXX_="${HOST_TOOLS_CXX:-/usr/local/mavergreen/clang22/bin/clang++}"
-          SYSROOT_ARG="-DCMAKE_OSX_SYSROOT=$(sh "$SHIPYARD/fetch_sdk.sh")" ;;
+  native) X="$(clang22_prefix native "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 (native)"; exit 1; }
+          CC_="${HOST_TOOLS_CC:-$X/clang}"; CXX_="${HOST_TOOLS_CXX:-$X/clang++}"
+          SDK109="$(sh "$SHIPYARD/fetch_sdk.sh")" || { echo "FAIL: could not fetch the pinned 10.9 SDK"; exit 1; }
+          # platform: OS X 10.9's libtool, ar, ranlib and otool are the Command Line Tools', stubs
+          #           without them; LLVM archives with CMAKE_LIBTOOL on an Apple host.
+          OTOOL="$X/llvm-otool"; export OTOOL ;;
   *) echo "FAIL: mode '$MODE' is neither cross nor native"; exit 1 ;;
 esac
 # /opt/pkg (pkgsrc, on the 10.9 box) is never searched: a library found there is an accident the
-# pkgsrc ledger does not allow. LibXml2 is off by name too: pkg-config finds it despite the ignore.
+# pkgsrc ledger does not allow, and LibXml2, LibEdit, zlib, zstd and terminfo are off by name, so what
+# the host has on PATH (pkg-config finds them despite the ignore) changes nothing. Git is never looked
+# for: the source is a tarball, and the version stamp is forced to the pinned commit and its repository,
+# the strings git reported from a checkout of it.
 set -- -G Ninja -S llvm-project/llvm -B llvm-build \
   -DCMAKE_BUILD_TYPE=Release "-DLLVM_ENABLE_PROJECTS=clang;lld" \
   -DLLVM_TARGETS_TO_BUILD="X86;AArch64" \
-  -DCMAKE_C_COMPILER="$CC_" -DCMAKE_CXX_COMPILER="$CXX_" ${SYSROOT_ARG:+"$SYSROOT_ARG"} \
+  -DCMAKE_C_COMPILER="$CC_" -DCMAKE_CXX_COMPILER="$CXX_" \
   -DCMAKE_IGNORE_PREFIX_PATH=/opt/pkg -DLLVM_ENABLE_LIBXML2=OFF \
+  -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_TERMINFO=OFF \
+  -DLLVM_FORCE_VC_REVISION="$LLVM_SHA" -DLLVM_FORCE_VC_REPOSITORY="$LLVM_REPO_URL" -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON \
   -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF
+if [ "$MODE" = native ]; then
+  set -- "$@" -DCMAKE_OSX_SYSROOT="$SDK109" \
+    -DCMAKE_LIBTOOL="$X/llvm-libtool-darwin" -DCMAKE_AR="$X/llvm-ar" -DCMAKE_RANLIB="$X/llvm-ranlib"
+fi
 # A reused llvm-build keeps the options it was configured with, so it is configured again whenever
 # they change (a build root from before lld joined would otherwise never build it).
 if [ ! -f llvm-build/build.ninja ] || [ ! -x "$(sed -n 's/^CMAKE_COMMAND:INTERNAL=//p' llvm-build/CMakeCache.txt)" ] \
@@ -81,7 +85,7 @@ fi
 ninja -C llvm-build llvm-tblgen llvm-min-tblgen clang-tblgen llvm-config \
       intrinsics_gen clang-tablegen-targets LLVMBitstreamReader lld
 [ -x llvm-build/bin/ld64.lld ] || { echo "FAIL: no llvm-build/bin/ld64.lld after building lld"; exit 1; }
-# lld links nothing from /opt/pkg; an otool that cannot read it fails this too (lib.sh).
+# lld links nothing from /opt/pkg; a reader that cannot read it fails this too (lib.sh, OTOOL).
 macho_links_none_under llvm-build/bin/lld /opt/pkg/ || exit 1
 
 echo "==> 3. install the relocatable subset"
