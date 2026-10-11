@@ -72,7 +72,7 @@ if [ "\$1" = --install ]; then
   : > "\$o/lib/cmake/llvm/LLVMInstallSymlink.cmake"
   exit 0
 fi
-{ echo "shipyard-cmake"; for a in "\$@"; do echo "  \$a"; done; } >> "$T/log"
+{ echo "shipyard-cmake"; for a in "\$@"; do echo "  \$a"; done; echo "  env CC_FOR_BUILD=\${CC_FOR_BUILD:-}"; } >> "$T/log"
 [ ! -e llvm-build/CMakeCache.txt ] || echo "configured over a CMakeCache.txt" >> "$T/log"
 [ ! -e llvm-build/CMakeFiles ] || echo "configured over a CMakeFiles" >> "$T/log"
 mkdir -p llvm-build; printf 'CMAKE_COMMAND:INTERNAL=%s\n' "$T/bin/shipyard-cmake" > llvm-build/CMakeCache.txt; : > llvm-build/build.ninja
@@ -92,7 +92,7 @@ for t in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lip
 chmod +x "$T/bin/"* "$T/shipyard/"* "$T/clang22n/bin/"*
 run() {  # run <log-name> <mode> -- a fresh build root (KEEP_ROOT=1: the last run's) and log each time
   _n="$1"; [ "${KEEP_ROOT:-0}" = 1 ] || rm -rf "$T/root"; rm -f "$T/log"; : > "$T/log"; _rc=0
-  PATH="$T/bin:$PATH" FAKE_LOG="$T/log" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_BUILD_ROOT="$T/root" MAVERICKS_MODE="$2" \
+  PATH="$T/bin:$PATH" CC_FOR_BUILD="" FAKE_LOG="$T/log" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_BUILD_ROOT="$T/root" MAVERICKS_MODE="$2" \
     CLANG22_PREFIX="$T/clang22n" sh "$R/build-llvm.sh" > "$T/$_n.out" 2>&1 || _rc=$?
   sed "s|$T|<T>|g" "$T/log" > "$T/$_n.log"
   return "$_rc"
@@ -117,6 +117,7 @@ run cross cross || fail "the cross build failed: $(cat "$T/cross.out")"
 both cross
 has cross "  -DCMAKE_C_COMPILER=/usr/bin/clang"
 has cross "<T>/bin/otool -L llvm-build/bin/lld"
+has cross "  env CC_FOR_BUILD="
 lacks cross "CMAKE_LIBTOOL"
 lacks cross "CMAKE_TAPI"
 lacks cross "fetch_sdk"
@@ -132,6 +133,9 @@ has native "  -DCMAKE_LIBTOOL=<T>/clang22n/bin/llvm-libtool-darwin"
 has native "  -DCMAKE_AR=<T>/clang22n/bin/llvm-ar"
 has native "  -DCMAKE_RANLIB=<T>/clang22n/bin/llvm-ranlib"
 has native "<T>/clang22n/bin/llvm-otool -L llvm-build/bin/lld"
+# LLVM's config.guess, on a configure over a cache, asks CC_FOR_BUILD and never a Command Line Tools cc.
+has native "  env CC_FOR_BUILD=<T>/clang22n/bin/clang"
+! grep -qxF "  env CC_FOR_BUILD=" "$T/native.log" || fail "native: a configure without CC_FOR_BUILD"
 for a in -DCMAKE_TAPI=/usr/bin/false -DCMAKE_STRIP=\<T\>/clang22n/bin/llvm-strip -DLD64_EXECUTABLE=/usr/bin/false \
          -DCMAKE_LINKER=\<T\>/clang22n/bin/ld64.lld -DHOST_LINK_VERSION=241.9; do has native "  $a"; done
 lacks native "<T>/bin/otool"

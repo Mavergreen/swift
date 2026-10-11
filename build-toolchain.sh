@@ -98,6 +98,10 @@ SDK113="$(sh "$SHIPYARD/fetch_sdk.sh" --arch arm64)" || { echo "FAIL: could not 
 if [ "$HOST" = x86_64 ]; then
   X="$(clang22_prefix "$MODE" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
   SDK109="$(sdk109_stubs)" || { echo "FAIL: could not fetch the pinned 10.9 SDK"; exit 1; }
+  # platform: a configure over a CMakeCache.txt (stage 2's and stage 3's, of stage 1's llvm-x86) hands LLVM's
+  #           config.guess no CC, so it tries cc, gcc, c89 and c99, on OS X 10.9 the Command Line Tools'
+  #           stubs: natively it gets clang22's clang. (The cached LLVM_HOST_TRIPLE wins either way.)
+  if [ "$MODE" = native ]; then CC_FOR_BUILD="$X/clang"; export CC_FOR_BUILD; fi
   PM="$(prefix_map_flags c "$W")" || { echo "FAIL: no prefix maps for $W"; exit 1; }
   # The Swift half imports the 11.3 SDK's Darwin overlay, whose force-load symbol lives in libswiftDarwin,
   # which neither a Mavergreen toolchain's lib/swift/macosx nor the 10.9 SDK has. A dir holding ONLY the

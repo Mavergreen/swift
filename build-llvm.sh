@@ -52,7 +52,10 @@ case "$MODE" in
           SDK109="$(sh "$SHIPYARD/fetch_sdk.sh")" || { echo "FAIL: could not fetch the pinned 10.9 SDK"; exit 1; }
           # platform: OS X 10.9's libtool, ar, ranlib and otool are the Command Line Tools', stubs
           #           without them; LLVM archives with CMAKE_LIBTOOL on an Apple host.
-          OTOOL="$X/llvm-otool"; export OTOOL ;;
+          OTOOL="$X/llvm-otool"; export OTOOL
+          # platform: a configure over a CMakeCache.txt hands LLVM's config.guess no CC, so it tries cc,
+          #           gcc, c89 and c99, on OS X 10.9 the Command Line Tools' stubs: it gets the clang it configures with.
+          CC_FOR_BUILD="$CC_"; export CC_FOR_BUILD ;;
   *) echo "FAIL: mode '$MODE' is neither cross nor native"; exit 1 ;;
 esac
 # /opt/pkg (pkgsrc, on the 10.9 box) is never searched: a library found there is an accident the

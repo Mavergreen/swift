@@ -86,7 +86,7 @@ F
 # shipyard-cmake records its arguments and, like a configure, leaves a CMakeCache.txt in its -B dir.
 cat > "$T/bin/shipyard-cmake" <<F
 #!/bin/sh
-{ echo "shipyard-cmake"; for a in "\$@"; do echo "  \$a"; done; } >> "$T/log"
+{ echo "shipyard-cmake"; for a in "\$@"; do echo "  \$a"; done; echo "  env CC_FOR_BUILD=\${CC_FOR_BUILD:-}"; } >> "$T/log"
 b=""; for a in "\$@"; do if [ "\$b" = next ]; then mkdir -p "\$a" && : > "\$a/CMakeCache.txt"; b=""; elif [ "\$a" = -B ]; then b=next; fi; done
 F
 printf '#!/bin/sh\n{ echo "ninja"; for a in "$@"; do echo "  $a"; done; } >> "%s/log"\n' "$T" > "$T/bin/ninja"
@@ -140,7 +140,7 @@ run() {  # run <log-name> <mode> [build-toolchain.sh args] -- a fresh checkout s
   _n="$1"; _m="$2"; shift 2
   rm -rf "$W/swift-compiler" "$W/swift-compiler-arm64" "$W/cmark" "$T/log" "$T/xcrun.log"; : > "$T/log"
   _rc=0
-  PATH="$T/bin:$PATH" SHIPYARD_SCRIPTS="$T/shipyard" SWIFT_WORK="$W" JOBS=2 MAVERICKS_USE_CCACHE=0 MAVERICKS_MODE="$_m" \
+  PATH="$T/bin:$PATH" CC_FOR_BUILD="" SHIPYARD_SCRIPTS="$T/shipyard" SWIFT_WORK="$W" JOBS=2 MAVERICKS_USE_CCACHE=0 MAVERICKS_MODE="$_m" \
     MAVERICKS_SDK_CACHE="$T/sdkcache" CLANG22_PREFIX="$T/clang22n" sh "$R/build-toolchain.sh" "$@" > "$T/$_n.out" 2>&1 || _rc=$?
   sed "s|$T|<T>|g" "$T/log" > "$T/$_n.log"
   return "$_rc"
@@ -201,6 +201,7 @@ has x86 "  -DCMAKE_CROSSCOMPILING=ON"
 has x86 "  -DLLVM_TABLEGEN=<T>/w/llvm-build/bin/llvm-tblgen"
 has x86 "  -DSWIFT_NATIVE_CLANG_TOOLS_PATH=<T>/host/bin"
 has x86 "  -DSWIFT_SOURCE_DIR=<T>/w/swift-compiler"
+has x86 "  env CC_FOR_BUILD="
 lacks x86 "clang22n"
 cmp -s "$W/swift-x86/mavergreen-host.stamp" - <<EOF || fail "the host stamp is not host_swiftc_stamp's: $(cat "$W/swift-x86/mavergreen-host.stamp")"
 $(. "$REPO/lib.sh" && host_swiftc_stamp "$H")
@@ -271,6 +272,9 @@ echo "-- x86_64, native (OS X 10.9): clang22's native toolchain, its own TableGe
 (SWIFT_HOST_TOOLCHAIN="$H" FAKE_NO_DYLDINFO=1 run native native) || fail "the native build failed: $(cat "$T/native.out")"
 x86_both native clang22n
 has native "  -DLLVM_TABLEGEN=<T>/w/llvm-x86/bin/llvm-tblgen"
+# LLVM's config.guess, on a configure over a cache (stages 2 and 3), asks CC_FOR_BUILD, never a CLT cc.
+has native "  env CC_FOR_BUILD=<T>/clang22n/bin/clang"
+! grep -qxF "  env CC_FOR_BUILD=" "$T/native.log" || fail "native: a configure without CC_FOR_BUILD"
 lacks native "CMAKE_CROSSCOMPILING"
 lacks native "llvm-build"
 lacks native "native-helpers"
