@@ -7,7 +7,8 @@
 #          What .github/workflows/pins-bot.yml decides and writes when it fills a Swift bump's tarball pins on
 #          Renovate's branch (scripts/pin-source-tarballs.sh computes and checks the hashes themselves).
 #          moved   exit 0, printing them, when pins.env's source pin lines (LLVM_SHA, SWIFT_SHA, CMARK_SHA,
-#                  *_TARBALL_SHA256) differ from those of the commit where this branch left <base-ref>; else 1.
+#                  *_TARBALL_SHA256) differ from those of the commit where this branch left <base-ref>; else 1;
+#                  2 when git cannot tell (no merge base, a failed diff), never 1.
 #          values  prints the three tarball pins as KEY=SHA256, one line, three words; refuses one that is not
 #                  64 hex digits.
 #          apply   writes those three pins into pins.env and nothing else; refuses another key, a value that is
@@ -27,7 +28,9 @@ case "${1:-}" in
   moved)
     [ $# -eq 2 ] || { echo "usage: pins-bot.sh moved <base-ref>" >&2; exit 2; }
     base="$(git -C "$HERE" merge-base "$2" HEAD)" || { echo "pins-bot: no merge base with $2" >&2; exit 2; }
-    lines="$(git -C "$HERE" diff "$base" HEAD -- pins.env | grep -E '^[-+](LLVM_SHA|SWIFT_SHA|CMARK_SHA|[A-Z]+_TARBALL_SHA256)=' || :)"
+    # The diff is taken whole first: a git that fails must not read as "no source pin moved".
+    d="$(git -C "$HERE" diff "$base" HEAD -- pins.env)" || { echo "pins-bot: git diff $base HEAD -- pins.env failed" >&2; exit 2; }
+    lines="$(printf '%s\n' "$d" | grep -E '^[-+](LLVM_SHA|SWIFT_SHA|CMARK_SHA|[A-Z]+_TARBALL_SHA256)=' || :)"
     [ -n "$lines" ] || exit 1
     printf '%s\n' "$lines" ;;
   values)

@@ -9,8 +9,11 @@
 #   job's whole decision, by scripts/pin-source-tarballs.sh's exit codes: nothing when no source pin moved or
 #   --check says 0 (current); the write, then the three values, when --check says 3 (stale); a failure, with no
 #   write and no values, for any other --check status (1, an error: never mistaken for stale) or a failed write.
+#   `moved` must exit 2, never 1, when git cannot tell (a failed diff), so `fill` fails rather than do nothing.
 #   The workflow must give the job that reads upstream's tarballs no write token, and the job that holds one
-#   no upstream bytes.
+#   no upstream bytes; run on a push to renovate/** and nothing else; put no ${{ }} in a run: block; persist
+#   no credentials in the pins job's checkout; and run the push job only after the pins job. Each of those
+#   last four checks is run against a workflow mutated to break it, and must refuse it.
 #   Offline: a fixture repository with this repo's pins.env stands in for the Renovate branch, and a stub
 #   stands in for pin-source-tarballs.sh.
 set -eu
@@ -35,6 +38,14 @@ git -C "$R" checkout -q main; edit CMARK_TARBALL_SHA256 "$Z"; git -C "$R" commit
 git -C "$R" checkout -q -b renovate/swift HEAD~1; edit SWIFT_SHA 1111111111111111111111111111111111111111; git -C "$R" commit -qam swift
 bot moved main > "$T/out" || fail "a moved SWIFT_SHA was not seen"
 [ "$(grep -c '^[-+]SWIFT_SHA=' "$T/out")" = 2 ] && [ "$(wc -l < "$T/out" | tr -d ' ')" = 2 ] || fail "moved printed: $(cat "$T/out")"
+# A git whose diff fails cannot tell: exit 2, never 1 ("no source pin moved").
+mkdir -p "$T/faildiff"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = diff ] && { echo "fatal: no diff today" >&2; exit 128; }; done\nexec "%s" "$@"\n' \
+  "$(command -v git)" > "$T/faildiff/git"; chmod +x "$T/faildiff/git"
+# platform: in a subshell, as macOS's /bin/sh (bash 3.2) keeps a PATH=... prefix on a function call after it.
+rc=0; (PATH="$T/faildiff:$PATH"; bot moved main) > "$T/out" 2> "$T/err" || rc=$?
+[ "$rc" -eq 2 ] && [ ! -s "$T/out" ] || fail "moved, a failed git diff: exit $rc, printed [$(cat "$T/out")]"
+grep -q 'pins-bot: git diff .* failed' "$T/err" || fail "moved, a failed git diff: said [$(cat "$T/err")]"
 
 echo "-- values: the three pins on one line; a bad one refused"
 [ "$(bot values)" = "$(. "$REPO/pins.env" && echo "LLVM_TARBALL_SHA256=$LLVM_TARBALL_SHA256 SWIFT_TARBALL_SHA256=$SWIFT_TARBALL_SHA256 CMARK_TARBALL_SHA256=$CMARK_TARBALL_SHA256")" ] \
@@ -95,6 +106,9 @@ if fill main 3 1; then fail "fill, a failed write: exit 0"; fi
 [ ! -s "$T/out" ] && [ "$(calls)" = "--check write" ] || fail "fill, a failed write: handed on [$(cat "$T/out")], calls [$(calls)]"
 if fill nosuchref 3 0; then fail "fill, no merge base: exit 0"; fi
 [ ! -s "$T/out" ] && [ ! -s "$T/calls" ] || fail "fill, no merge base: handed on [$(cat "$T/out")], calls [$(calls)]"
+if (PATH="$T/faildiff:$PATH"; fill main 3 0); then fail "fill, a failed git diff: exit 0 (read as no source pin moved)"; fi
+[ ! -s "$T/out" ] && [ ! -s "$T/calls" ] || fail "fill, a failed git diff: handed on [$(cat "$T/out")], calls [$(calls)]"
+grep -q 'could not tell whether a source pin moved (moved exited 2)' "$T/err" || fail "fill, a failed git diff: said [$(cat "$T/err")]"
 git -C "$R" checkout -q renovate/clang22
 fill main 3 0 || fail "fill, a clang22 bump: exit $? ($(cat "$T/err"))"
 [ ! -s "$T/out" ] && [ ! -s "$T/calls" ] || fail "fill, a clang22 bump: handed on [$(cat "$T/out")], calls [$(calls)]"
@@ -115,4 +129,42 @@ grep -qx 'pins:           pins="$(sh scripts/pins-bot.sh fill origin/main)"' "$T
 grep -qx 'push:           applied="$(sh scripts/pins-bot.sh apply $PINS)"' "$T/jobs" || fail "the push job does not fail on a refused apply"
 if grep '^push:' "$T/jobs" | grep -qF '[ "$(sh scripts/pins-bot.sh apply'; then fail "the push job reads a refused apply as unchanged"; fi
 if grep '^pins:' "$T/jobs" | grep -v '^pins: *#' | grep -q 'pin-source-tarballs'; then fail "the pins job runs pin-source-tarballs.sh around pins-bot.sh fill"; fi
+
+echo "-- the workflow's security invariants, each shown to catch its own breakage"
+# invariants <workflow> -- prints the first invariant <workflow> breaks, and fails; nothing when it keeps them all:
+#   on: is a push to renovate/** and nothing else (no pull_request_target, no workflow_dispatch, no other branch);
+#   no run: block holds ${{ }} (a value an attacker can shape reaches a shell only through env:);
+#   the pins job's checkout persists no credentials (its token never sits in .git/config beside upstream's bytes);
+#   the push job needs the pins job (it runs only on values the pins job checked).
+invariants() {
+  _on="$(awk '/^on:/ { on = 1; next } on && /^[^ #]/ { exit } on && !/^ *(#.*)?$/ { print }' "$1")"
+  [ "$_on" = "  push:
+    branches: ['renovate/**']" ] || { echo "on: is not a push to renovate/** alone: [$_on]"; return 1; }
+  _run="$(awk 'function ind(l) { match(l, /^ */); return RLENGTH }
+    r && (/^ *$/ || ind($0) > ri) { if (index($0, "${{")) print NR ": " $0; next }
+    { r = 0 }
+    /^ *(- )?run:/ { ri = ind($0); r = 1; if (index($0, "${{")) print NR ": " $0 }' "$1")"
+  [ -z "$_run" ] || { echo "a run: block holds \${{ }}: $_run"; return 1; }
+  awk '/^  pins:$/ { j = "pins" } /^  push:$/ { j = "push" } j { print j ": " $0 }' "$1" > "$T/inv-jobs"
+  grep -q '^pins:           persist-credentials: false\( *#.*\)\{0,1\}$' "$T/inv-jobs" \
+    || { echo "the pins job's checkout persists its credentials"; return 1; }
+  grep -qx 'push:     needs: pins' "$T/inv-jobs" || { echo "the push job does not need the pins job"; return 1; }
+}
+invariants "$W" > "$T/inv" || fail "pins-bot.yml: $(cat "$T/inv")"
+mutant() {  # mutant <what it breaks> <expected message> <sed script> -- invariants must refuse the mutated workflow
+  sed "$3" "$W" > "$T/mutant.yml"
+  if cmp -s "$W" "$T/mutant.yml"; then fail "mutant '$1' changed nothing"; fi
+  if invariants "$T/mutant.yml" > "$T/inv"; then fail "invariants passed a workflow with $1"; fi
+  grep -qF "$2" "$T/inv" || fail "invariants, $1: said [$(cat "$T/inv")]"
+}
+mutant "a pull_request_target trigger" "on: is not a push" 's/^  push:$/  pull_request_target:\
+  push:/'
+mutant "a workflow_dispatch trigger" "on: is not a push" 's/^permissions: {}$/  workflow_dispatch:\
+permissions: {}/'
+mutant "another branch" "on: is not a push" "s|'renovate/\*\*'|'**'|"
+mutant "\${{ }} in a one-line run:" 'a run: block holds' 's/^      - name: Install mavericks-shipyard$/      - run: echo ${{ github.head_ref }}\
+&/'
+mutant "\${{ }} in a run: block" 'a run: block holds' 's/^          set -eu$/          echo "${{ github.event.head_commit.message }}"/'
+mutant "the pins job keeping its credentials" "persists its credentials" 's/persist-credentials: false/persist-credentials: true/'
+mutant "a push job that needs nothing" "does not need the pins job" '/^    needs: pins$/d'
 echo "PASS"

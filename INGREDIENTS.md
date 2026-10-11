@@ -69,7 +69,11 @@ has (`contents: write` workflow-wide, its checkouts keeping the token), as the p
 branch already did. `gitIgnoredAuthors` in
 `.github/renovate.json` keeps the bot's commit from marking the branch as edited by someone else. Until
 the bot has run, CI fails at the first fetch, naming the pin; if the bot fails, `sh
-scripts/pin-source-tarballs.sh` on the branch does by hand what it does, and `--check` writes nothing. GitHub's
+scripts/pin-source-tarballs.sh` on the branch does by hand what it does, and `--check` writes nothing. If
+only its dispatch failed, after the push, re-running the bot cannot mend it (the re-run checks out the
+run's original commit, finds the pins stale, and its push is refused as not a fast-forward): when the
+branch already holds the bot's commit but no `build` ran on it, run `gh workflow run release.yml --ref
+<branch>`. GitHub's
 generated archives have been byte-stable (10.9's curl and a modern Mac's fetched the same SHA-256s); if
 GitHub ever regenerates them, the fetch fails rather than build other bytes.
 

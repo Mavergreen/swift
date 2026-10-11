@@ -12,10 +12,16 @@ name: pins-bot
 #   workflow, so it then dispatches release.yml on the branch (workflow_dispatch is GITHUB_TOKEN-triggerable, the
 #   family's repackage path relies on the same); that run's `build` job is main's required check on the new head.
 #   A patch bump then automerges on green; a minor or major one waits for a human (renovate.json).
+#   Its checkout keeps its credentials (actions/checkout's default) because its `git push` authenticates with
+#   them: persisting none, as the pins job does, would break the push, not harden it.
 #   "Never beside a token that can write" is these two jobs' rule. The release.yml run dispatched here builds
 #   upstream with release.yml's own permissions (contents: write, workflow-wide; its checkouts keep the token),
 #   as the push that opened the branch already started; narrowing those is release.yml's work, not this bot's.
 # renovate.json's gitIgnoredAuthors keeps this bot's commit from marking the branch as edited by someone else.
+# A dispatch that fails after the push succeeded is not mended by re-running this workflow: the re-run checks
+# out the run's original commit, finds the pins stale again, and its push is refused (not a fast-forward). When
+# the branch already holds this bot's commit but no `build` ran on it, start that run by hand:
+#   gh workflow run release.yml --ref <branch>
 
 on:
   push:
