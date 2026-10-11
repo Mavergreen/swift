@@ -9,7 +9,9 @@
 #   mavericks-clang-22's clang, the 10.9 SDK, and its llvm-libtool-darwin, llvm-ar, llvm-ranlib and
 #   llvm-otool, never a Command Line Tools stub, and natively with CMake's and LLVM's Apple probes answered
 #   (lib.sh's apple_probe_answers) and clang22's lld as the linker clang's configure reads, so no configure
-#   asks xcrun or runs a Command Line Tools ld (cross mode keeps Apple's tools: D7). A tarball pin that does not match fails before anything is
+#   asks xcrun or runs a Command Line Tools ld (cross mode keeps Apple's tools: D7). A warm llvm-build is kept
+#   while its options and llvm-project's commit are the same, and removed and configured afresh, never in
+#   place, when either differs. A tarball pin that does not match fails before anything is
 #   configured, naming the pin to refresh. Nothing is built: every tool is a fake that records its arguments.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,7 +34,7 @@ rm -rf "\$4"; mkdir -p "\$4/llvm/lib/CAS" "\$4/llvm/cmake/modules" "\$4/lld/Mach
 : > "\$4/llvm/lib/CAS/OnDiskCommon.cpp"; : > "\$4/llvm/cmake/modules/AddLLVM.cmake"
 : > "\$4/lld/MachO/InputFiles.cpp"; : > "\$4/compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake"
 : > "\$4/compiler-rt/cmake/base-config-ix.cmake"
-echo "\$1 \$2 \$3" > "\$4/.mavergreen-source"
+echo "\${FAKE_LLVM_SOURCE:-\$1 \$2 \$3}" > "\$4/.mavergreen-source"   # FAKE_LLVM_SOURCE: another commit's tarball
 F
 printf '#!/bin/sh\necho "fetch_sdk $*" >> "%s/log"\necho "%s/sdk/MacOSX10.9.sdk"\n' "$T" "$T" > "$T/shipyard/fetch_sdk.sh"
 # The release pin's ref advertisement: llvm-project's tag at LLVM_SHA.
@@ -134,8 +136,8 @@ for a in -DCMAKE_TAPI=/usr/bin/false -DCMAKE_STRIP=\<T\>/clang22n/bin/llvm-strip
          -DCMAKE_LINKER=\<T\>/clang22n/bin/ld64.lld -DHOST_LINK_VERSION=241.9; do has native "  $a"; done
 lacks native "<T>/bin/otool"
 
-echo "-- a warm llvm-build: kept with the same configure; one configured with other options (a root from"
-echo "   before T5a, the Command Line Tools' ld its CMAKE_LINKER) is removed and configured afresh"
+echo "-- a warm llvm-build: kept with the same configure and source; one configured with other options (a root"
+echo "   from before T5a, the Command Line Tools' ld its CMAKE_LINKER) or from another commit is built afresh"
 LB="$T/root/swift/work/llvm-build"
 : > "$LB/kept.o"
 KEEP_ROOT=1 run same native || fail "the warm native build failed: $(cat "$T/same.out")"
@@ -155,6 +157,14 @@ grep -q "removing llvm-build: what its stamp records" "$T/pre.out" || fail "pre:
 KEEP_ROOT=1 run nostamp native || fail "the native build over an unstamped llvm-build failed: $(cat "$T/nostamp.out")"
 [ ! -e "$LB/kept.o" ] || fail "nostamp: kept an llvm-build that records no stamp"
 lacks nostamp "configured over"
+grep -qxF "source llvm-project $LLVM_REPO_URL $LLVM_SHA $LLVM_TARBALL_SHA256" "$LB/mavergreen-inputs.stamp" \
+  || fail "llvm-build's stamp does not record the llvm-project source: $(cat "$LB/mavergreen-inputs.stamp")"
+# The same options, another commit's tarball (its files all older than the objects): started afresh.
+: > "$LB/kept.o"
+(export FAKE_LLVM_SOURCE="$LLVM_REPO_URL 1111111111111111111111111111111111111111 $LLVM_TARBALL_SHA256"
+ KEEP_ROOT=1 run moved native) || fail "the native build over another commit's llvm-build failed: $(cat "$T/moved.out")"
+[ ! -e "$LB/kept.o" ] || fail "moved: kept an llvm-build built from another commit's source"
+lacks moved "configured over"
 
 echo "-- a tarball pin that does not match: refused before anything is configured, naming the pin"
 if (FAKE_GOOD_SHA256=another run stale cross); then fail "built with a stale LLVM_TARBALL_SHA256"; fi

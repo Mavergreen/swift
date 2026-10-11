@@ -70,6 +70,10 @@ NATIVE="$W/llvm-build"; TC="$W/toolchain/usr"
 # is fetched or configured.
 grep -q "swiftlang's fork refuses every Apple-platform input" llvm-project/lld/MachO/InputFiles.cpp \
   || { echo "FAIL: llvm-project lacks patches/llvm -- run ./build-llvm.sh"; exit 1; }
+# Each build dir below is kept only while the source trees it compiles are the ones it was built from
+# (lib.sh's source_stamp and reuse_build_dir): a tarball's files carry its commit's date, so ninja, given
+# an older commit's tree, would keep the newer one's objects. llvm-project is build-llvm.sh's.
+LLVM_SRC="$(source_stamp llvm-project)" || { echo "FAIL: llvm-project is no source tree build-llvm.sh extracted -- run ./build-llvm.sh"; exit 1; }
 if [ "$MODE" = cross ]; then
   [ -x "$NATIVE/bin/llvm-tblgen" ] || { echo "FAIL: no native TableGen -- run ./build-llvm.sh"; exit 1; }
   [ -f "$NATIVE/lib/libLLVMBitstreamReader.a" ] || { echo "FAIL: no native LLVMBitstreamReader -- run ./build-llvm.sh"; exit 1; }
@@ -131,6 +135,7 @@ host_cmake() {
     "$@"
 }
 
+reuse_build_dir "$L" "$LLVM_SRC" || exit 1
 if [ "$HOST" = x86_64 ]; then
   echo "==> 1. LLVM + clang + lld for an $ARCH / $DEPLOYMENT host ($MODE: $X)"
   TBLGEN=""
@@ -163,16 +168,20 @@ else
     -DLLVM_FORCE_VC_REVISION="$LLVM_SHA" -DLLVM_FORCE_VC_REPOSITORY="$LLVM_REPO_URL" -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON \
     -DCMAKE_LINKER="$NATIVE/bin/ld64.lld" -DCLANG_DEFAULT_LINKER=lld -DHOST_LINK_VERSION="$HOST_LINK_VERSION"
 fi
+printf '%s\n' "$LLVM_SRC" > "$L/mavergreen-inputs.stamp"
 ninja -C "$L" -j "$JOBS" llvm-libraries clang-libraries clang-resource-headers lld clang
 
 echo "==> 2. swift-cmark"
 check_release_pin swift-cmark "$CMARK_SWIFT_RELEASE" "$CMARK_TAG" "$CMARK_SHA" "$CMARK_REPO_URL"
 fetch_source cmark "$CMARK_REPO_URL" "$CMARK_SHA" "$CMARK_TARBALL_SHA256" CMARK_TARBALL_SHA256 || exit 1
+CMARK_SRC="$(source_stamp cmark)" || exit 1
+reuse_build_dir "$CM" "$CMARK_SRC" || exit 1
 if [ "$HOST" = x86_64 ]; then
   x86_cmake -S cmark -B "$CM" -DBUILD_TESTING=OFF -DCMARK_TESTS=OFF -DBUILD_SHARED_LIBS=OFF
 else
   host_cmake -S cmark -B "$CM" -DBUILD_TESTING=OFF -DCMARK_TESTS=OFF -DBUILD_SHARED_LIBS=OFF
 fi
+printf '%s\n' "$CMARK_SRC" > "$CM/mavergreen-inputs.stamp"
 ninja -C "$CM" -j "$JOBS"
 
 echo "==> 3. the compiler's own Swift source ($SC), extracted afresh, plus its patches/compiler"
@@ -190,12 +199,17 @@ if [ "$HOST" = x86_64 ]; then
 elif grep -q "host tools run on the toolchain's own bundled runtime" "$SC/cmake/modules/AddSwift.cmake"; then
   echo "FAIL: compiler patch 0002 is in $SC: an arm64 frontend cannot load the x86_64 stdlib it would point at"; exit 1
 fi
+# The native helpers compile the compiler's source against LLVM's headers; the Swift build, those and cmark's.
+HELPERS_SRC="$(source_stamp "$SC" llvm-project)" || exit 1
+SWIFT_SRC="$(source_stamp "$SC" llvm-project cmark)" || exit 1
 
 if [ "$HOST:$MODE" = x86_64:cross ]; then
   echo "==> 4. native helper tools (the builder runs these while building the compiler)"
+  reuse_build_dir "$W/native-helpers" "$HELPERS_SRC" || exit 1
   shipyard-cmake -G Ninja -S "$HERE/native-helpers" -B "$W/native-helpers" -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
     -DLLVM_DIR="$NATIVE/lib/cmake/llvm" -DSWIFT_SOURCE_DIR="$W/$SC"
+  printf '%s\n' "$HELPERS_SRC" > "$W/native-helpers/mavergreen-inputs.stamp"
   ninja -C "$W/native-helpers"
 else
   echo "==> 4. no native helper tools: this build runs the helpers it builds"
@@ -205,6 +219,7 @@ fi
 # dead-stripped from swift-frontend, T5a recheck row 3), and git, LibEdit, LibXml2 and pkg-config never
 # looked for, so what the host has on PATH changes nothing. Word-split on use: no spaces.
 SWIFT_UNFOUND="-DSWIFT_APPEND_VC_REV=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibEdit=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibXml2=ON -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON"
+reuse_build_dir "$S" "$SWIFT_SRC" || exit 1
 if [ "$HOST" = x86_64 ]; then
   echo "==> 5. swift-frontend (HOSTTOOLS: $HTC compiles the Swift-written half)"
   "$HTC/bin/swift-frontend" -version 2>&1 | sed 's/^/    host: /'
@@ -271,6 +286,7 @@ else
     -DSWIFT_INCLUDE_TESTS=OFF -DSWIFT_INCLUDE_DOCS=OFF -DSWIFT_BUILD_PERF_TESTSUITE=OFF -DSWIFT_ENABLE_LIBXML2=OFF \
     $SWIFT_UNFOUND
 fi
+printf '%s\n' "$SWIFT_SRC" > "$S/mavergreen-inputs.stamp"
 ninja -C "$S" -j "$JOBS" swift-frontend
 
 # platform: OS X 10.9 has no dyld_info (nor, without the Command Line Tools, an xcrun to find one); there

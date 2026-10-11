@@ -6,6 +6,8 @@
 #   and native_host_shim must lay out the dirs build.sh hands the compilers, and every one must refuse
 #   what it cannot use before it removes anything. apple_probe_answers must answer CMake's and LLVM's Apple
 #   probes (tapi, strip, ld64) without xcrun or a Command Line Tools name, and HOST_LINK_VERSION be 10.9's ld64.
+#   source_stamp must name each source tree's commit, so a build dir stamped with it starts afresh when
+#   another commit's tarball is extracted, and is kept when the same one is.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -125,6 +127,30 @@ grep -q 'removing' "$T/out" || fail "removed the dir without saying so"
 mkdir -p "$T/sb"
 if reuse_build_dir "$T/sb" "" 2>/dev/null; then fail "accepted an empty stamp"; fi
 [ -d "$T/sb" ] || fail "removed the dir before refusing an empty stamp"
+
+echo "-- source_stamp: each tree's .mavergreen-source line, by name; a tree with none refused. In a build dir's"
+echo "   stamp, the same commit extracted again keeps the dir; another commit's tarball over it removes it"
+mkdir -p "$T/src/llvm-project" "$T/src/cmark"
+echo "https://x/llvm-project.git aaaa 1111" > "$T/src/llvm-project/.mavergreen-source"
+echo "https://x/swift-cmark.git bbbb 2222" > "$T/src/cmark/.mavergreen-source"
+got="$(source_stamp "$T/src/llvm-project" "$T/src/cmark")" || fail "source_stamp failed"
+[ "$got" = "source llvm-project https://x/llvm-project.git aaaa 1111
+source cmark https://x/swift-cmark.git bbbb 2222" ] || fail "source_stamp: $got"
+mkdir -p "$T/src/bare"
+if source_stamp "$T/src/llvm-project" "$T/src/bare" > /dev/null 2> "$T/err"; then fail "stamped a tree with no .mavergreen-source"; fi
+grep -q "no $T/src/bare/.mavergreen-source" "$T/err" || fail "source_stamp, no stamp: $(cat "$T/err")"
+: > "$T/src/bare/.mavergreen-source"
+if source_stamp "$T/src/bare" > /dev/null 2>&1; then fail "stamped a tree whose .mavergreen-source is empty"; fi
+mkdir -p "$T/lb"; : > "$T/lb/obj.o"; printf '%s\n' "$got" > "$T/lb/mavergreen-inputs.stamp"
+# fetch_source extracts afresh on every run: the same commit, the same line.
+echo "https://x/llvm-project.git aaaa 1111" > "$T/src/llvm-project/.mavergreen-source"
+reuse_build_dir "$T/lb" "$(source_stamp "$T/src/llvm-project" "$T/src/cmark")" > /dev/null || fail "reuse_build_dir failed"
+[ -f "$T/lb/obj.o" ] || fail "the same source extracted again removed the build dir"
+# An older commit's tarball: every file dated before the objects, so only the stamp can tell.
+echo "https://x/llvm-project.git cccc 3333" > "$T/src/llvm-project/.mavergreen-source"
+reuse_build_dir "$T/lb" "$(source_stamp "$T/src/llvm-project" "$T/src/cmark")" > "$T/out" || fail "reuse_build_dir failed"
+[ ! -d "$T/lb" ] || fail "a build dir stamped with another commit's source was kept"
+grep -q 'removing' "$T/out" || fail "removed the build dir without saying so"
 
 echo "-- macho_links_none_under: fails on a library under the dir, and on an otool that read nothing"
 mkdir -p "$T/fakebin"

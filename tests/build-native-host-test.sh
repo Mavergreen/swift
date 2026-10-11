@@ -15,7 +15,8 @@
 #   with clang22's llvm-ar, llvm-ranlib and llvm-lipo and with LibXml2, LibEdit and pkg-config not looked
 #   for, CMake's Apple probes answered and check_language(Swift)'s probe not run (its sub-configure names no
 #   SDK and asks xcrun for one), and never run git or xcrun (OS X 10.9 has neither without the Command Line
-#   Tools).
+#   Tools). A stdlib-build is kept while the swift source is the same commit's, and started afresh when it
+#   is another's (its stamp records the source, lib.sh's source_stamp).
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -116,7 +117,7 @@ echo "fetch_pinned_source \$*" >> "$T/log"
 rm -rf "\$4"; mkdir -p "\$4/stdlib/public/stubs" "\$4/stdlib/public/runtime" "\$4/stdlib/public/core" "\$4/include/swift/Runtime"
 for f in CMakeLists.txt stdlib/public/stubs/Availability.mm stdlib/public/runtime/SwiftObject.mm stdlib/public/runtime/Metadata.cpp \
          include/swift/Runtime/Config.h stdlib/public/core/StringBridge.swift; do : > "\$4/\$f"; done
-echo "\$1 \$2 \$3" > "\$4/.mavergreen-source"
+echo "\${FAKE_SWIFT_SOURCE:-\$1 \$2 \$3}" > "\$4/.mavergreen-source"   # FAKE_SWIFT_SOURCE: another commit's tarball
 F
 # patch: a dry run applies; a real one writes the marker build.sh greps for that patch.
 cat > "$T/fakebin/patch" <<'F'
@@ -145,11 +146,15 @@ F
 printf '#!/bin/sh\nexit 3\n' > "$T/fakebin/ninja"
 for c in git xcrun; do printf '#!/bin/sh\necho "%s $*" >> "%s/log"\nexit 1\n' "$c" "$T" > "$T/fakebin/$c"; done
 chmod +x "$T/shipyard/"* "$T/fakebin/"*
-receipt "$SWIFT_VERSION-mavericks.9"; : > "$T/log"
-if ( export PATH="$T/fakebin:$PATH" FAKE_LOG="$T/log" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=native \
-      SWIFT_HOST_TOOLCHAIN="$H" CLANG22_PREFIX="$C22"
-    unset SWIFT_WORK SWIFT_BUILTINS NM
-    sh "$REPO/build.sh" ) > "$T/out" 2>&1; then fail "build.sh got past a build that failed: $(cat "$T/out")"; fi
+receipt "$SWIFT_VERSION-mavericks.9"
+build_native() {  # build.sh's native mode past step 1, everything faked; ninja stops it after the configure
+  : > "$T/log"
+  if ( export PATH="$T/fakebin:$PATH" FAKE_LOG="$T/log" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=native \
+        SWIFT_HOST_TOOLCHAIN="$H" CLANG22_PREFIX="$C22"
+      unset SWIFT_WORK SWIFT_BUILTINS NM
+      sh "$REPO/build.sh" ) > "$T/out" 2>&1; then fail "build.sh got past a build that failed: $(cat "$T/out")"; fi
+}
+build_native
 grep -qxF "fetch_pinned_source https://github.com/swiftlang/swift.git $SWIFT_SHA $SWIFT_TARBALL_SHA256 swift" "$T/log" \
   || fail "did not fetch the swift tarball by its pin: $(cat "$T/out")"
 [ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0001 0002 0003 0004 0005 0007 0008 " ] \
@@ -160,6 +165,17 @@ for a in "-DCMAKE_AR=$C22/bin/llvm-ar" "-DCMAKE_RANLIB=$C22/bin/llvm-ranlib" "-D
   grep -qxF -e "  $a" "$T/log" || fail "the stdlib configure lacks $a: $(cat "$T/log")"
 done
 if grep -q '^git \|^xcrun ' "$T/log"; then fail "ran $(grep '^git \|^xcrun ' "$T/log" | head -1)"; fi
-grep -q '^archiver ' "$R/swift/work/stdlib-build/mavergreen-inputs.stamp" \
-  || fail "the stdlib-build's stamp does not record the archiver: $(cat "$R/swift/work/stdlib-build/mavergreen-inputs.stamp")"
+SB="$R/swift/work/stdlib-build"
+grep -q '^archiver ' "$SB/mavergreen-inputs.stamp" \
+  || fail "the stdlib-build's stamp does not record the archiver: $(cat "$SB/mavergreen-inputs.stamp")"
+
+echo "-- the stdlib-build's stamp records the swift source: the same commit keeps it, another commit's starts it afresh"
+grep -qxF "source swift https://github.com/swiftlang/swift.git $SWIFT_SHA $SWIFT_TARBALL_SHA256" "$SB/mavergreen-inputs.stamp" \
+  || fail "the stdlib-build's stamp does not record the swift source: $(cat "$SB/mavergreen-inputs.stamp")"
+: > "$SB/kept.o"
+build_native
+[ -f "$SB/kept.o" ] || fail "the same swift source removed the stdlib-build: $(cat "$T/out")"
+(export FAKE_SWIFT_SOURCE="https://github.com/swiftlang/swift.git 1111111111111111111111111111111111111111 $SWIFT_TARBALL_SHA256"; build_native)
+[ ! -e "$SB/kept.o" ] || fail "another swift commit kept the stdlib-build: $(cat "$T/out")"
+grep -q "removing $SB: " "$T/out" || fail "removed the stdlib-build without saying so: $(cat "$T/out")"
 echo "PASS"

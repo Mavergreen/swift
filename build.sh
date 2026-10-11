@@ -167,9 +167,11 @@ PM_C="$(prefix_map_flags c "$ROOT")"
 PM_SWIFT="$(prefix_map_flags swift "$ROOT")"
 LINK="-fuse-ld=lld --ld-path=$LLD"
 # A reused stdlib-build is kept only while the host compiler, clang, clang's cfgs, builtins archive and
-# archiver are the bytes it was configured with: ninja cannot see them change (a toolchain update, say),
-# and would keep the objects the previous ones built; and a configured tree keeps its first CMAKE_AR.
-STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS" "$X/llvm-ar")" || { echo "FAIL: could not stamp the host inputs"; exit 1; }
+# archiver are the bytes it was configured with, and swift the source it compiled: ninja cannot see them
+# change (a toolchain update, say, or a pin moved to an older commit, whose tarball's files all carry that
+# commit's date), and would keep the objects the previous ones built; and a configured tree keeps its
+# first CMAKE_AR.
+STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS" "$X/llvm-ar" && source_stamp swift)" || { echo "FAIL: could not stamp the host inputs and the swift source"; exit 1; }
 reuse_build_dir "$ROOT/stdlib-build" "$STAMP" || exit 1
 # LLVM_BUILD_* are build-tree-only variables that an install tree does not define, but
 # SwiftSharedCMakeConfig.cmake preconditions on them. LLVM_BUILD_MAIN_SRC_DIR only needs to be

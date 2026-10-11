@@ -77,12 +77,14 @@ if [ "$MODE" = native ]; then
     -DCMAKE_LIBTOOL="$X/llvm-libtool-darwin" -DCMAKE_AR="$X/llvm-ar" -DCMAKE_RANLIB="$X/llvm-ranlib" \
     -DCMAKE_LINKER="$X/ld64.lld" -DHOST_LINK_VERSION="$HOST_LINK_VERSION" $(apple_probe_answers "$X")
 fi
-# A reused llvm-build is kept only while these are the options it was configured with (lib.sh's
-# reuse_build_dir); otherwise it is removed and built afresh (a build root from before lld joined would
-# otherwise never build it). Configured again in place, it would keep the tools CMake found on its first
-# configure: CMakeFiles/<version>/CMakeCCompiler.cmake sets CMAKE_LINKER whatever -D says later, so a
-# native root from before T5a would still run the Command Line Tools' `ld -v`.
-STAMP="$(printf '%s\n' "$@")"
+# A reused llvm-build is kept only while these are the options it was configured with and llvm-project
+# the source it compiled (lib.sh's reuse_build_dir and source_stamp); otherwise it is removed and built
+# afresh (a build root from before lld joined would otherwise never build it). Configured again in place,
+# it would keep the tools CMake found on its first configure: CMakeFiles/<version>/CMakeCCompiler.cmake
+# sets CMAKE_LINKER whatever -D says later, so a native root from before T5a would still run the Command
+# Line Tools' `ld -v`. And ninja, seeing a moved pin's older commit's files all older than its outputs,
+# would keep the objects the previous commit built.
+STAMP="$(printf '%s\n' "$@" && source_stamp llvm-project)" || { echo "FAIL: could not stamp llvm-build"; exit 1; }
 reuse_build_dir llvm-build "$STAMP" || exit 1
 if [ ! -f llvm-build/build.ninja ] || [ ! -x "$(sed -n 's/^CMAKE_COMMAND:INTERNAL=//p' llvm-build/CMakeCache.txt)" ]; then
   shipyard-cmake "$@"

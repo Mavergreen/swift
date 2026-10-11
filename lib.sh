@@ -120,6 +120,19 @@ source_commit() {
   awk 'NR == 1 { print $2 }' "$1/.mavergreen-source" 2>/dev/null || :
 }
 
+# source_stamp <dir>... -- one line per source tree, `source <name> <repo> <commit> <sha256>`, from the
+# .mavergreen-source fetch_source left in <dir>: the identity of each tree a build dir compiles, for its
+# reuse_build_dir stamp. GitHub's tarball dates every file at its commit's time, so after a pin moves to
+# an older commit every input is older than the outputs a reused dir holds, and ninja rebuilds nothing;
+# the dir is started afresh instead. Fails, naming it, for a tree fetch_source did not complete.
+source_stamp() {
+  for _ss_d in "$@"; do
+    _ss_l="$(sed -n 1p "$_ss_d/.mavergreen-source" 2>/dev/null)" || _ss_l=""
+    [ -n "$_ss_l" ] || { echo "source_stamp: no $_ss_d/.mavergreen-source -- a source tree fetch_source did not complete" >&2; return 1; }
+    printf 'source %s %s\n' "${_ss_d##*/}" "$_ss_l"
+  done
+}
+
 # patch_source <dir> <patch>... -- applies each <patch> (an absolute path, -p0 paths as patches/ holds
 # them) to the source tree <dir>, in order, with the OS's patch: OS X 10.9's GNU patch 2.5.8 and a modern
 # Mac's BSD patch 2.0 write the same bytes. Each is first tried with --dry-run, so one that does not
@@ -290,8 +303,9 @@ host_inputs_stamp() {
 # otherwise removes it, saying so (a dir with no stamp was built from inputs nobody recorded), so it is
 # configured and built afresh. <stamp> is what the build cannot see change in a reused dir: the host
 # tools a stdlib build is configured with (host_inputs_stamp), the options a tree was first configured
-# with (CMake keeps the tools it found then, whatever -D says later). The caller writes <stamp> there once
-# it has configured <dir>. An empty <stamp> is refused: it would equal the empty read of a missing stamp.
+# with (CMake keeps the tools it found then, whatever -D says later), the source trees it compiles
+# (source_stamp). The caller writes <stamp> there once it has configured <dir>. An empty <stamp> is
+# refused: it would equal the empty read of a missing stamp.
 reuse_build_dir() {
   [ -n "$2" ] || { echo "reuse_build_dir: an empty stamp for $1" >&2; return 1; }
   [ -d "$1" ] || return 0

@@ -11,7 +11,8 @@
 #   cross (CI), the cross-compiling settings, build-llvm.sh's TableGen and the native helpers, and a
 #   refusal when no host toolchain is named; native (OS X 10.9), none of those, the installed toolchain by
 #   default, and the check read with otool. A changed host toolchain configures the Swift build afresh,
-#   and the same one does not. The arm64 toolchain (cross mode only) applies 0001 alone to its own
+#   and the same one does not. Each build dir is started afresh when a source tree it compiles is another
+#   commit's (lib.sh's source_stamp), and kept when the sources are the same. The arm64 toolchain (cross mode only) applies 0001 alone to its own
 #   checkout, configures for an arm64 / macOS 11.0 host against the 11.3 SDK with no native helpers and no
 #   -runtime-compatibility-version, pins the same clang defaults, and its check refuses a frontend that
 #   does not run on the OS's /usr/lib/swift. A missing host swiftc, either host's, is refused before
@@ -49,7 +50,9 @@ cat > "$T/shipyard/fetch_pinned_source.sh" <<F
 #!/bin/sh
 echo "fetch_pinned_source \$*" >> "$T/log"
 rm -rf "\$4"; mkdir -p "\$4/lib/Driver" "\$4/cmake/modules"; : > "\$4/lib/Driver/Driver.cpp"; : > "\$4/cmake/modules/AddSwift.cmake"
-echo "\$1 \$2 \$3" > "\$4/.mavergreen-source"
+# FAKE_SWIFT_SOURCE and FAKE_CMARK_SOURCE stand for another commit's tarball of the compiler's source, or cmark's.
+l="\$1 \$2 \$3"; case "\$4" in swift-compiler*) l="\${FAKE_SWIFT_SOURCE:-\$l}" ;; cmark) l="\${FAKE_CMARK_SOURCE:-\$l}" ;; esac
+echo "\$l" > "\$4/.mavergreen-source"
 F
 cat > "$T/shipyard/fetch_sdk.sh" <<F
 #!/bin/sh
@@ -131,6 +134,8 @@ for f in llvm-build/bin/llvm-tblgen toolchain/usr/bin/swiftc; do printf '#!/bin/
 # Native mode's default host toolchain, where no toolchain is installed: every run that names none says so.
 SWIFT_INSTALLED_TOOLCHAIN="$T/installed"; export SWIFT_INSTALLED_TOOLCHAIN
 echo "swiftlang's fork refuses every Apple-platform input" > "$W/llvm-project/lld/MachO/InputFiles.cpp"
+LLVM_SOURCE="$LLVM_REPO_URL $LLVM_SHA $LLVM_TARBALL_SHA256"   # build-llvm.sh's extraction
+echo "$LLVM_SOURCE" > "$W/llvm-project/.mavergreen-source"
 run() {  # run <log-name> <mode> [build-toolchain.sh args] -- a fresh checkout state and log each time
   _n="$1"; _m="$2"; shift 2
   rm -rf "$W/swift-compiler" "$W/swift-compiler-arm64" "$W/cmark" "$T/log" "$T/xcrun.log"; : > "$T/log"
@@ -207,6 +212,53 @@ if grep -q 'configuring it afresh' "$T/again.out"; then fail "the same host reco
 echo module2 > "$H/lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule"
 run changed cross || fail "the run with a changed host failed: $(cat "$T/changed.out")"
 grep -q "$W/swift-x86: its host swiftc changed" "$T/changed.out" || fail "a changed host kept the Swift build: $(cat "$T/changed.out")"
+
+echo "-- x86_64, cross: each build dir records the sources it compiles; the same ones keep it, another commit's"
+echo "   (whose tarball's files are all older than the objects) starts afresh each dir that compiles it, and only those"
+DIRS="llvm-x86 cmark-x86 swift-x86 native-helpers"
+mark() { for d in $DIRS; do : > "$W/$d/kept.o"; done; }
+kept() {  # kept <log-name> <dir>... -- those dirs kept, the others of DIRS started afresh
+  _kn="$1"; shift
+  for d in $DIRS; do
+    case " $* " in
+      *" $d "*) [ -f "$W/$d/kept.o" ] || fail "$_kn: removed $d: $(cat "$T/$_kn.out")" ;;
+      *) [ ! -e "$W/$d/kept.o" ] || fail "$_kn: kept $d, which compiles the moved source: $(cat "$T/$_kn.out")"
+         grep -q "removing $W/$d: " "$T/$_kn.out" || fail "$_kn: removed $d without saying so" ;;
+    esac
+  done
+}
+mark
+run same cross || fail "the run with the same sources failed: $(cat "$T/same.out")"
+kept same $DIRS
+L_LINE="source llvm-project $LLVM_SOURCE"
+C_LINE="source cmark $CMARK_REPO_URL $CMARK_SHA $CMARK_TARBALL_SHA256"
+S_LINE="source swift-compiler $SWIFT_REPO_URL $SWIFT_SHA $SWIFT_TARBALL_SHA256"
+[ "$(cat "$W/llvm-x86/mavergreen-inputs.stamp")" = "$L_LINE" ] || fail "llvm-x86's stamp: $(cat "$W/llvm-x86/mavergreen-inputs.stamp")"
+[ "$(cat "$W/cmark-x86/mavergreen-inputs.stamp")" = "$C_LINE" ] || fail "cmark-x86's stamp: $(cat "$W/cmark-x86/mavergreen-inputs.stamp")"
+[ "$(cat "$W/swift-x86/mavergreen-inputs.stamp")" = "$S_LINE
+$L_LINE
+$C_LINE" ] || fail "swift-x86's stamp: $(cat "$W/swift-x86/mavergreen-inputs.stamp")"
+[ "$(cat "$W/native-helpers/mavergreen-inputs.stamp")" = "$S_LINE
+$L_LINE" ] || fail "native-helpers' stamp: $(cat "$W/native-helpers/mavergreen-inputs.stamp")"
+OLD_SWIFT="$SWIFT_REPO_URL 1111111111111111111111111111111111111111 $SWIFT_TARBALL_SHA256"
+(export FAKE_SWIFT_SOURCE="$OLD_SWIFT"; run swiftmoved cross) || fail "the run with another swift commit failed: $(cat "$T/swiftmoved.out")"
+kept swiftmoved llvm-x86 cmark-x86
+mark
+echo "$LLVM_REPO_URL 2222222222222222222222222222222222222222 $LLVM_TARBALL_SHA256" > "$W/llvm-project/.mavergreen-source"
+(export FAKE_SWIFT_SOURCE="$OLD_SWIFT"; run llvmmoved cross) || fail "the run with another llvm-project commit failed: $(cat "$T/llvmmoved.out")"
+kept llvmmoved cmark-x86
+echo "$LLVM_SOURCE" > "$W/llvm-project/.mavergreen-source"
+run back cross || fail "the run back at the pinned sources failed: $(cat "$T/back.out")"
+mark
+(export FAKE_CMARK_SOURCE="$CMARK_REPO_URL 3333333333333333333333333333333333333333 $CMARK_TARBALL_SHA256"; run cmarkmoved cross) \
+  || fail "the run with another cmark commit failed: $(cat "$T/cmarkmoved.out")"
+kept cmarkmoved llvm-x86 native-helpers
+run back cross || fail "the run back at the pinned sources failed: $(cat "$T/back.out")"
+mv "$W/llvm-project/.mavergreen-source" "$T/llvm-source.away"
+if run nosource cross; then fail "built from an llvm-project no build-llvm.sh extracted"; fi
+mv "$T/llvm-source.away" "$W/llvm-project/.mavergreen-source"
+grep -q 'llvm-project is no source tree build-llvm.sh extracted -- run ./build-llvm.sh' "$T/nosource.out" || fail "nosource: $(cat "$T/nosource.out")"
+lacks nosource "shipyard-cmake"
 
 echo "-- x86_64, cross, no host toolchain named: refused (CI never builds with an earlier release)"
 unset SWIFT_HOST_TOOLCHAIN
