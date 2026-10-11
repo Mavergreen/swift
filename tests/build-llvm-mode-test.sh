@@ -71,6 +71,8 @@ if [ "\$1" = --install ]; then
   exit 0
 fi
 { echo "shipyard-cmake"; for a in "\$@"; do echo "  \$a"; done; } >> "$T/log"
+[ ! -e llvm-build/CMakeCache.txt ] || echo "configured over a CMakeCache.txt" >> "$T/log"
+[ ! -e llvm-build/CMakeFiles ] || echo "configured over a CMakeFiles" >> "$T/log"
 mkdir -p llvm-build; printf 'CMAKE_COMMAND:INTERNAL=%s\n' "$T/bin/shipyard-cmake" > llvm-build/CMakeCache.txt; : > llvm-build/build.ninja
 F
 cat > "$T/bin/ninja" <<'F'
@@ -86,8 +88,8 @@ done
 printf '#!/bin/sh\necho "git $*" >> "%s/log"\nexit 1\n' "$T" > "$T/bin/git"
 for t in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-nm llvm-strings; do printf '#!/bin/sh\n' > "$T/clang22n/bin/$t"; done
 chmod +x "$T/bin/"* "$T/shipyard/"* "$T/clang22n/bin/"*
-run() {  # run <log-name> <mode> -- a fresh build root and log each time
-  _n="$1"; rm -rf "$T/root" "$T/log"; : > "$T/log"; _rc=0
+run() {  # run <log-name> <mode> -- a fresh build root (KEEP_ROOT=1: the last run's) and log each time
+  _n="$1"; [ "${KEEP_ROOT:-0}" = 1 ] || rm -rf "$T/root"; rm -f "$T/log"; : > "$T/log"; _rc=0
   PATH="$T/bin:$PATH" FAKE_LOG="$T/log" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_BUILD_ROOT="$T/root" MAVERICKS_MODE="$2" \
     CLANG22_PREFIX="$T/clang22n" sh "$R/build-llvm.sh" > "$T/$_n.out" 2>&1 || _rc=$?
   sed "s|$T|<T>|g" "$T/log" > "$T/$_n.log"
@@ -131,6 +133,28 @@ has native "<T>/clang22n/bin/llvm-otool -L llvm-build/bin/lld"
 for a in -DCMAKE_TAPI=/usr/bin/false -DCMAKE_STRIP=\<T\>/clang22n/bin/llvm-strip -DLD64_EXECUTABLE=/usr/bin/false \
          -DCMAKE_LINKER=\<T\>/clang22n/bin/ld64.lld -DHOST_LINK_VERSION=241.9; do has native "  $a"; done
 lacks native "<T>/bin/otool"
+
+echo "-- a warm llvm-build: kept with the same configure; one configured with other options (a root from"
+echo "   before T5a, the Command Line Tools' ld its CMAKE_LINKER) is removed and configured afresh"
+LB="$T/root/swift/work/llvm-build"
+: > "$LB/kept.o"
+KEEP_ROOT=1 run same native || fail "the warm native build failed: $(cat "$T/same.out")"
+[ -f "$LB/kept.o" ] || fail "same: the same configure removed llvm-build: $(cat "$T/same.out")"
+lacks same "shipyard-cmake"
+# CMake's record of what its first configure found, which shadows a later -DCMAKE_LINKER.
+mkdir -p "$LB/CMakeFiles/4.4.0"; echo 'set(CMAKE_LINKER "/usr/bin/ld")' > "$LB/CMakeFiles/4.4.0/CMakeCCompiler.cmake"
+sed 's|ld64.lld$|ld|' "$LB/mavergreen-inputs.stamp" > "$T/old-stamp"; mv "$T/old-stamp" "$LB/mavergreen-inputs.stamp"
+KEEP_ROOT=1 run pre native || fail "the native build over an old llvm-build failed: $(cat "$T/pre.out")"
+both pre
+has pre "  -DCMAKE_LINKER=<T>/clang22n/bin/ld64.lld"
+lacks pre "configured over"
+[ ! -e "$LB/kept.o" ] && [ ! -e "$LB/CMakeFiles/4.4.0" ] || fail "pre: llvm-build was configured again in place: $(ls -R "$LB")"
+grep -q "removing llvm-build: what its stamp records" "$T/pre.out" || fail "pre: removed llvm-build without saying so: $(cat "$T/pre.out")"
+# A root whose llvm-build was configured by a build-llvm.sh that wrote no stamp.
+: > "$LB/kept.o"; rm -f "$LB/mavergreen-inputs.stamp"
+KEEP_ROOT=1 run nostamp native || fail "the native build over an unstamped llvm-build failed: $(cat "$T/nostamp.out")"
+[ ! -e "$LB/kept.o" ] || fail "nostamp: kept an llvm-build that records no stamp"
+lacks nostamp "configured over"
 
 echo "-- a tarball pin that does not match: refused before anything is configured, naming the pin"
 if (FAKE_GOOD_SHA256=another run stale cross); then fail "built with a stale LLVM_TARBALL_SHA256"; fi

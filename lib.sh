@@ -287,14 +287,16 @@ host_inputs_stamp() {
 }
 
 # reuse_build_dir <dir> <stamp> -- keeps <dir> when its mavergreen-inputs.stamp holds exactly <stamp>;
-# otherwise removes it, saying so (a dir with no stamp was built from inputs nobody recorded). The caller
-# writes <stamp> there once it has configured <dir>. An empty <stamp> is refused: it would equal the
-# empty read of a missing stamp.
+# otherwise removes it, saying so (a dir with no stamp was built from inputs nobody recorded), so it is
+# configured and built afresh. <stamp> is what the build cannot see change in a reused dir: the host
+# tools a stdlib build is configured with (host_inputs_stamp), the options a tree was first configured
+# with (CMake keeps the tools it found then, whatever -D says later). The caller writes <stamp> there once
+# it has configured <dir>. An empty <stamp> is refused: it would equal the empty read of a missing stamp.
 reuse_build_dir() {
   [ -n "$2" ] || { echo "reuse_build_dir: an empty stamp for $1" >&2; return 1; }
   [ -d "$1" ] || return 0
   if [ "$(cat "$1/mavergreen-inputs.stamp" 2>/dev/null)" = "$2" ]; then return 0; fi
-  echo "    removing $1: its host compiler, clang, clang.cfg, builtins archive or archiver changed, or went unrecorded"
+  echo "    removing $1: what its stamp records (mavergreen-inputs.stamp) changed, or went unrecorded"
   rm -rf "$1"
 }
 

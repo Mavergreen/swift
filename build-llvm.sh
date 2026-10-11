@@ -77,12 +77,16 @@ if [ "$MODE" = native ]; then
     -DCMAKE_LIBTOOL="$X/llvm-libtool-darwin" -DCMAKE_AR="$X/llvm-ar" -DCMAKE_RANLIB="$X/llvm-ranlib" \
     -DCMAKE_LINKER="$X/ld64.lld" -DHOST_LINK_VERSION="$HOST_LINK_VERSION" $(apple_probe_answers "$X")
 fi
-# A reused llvm-build keeps the options it was configured with, so it is configured again whenever
-# they change (a build root from before lld joined would otherwise never build it).
-if [ ! -f llvm-build/build.ninja ] || [ ! -x "$(sed -n 's/^CMAKE_COMMAND:INTERNAL=//p' llvm-build/CMakeCache.txt)" ] \
-   || [ "$(cat llvm-build/mavergreen-configure.args 2>/dev/null)" != "$(printf '%s\n' "$@")" ]; then
+# A reused llvm-build is kept only while these are the options it was configured with (lib.sh's
+# reuse_build_dir); otherwise it is removed and built afresh (a build root from before lld joined would
+# otherwise never build it). Configured again in place, it would keep the tools CMake found on its first
+# configure: CMakeFiles/<version>/CMakeCCompiler.cmake sets CMAKE_LINKER whatever -D says later, so a
+# native root from before T5a would still run the Command Line Tools' `ld -v`.
+STAMP="$(printf '%s\n' "$@")"
+reuse_build_dir llvm-build "$STAMP" || exit 1
+if [ ! -f llvm-build/build.ninja ] || [ ! -x "$(sed -n 's/^CMAKE_COMMAND:INTERNAL=//p' llvm-build/CMakeCache.txt)" ]; then
   shipyard-cmake "$@"
-  printf '%s\n' "$@" > llvm-build/mavergreen-configure.args
+  printf '%s\n' "$STAMP" > llvm-build/mavergreen-inputs.stamp
 fi
 # llvm-min-tblgen is named explicitly: step 3 copies it, and relying on it appearing
 # transitively would break the copy if a future LLVM stops pulling it in. LLVMBitstreamReader is for
