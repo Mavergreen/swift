@@ -58,8 +58,7 @@ esac
 # the runner's Xcode ld gave 1267, so the shipped clang passed -no_deduplicate, which 10.9's ld refuses (T4
 # spike Q5). Every build now names the same value: 241.9, OS X 10.9's own ld64, the linker of the platform
 # these toolchains build for. Their clang defaults to lld (CLANG_DEFAULT_LINKER), for which the version
-# changes nothing, and `-fuse-ld=ld` on 10.9 gets the flags that ld understands.
-HOST_LINK_VERSION=241.9
+# changes nothing, and `-fuse-ld=ld` on 10.9 gets the flags that ld understands. (lib.sh's HOST_LINK_VERSION.)
 W="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$W"; cd "$W"
 JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
 LAUNCHER=""
@@ -105,7 +104,8 @@ if [ "$HOST" = x86_64 ]; then
 fi
 
 # The x86_64 host, in either mode: clang22, its archivers and indexer, the 10.9 SDK's stubs, the prefix
-# maps. LLVM archives with CMAKE_LIBTOOL on an Apple host (llvm's UseLibtool.cmake; it would take xcrun's
+# maps, and the answers to CMake's Apple probes (lib.sh's apple_probe_answers: no xcrun, no Command Line Tools
+# name, in either mode). LLVM archives with CMAKE_LIBTOOL on an Apple host (llvm's UseLibtool.cmake; it would take xcrun's
 # libtool), other projects with CMAKE_AR and CMAKE_RANLIB: an archive's symbol table orders what lld
 # writes (T4 spike Q5), and Apple's tools differ between 10.9 and a modern Mac, so all three are clang22's.
 x86_cmake() {
@@ -115,7 +115,7 @@ x86_cmake() {
   shipyard-cmake -G Ninja $LAUNCHER -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER="$X/clang" -DCMAKE_CXX_COMPILER="$X/clang++" \
     -DCMAKE_AR="$X/llvm-ar" -DCMAKE_RANLIB="$X/llvm-ranlib" -DCMAKE_LIBTOOL="$X/llvm-libtool-darwin" \
-    -DCMAKE_LINKER="$X/ld64.lld" \
+    -DCMAKE_LINKER="$X/ld64.lld" $(apple_probe_answers "$X") \
     "-DCMAKE_C_FLAGS=$PM" "-DCMAKE_CXX_FLAGS=$PM" \
     -DCMAKE_OSX_SYSROOT="$SDK109" -DCMAKE_OSX_DEPLOYMENT_TARGET="$DEPLOYMENT" -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
     "-DCMAKE_IGNORE_PREFIX_PATH=/opt/pkg;/opt/homebrew;/usr/local;/opt/local;/sw" \

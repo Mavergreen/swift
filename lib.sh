@@ -489,6 +489,26 @@ clang22_prefix() {
   printf '%s\n' "$_cp"
 }
 
+# apple_probe_answers <clang22-bin> -- prints, space-separated (no spaces inside), the answers to the Apple
+# probes CMake runs in every configure, which would otherwise ask xcrun or run a Command Line Tools name:
+# OS X 10.9 has neither once the Command Line Tools are gone (T5a, D1). Every configure that compiles with
+# mavericks-clang-22 passes them, in both modes (D7); cross mode's Apple-clang configures (build-llvm.sh's
+# llvm-build, the arm64 host, the native helpers) keep asking Xcode, as they always have. None of the
+# answers reaches a byte the builds ship (T5a Task 12b measured both hosts):
+#   CMAKE_TAPI       the tool CMake makes .tbd text stubs with; no target here makes one, and /usr/bin/false
+#                    would fail one loudly (CMakeFindBinUtils asks `xcrun --find tapi` without it)
+#   CMAKE_STRIP      what `cmake --install --strip` would run; nothing here strips (CMake runs `strip -u -r`
+#                    at generate time to learn its flavour, and found the Command Line Tools' strip on PATH)
+#   LD64_EXECUTABLE  LLVM only prints it (config-ix.cmake asks `xcrun -find ld-classic`, then `ld`, without it)
+apple_probe_answers() {
+  printf '%s\n' "-DCMAKE_TAPI=/usr/bin/false -DCMAKE_STRIP=$1/llvm-strip -DLD64_EXECUTABLE=/usr/bin/false"
+}
+
+# HOST_LINK_VERSION -- the linker version every clang configure names (build-toolchain.sh's, and build-llvm.sh's
+# natively): clang's CMake otherwise runs CMAKE_LINKER's -v for it, and its Darwin driver picks some of the
+# flags it passes a linker by that version. 241.9 is OS X 10.9's own ld64 (T4 spike Q5).
+HOST_LINK_VERSION=241.9
+
 # sdk109_stubs -- prints the pinned MacOSX10.9.sdk exactly as its tarball holds it, its libraries the
 # original MH_DYLIB_STUB files, fetched and verified with shipyard's own pin (sdk-pins.sh) and fetcher
 # (mavericks_fetch.sh) into the stubs/ dir of fetch_sdk.sh's cache (MAVERICKS_SDK_CACHE). fetch_sdk.sh

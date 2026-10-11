@@ -13,7 +13,9 @@
 #   everything), it must take the swift source as GitHub's tarball of SWIFT_SHA through shipyard's
 #   fetch_pinned_source.sh, apply patches/runtime in RUNTIME_PATCHES' order with patch, configure the stdlib
 #   with clang22's llvm-ar, llvm-ranlib and llvm-lipo and with LibXml2, LibEdit and pkg-config not looked
-#   for, and never run git or xcrun (OS X 10.9 has neither without the Command Line Tools).
+#   for, CMake's Apple probes answered and check_language(Swift)'s probe not run (its sub-configure names no
+#   SDK and asks xcrun for one), and never run git or xcrun (OS X 10.9 has neither without the Command Line
+#   Tools).
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -153,6 +155,7 @@ grep -qxF "fetch_pinned_source https://github.com/swiftlang/swift.git $SWIFT_SHA
 [ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0001 0002 0003 0004 0005 0007 0008 " ] \
   || fail "patched in another order: $(grep '^patch' "$T/log" | tr '\n' ' ')"
 for a in "-DCMAKE_AR=$C22/bin/llvm-ar" "-DCMAKE_RANLIB=$C22/bin/llvm-ranlib" "-DSWIFT_LIPO=$C22/bin/llvm-lipo" -DSWIFT_ENABLE_LIBXML2=OFF \
+         -DCMAKE_TAPI=/usr/bin/false "-DCMAKE_STRIP=$C22/bin/llvm-strip" -DLD64_EXECUTABLE=/usr/bin/false -DCMAKE_Swift_COMPILER=NOTFOUND \
          -DCMAKE_DISABLE_FIND_PACKAGE_LibXml2=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibEdit=ON -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON; do
   grep -qxF -e "  $a" "$T/log" || fail "the stdlib configure lacks $a: $(cat "$T/log")"
 done

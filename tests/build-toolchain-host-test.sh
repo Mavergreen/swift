@@ -19,8 +19,9 @@
 #   compiler's swift as GitHub's tarballs of their pinned commits through shipyard's fetch_pinned_source.sh,
 #   check cmark's release pin with curl, patch with patch, and never run git; force LLVM's version stamp to
 #   LLVM_SHA and its repository, turn Swift's off, and look for no git, LibEdit, LibXml2 or pkg-config.
-#   Natively nothing runs xcrun, and the x86_64 checks read with clang22's llvm-otool, llvm-lipo, llvm-nm
-#   and llvm-strings in both modes. "The installed toolchain" is
+#   Natively nothing runs xcrun, the x86_64 configures answer CMake's and LLVM's Apple probes in both modes
+#   (lib.sh's apple_probe_answers; the arm64 host's Apple clang asks Xcode, D7), and the x86_64 checks read
+#   with clang22's llvm-otool, llvm-lipo, llvm-nm and llvm-strings in both modes. "The installed toolchain" is
 #   SWIFT_INSTALLED_TOOLCHAIN, here always a prefix under this test's own dir, so whether this machine has
 #   /usr/local/mavergreen/swift-toolchain (OS X 10.9 does, as does a Mac with the pkg) changes nothing.
 set -eu
@@ -167,6 +168,9 @@ x86_both() {  # what the x86_64 toolchain's configure is in either mode; $2 is t
   has "$1" "  -DSWIFT_SDK_OSX_PATH=<T>/sdkcache/stubs/MacOSX10.9.sdk"
   has "$1" "  -DCLANG_DEFAULT_LINKER=lld"
   has "$1" "  -DHOST_LINK_VERSION=241.9"
+  has "$1" "  -DCMAKE_TAPI=/usr/bin/false"
+  has "$1" "  -DCMAKE_STRIP=<T>/$2/bin/llvm-strip"
+  has "$1" "  -DLD64_EXECUTABLE=/usr/bin/false"
   has "$1" "  -DCMAKE_Swift_COMPILER=<T>/host/bin/swiftc"
   has "$1" "  -DCMAKE_EXE_LINKER_FLAGS=-L<T>/w/swiftdarwin-x86"
   has "$1" "  -DSWIFT_COMPILER_SOURCES_SDK_FLAGS=-sdk;<T>/sdk/MacOSX11.3.sdk;-Xcc;-D_LIBCPP_DISABLE_AVAILABILITY;-Xfrontend;-disable-availability-checking;-runtime-compatibility-version;none;-module-cache-path;<T>/w/swift-x86-modcache"
@@ -242,6 +246,7 @@ has arm64 "patch swift-compiler-arm64 <T>/repo/patches/compiler/0001-accept-10.9
 lacks arm64 "0002-hosttools-rpath-loader-path.patch"
 lacks arm64 "patch swift-compiler "
 lacks arm64 "SWIFT_LIPO"
+lacks arm64 "CMAKE_TAPI"
 has arm64 "  -DCMAKE_C_COMPILER=/usr/bin/clang"
 has arm64 "  -DCMAKE_OSX_SYSROOT=<T>/sdk/MacOSX11.3.sdk"
 has arm64 "  -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"

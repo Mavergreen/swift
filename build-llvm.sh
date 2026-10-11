@@ -68,9 +68,14 @@ set -- -G Ninja -S llvm-project/llvm -B llvm-build \
   -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_TERMINFO=OFF \
   -DLLVM_FORCE_VC_REVISION="$LLVM_SHA" -DLLVM_FORCE_VC_REPOSITORY="$LLVM_REPO_URL" -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON \
   -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF
+# Natively, the answers to CMake's and LLVM's Apple probes (lib.sh's apple_probe_answers), and clang22's lld
+# as CMAKE_LINKER with lib.sh's HOST_LINK_VERSION, so clang's configure runs no `ld -v` (it found the Command
+# Line Tools' ld): what out/llvm's clang/Config/config.h records stays 241.9, as that ld said.
 if [ "$MODE" = native ]; then
+  # shellcheck disable=SC2046  # apple_probe_answers prints space-free words
   set -- "$@" -DCMAKE_OSX_SYSROOT="$SDK109" \
-    -DCMAKE_LIBTOOL="$X/llvm-libtool-darwin" -DCMAKE_AR="$X/llvm-ar" -DCMAKE_RANLIB="$X/llvm-ranlib"
+    -DCMAKE_LIBTOOL="$X/llvm-libtool-darwin" -DCMAKE_AR="$X/llvm-ar" -DCMAKE_RANLIB="$X/llvm-ranlib" \
+    -DCMAKE_LINKER="$X/ld64.lld" -DHOST_LINK_VERSION="$HOST_LINK_VERSION" $(apple_probe_answers "$X")
 fi
 # A reused llvm-build keeps the options it was configured with, so it is configured again whenever
 # they change (a build root from before lld joined would otherwise never build it).

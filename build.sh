@@ -178,7 +178,13 @@ reuse_build_dir "$ROOT/stdlib-build" "$STAMP" || exit 1
 # Clang_DIR, LLVM_TABLEGEN and CLANG_TABLEGEN are deliberately absent: CMake reports them
 # unused in this configuration, since the branch that would read them is behind SWIFT_INCLUDE_TOOLS.
 # LibXml2, LibEdit and pkg-config are not looked for, so what the host has on PATH changes nothing.
+# No xcrun and no Command Line Tools name, in either mode (T5a): CMake's Apple probes answered (lib.sh's
+# apple_probe_answers), and CMAKE_Swift_COMPILER named as what Swift's check_language(Swift) has always
+# found here (NOTFOUND: this build compiles Swift through SWIFT_NATIVE_SWIFT_TOOLS_PATH), so that check's
+# sub-configure, which names no SDK and asks xcrun for one, is not run.
+# shellcheck disable=SC2046  # space-free words
 shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
+  $(apple_probe_answers "$X") -DCMAKE_Swift_COMPILER=NOTFOUND \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER="$TC/bin/clang" -DCMAKE_CXX_COMPILER="$TC/bin/clang++" \
   -DCMAKE_OSX_SYSROOT="$SDK_RUNTIME" -DSWIFT_SDK_OSX_PATH="$SDK_RUNTIME" \

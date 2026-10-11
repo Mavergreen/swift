@@ -4,7 +4,8 @@
 #   lib.sh's helpers for building the runtime on either host: prefix_map_flags must map both spellings of
 #   a build root, clang_resource_include must find exactly one resource-header dir, clang_resource_shim
 #   and native_host_shim must lay out the dirs build.sh hands the compilers, and every one must refuse
-#   what it cannot use before it removes anything.
+#   what it cannot use before it removes anything. apple_probe_answers must answer CMake's and LLVM's Apple
+#   probes (tapi, strip, ld64) without xcrun or a Command Line Tools name, and HOST_LINK_VERSION be 10.9's ld64.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -12,6 +13,11 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/build-helpers.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 T="$(CDPATH='' cd -P -- "$T" && pwd -P)"   # physical, so a link below is the only second spelling
 . "$REPO/lib.sh"
+
+echo "-- apple_probe_answers: tapi, strip and ld64 named, none of them xcrun or a Command Line Tools tool"
+[ "$(apple_probe_answers /c22/bin)" = "-DCMAKE_TAPI=/usr/bin/false -DCMAKE_STRIP=/c22/bin/llvm-strip -DLD64_EXECUTABLE=/usr/bin/false" ] \
+  || fail "apple_probe_answers: $(apple_probe_answers /c22/bin)"
+[ "$HOST_LINK_VERSION" = 241.9 ] || fail "HOST_LINK_VERSION: $HOST_LINK_VERSION"
 
 echo "-- prefix_map_flags: both spellings of the root, physical first, the logical one normalized"
 mkdir -p "$T/real"; ln -s real "$T/link"

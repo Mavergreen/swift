@@ -7,7 +7,9 @@
 #   terminfo and LibXml2 off by name, git never looked for, and the version stamp forced to LLVM_SHA and its
 #   repository; in cross mode (CI) with Apple's clang and the host's otool, in native mode (OS X 10.9) with
 #   mavericks-clang-22's clang, the 10.9 SDK, and its llvm-libtool-darwin, llvm-ar, llvm-ranlib and
-#   llvm-otool, never a Command Line Tools stub. A tarball pin that does not match fails before anything is
+#   llvm-otool, never a Command Line Tools stub, and natively with CMake's and LLVM's Apple probes answered
+#   (lib.sh's apple_probe_answers) and clang22's lld as the linker clang's configure reads, so no configure
+#   asks xcrun or runs a Command Line Tools ld (cross mode keeps Apple's tools: D7). A tarball pin that does not match fails before anything is
 #   configured, naming the pin to refresh. Nothing is built: every tool is a fake that records its arguments.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -21,7 +23,7 @@ R="$T/repo"; mkdir -p "$R/patches"
 cp "$REPO/build-llvm.sh" "$REPO/lib.sh" "$REPO/pins.env" "$REPO/msc.sh" "$R/"
 cp -R "$REPO/patches/llvm" "$R/patches/"
 mkdir -p "$T/bin" "$T/shipyard" "$T/clang22n/bin"
-# shipyard: the tarball fetcher lays out the four files patches/llvm touch, and stamps the tree.
+# shipyard: the tarball fetcher lays out the five files patches/llvm touch, and stamps the tree.
 cat > "$T/shipyard/fetch_pinned_source.sh" <<F
 #!/bin/sh
 echo "fetch_pinned_source \$*" >> "$T/log"
@@ -29,6 +31,7 @@ echo "fetch_pinned_source \$*" >> "$T/log"
 rm -rf "\$4"; mkdir -p "\$4/llvm/lib/CAS" "\$4/llvm/cmake/modules" "\$4/lld/MachO" "\$4/compiler-rt/cmake/Modules"
 : > "\$4/llvm/lib/CAS/OnDiskCommon.cpp"; : > "\$4/llvm/cmake/modules/AddLLVM.cmake"
 : > "\$4/lld/MachO/InputFiles.cpp"; : > "\$4/compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake"
+: > "\$4/compiler-rt/cmake/base-config-ix.cmake"
 echo "\$1 \$2 \$3" > "\$4/.mavergreen-source"
 F
 printf '#!/bin/sh\necho "fetch_sdk $*" >> "%s/log"\necho "%s/sdk/MacOSX10.9.sdk"\n' "$T" "$T" > "$T/shipyard/fetch_sdk.sh"
@@ -53,6 +56,7 @@ case "$(basename "$p")" in
   0002-*) echo 'LLVM_LINKER_IS_LLD AND NOT APPLE' >> llvm/cmake/modules/AddLLVM.cmake ;;
   0003-*) echo "swiftlang's fork refuses every Apple-platform input" >> lld/MachO/InputFiles.cpp ;;
   0004-*) echo 'Mavergreen: extra flags for the Darwin builtins' >> compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake ;;
+  0005-*) echo 'Mavergreen: a configure that names the macOS SDK' >> compiler-rt/cmake/base-config-ix.cmake ;;
 esac
 F
 # shipyard-cmake: a configure records its arguments and leaves a cache; an install lays out what step 4 edits.
@@ -110,6 +114,7 @@ both cross
 has cross "  -DCMAKE_C_COMPILER=/usr/bin/clang"
 has cross "<T>/bin/otool -L llvm-build/bin/lld"
 lacks cross "CMAKE_LIBTOOL"
+lacks cross "CMAKE_TAPI"
 lacks cross "fetch_sdk"
 lacks cross "clang22n"
 
@@ -123,6 +128,8 @@ has native "  -DCMAKE_LIBTOOL=<T>/clang22n/bin/llvm-libtool-darwin"
 has native "  -DCMAKE_AR=<T>/clang22n/bin/llvm-ar"
 has native "  -DCMAKE_RANLIB=<T>/clang22n/bin/llvm-ranlib"
 has native "<T>/clang22n/bin/llvm-otool -L llvm-build/bin/lld"
+for a in -DCMAKE_TAPI=/usr/bin/false -DCMAKE_STRIP=\<T\>/clang22n/bin/llvm-strip -DLD64_EXECUTABLE=/usr/bin/false \
+         -DCMAKE_LINKER=\<T\>/clang22n/bin/ld64.lld -DHOST_LINK_VERSION=241.9; do has native "  $a"; done
 lacks native "<T>/bin/otool"
 
 echo "-- a tarball pin that does not match: refused before anything is configured, naming the pin"

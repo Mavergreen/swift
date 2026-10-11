@@ -27,6 +27,7 @@ case "$MODE" in cross|native) ;; *) echo "FAIL: mode '$MODE' is neither cross no
 [ "$(source_commit llvm-project)" = "$LLVM_SHA" ] \
   && grep -q "swiftlang's fork refuses every Apple-platform input" llvm-project/lld/MachO/InputFiles.cpp \
   && grep -q 'Mavergreen: extra flags for the Darwin builtins' llvm-project/compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake \
+  && grep -q 'Mavergreen: a configure that names the macOS SDK' llvm-project/compiler-rt/cmake/base-config-ix.cmake \
   || { echo "FAIL: no patched llvm-project at $LLVM_SHA in $W -- run ./build-llvm.sh"; exit 1; }
 X="$(clang22_prefix "$MODE" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
 SDK109="$(sh "$SHIPYARD/fetch_sdk.sh")"
@@ -52,7 +53,22 @@ rm -rf "$B"
 #   10.9 version writes each member's owner and date and whose symbol table differs from a modern one's
 #   (T4 spike Q1). llvm-libtool-darwin writes every member's owner and date as 0.
 # LLVM_ENABLE_LIBXML2=OFF and CMAKE_IGNORE_PREFIX_PATH=/opt/pkg: hygiene, as in build-llvm.sh.
+# No xcrun and no Command Line Tools name, in either mode (T5a): CMake's Apple probes answered (lib.sh's
+#   apple_probe_answers); CMAKE_LINKER clang22's lld, so compiler-rt's `ld -v` arch probe runs no ld (its
+#   answer is unused: DARWIN_osx_ARCHS is given); every other SDK's DARWIN_<sdk>_CACHED_SYSROOT an empty
+#   directory, so compiler-rt asks xcrun for none (no platform but osx is enabled); the macOS SDK's version
+#   given, the pinned SDK's own (MacOSX10.9.sdk: compiler-rt asks it only to add -Werror=format-nonliteral
+#   from 10.7 on, as both hosts' xcrun answers did, 10.9 and 27.0); and patches/llvm 0005 takes
+#   DARWIN_macosx_CACHED_SYSROOT where compiler-rt would ask xcrun for an SDK because /usr/include/c++ is
+#   absent (every modern Mac, and 10.9 without them).
+SDKV="$(basename "$SDK109" .sdk)"; SDKV="${SDKV#MacOSX}"
+NO_SDKS=""
+for s in iphoneos iphonesimulator watchos watchsimulator appletvos appletvsimulator xros xrsimulator; do
+  NO_SDKS="$NO_SDKS -DDARWIN_${s}_CACHED_SYSROOT=/var/empty"
+done
+# shellcheck disable=SC2046,SC2086  # space-free words
 shipyard-cmake -G Ninja -S llvm-project/compiler-rt -B "$B" \
+  $(apple_probe_answers "$X") -DCMAKE_LINKER="$X/ld64.lld" $NO_SDKS -DDARWIN_macosx_OVERRIDE_SDK_VERSION="$SDKV" \
   -DCOMPILER_RT_DARWIN_BUILTIN_EXTRA_CFLAGS="$PM" \
   -DCMAKE_C_COMPILER="$X/clang" -DCMAKE_CXX_COMPILER="$X/clang++" -DCMAKE_ASM_COMPILER="$X/clang" \
   -DCMAKE_LIBTOOL="$X/llvm-libtool-darwin" -DCMAKE_LIPO="$X/llvm-lipo" \

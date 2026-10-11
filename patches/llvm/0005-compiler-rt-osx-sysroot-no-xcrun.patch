@@ -1,0 +1,16 @@
+diff --git compiler-rt/cmake/base-config-ix.cmake compiler-rt/cmake/base-config-ix.cmake
+--- compiler-rt/cmake/base-config-ix.cmake
++++ compiler-rt/cmake/base-config-ix.cmake
+@@ -130,7 +130,11 @@
+   # On Darwin if /usr/include/c++ doesn't exist, the user probably has Xcode but
+   # not the command line tools (or is using macOS 10.14 or newer). If this is
+   # the case, we need to find the OS X sysroot to pass to clang.
+-  if(NOT EXISTS /usr/include/c++)
++  # Mavergreen: a configure that names the macOS SDK (DARWIN_macosx_CACHED_SYSROOT) takes it and asks
++  # xcrun nothing; OS X 10.9 has no xcrun once the Command Line Tools are gone (T5a).
++  if(DARWIN_macosx_CACHED_SYSROOT)
++    set(OSX_SYSROOT_FLAG "-isysroot${DARWIN_macosx_CACHED_SYSROOT}")
++  elseif(NOT EXISTS /usr/include/c++)
+     execute_process(COMMAND xcrun -sdk macosx --show-sdk-path
+        OUTPUT_VARIABLE OSX_SYSROOT
+        ERROR_QUIET

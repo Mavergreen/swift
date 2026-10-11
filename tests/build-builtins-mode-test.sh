@@ -7,7 +7,10 @@
 #   llvm-lipo and read back by its llvm-nm, llvm-lipo and llvm-ar, never by the host's Apple tools. Its
 #   check must refuse an archive whose members keep a date or owner, or that lacks a symbol the runtime
 #   links, and run the compat guard with that toolchain's readers. It must refuse an llvm-project that is
-#   not build-llvm.sh's extraction of LLVM_SHA, and never run git. Nothing is built: every tool is a fake
+#   not build-llvm.sh's extraction of LLVM_SHA, and never run git. In both modes no configure probe may ask
+#   xcrun or run a Command Line Tools ld: CMake's answered (apple_probe_answers), clang22's lld as the
+#   linker, every SDK but macOS named as an empty directory, the macOS SDK's version given (the pinned
+#   10.9 SDK's), and patches/llvm 0005 in the tree. Nothing is built: every tool is a fake
 #   that records its arguments.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -56,6 +59,7 @@ chmod +x "$T/bin/"* "$T/shipyard/"* "$R/fetch-clang22.sh" "$R/scripts/guard.sh"
 W="$T/w"; mkdir -p "$W/llvm-project/lld/MachO" "$W/llvm-project/compiler-rt/cmake/Modules"
 echo "swiftlang's fork refuses every Apple-platform input" > "$W/llvm-project/lld/MachO/InputFiles.cpp"
 echo 'Mavergreen: extra flags for the Darwin builtins' > "$W/llvm-project/compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake"
+echo 'Mavergreen: a configure that names the macOS SDK' > "$W/llvm-project/compiler-rt/cmake/base-config-ix.cmake"
 echo "https://github.com/swiftlang/llvm-project.git $LLVM_SHA $LLVM_TARBALL_SHA256" > "$W/llvm-project/.mavergreen-source"
 run() {  # run <log-name> <mode> -- a fresh log each time
   _n="$1"; rm -f "$T/log"; : > "$T/log"; _rc=0
@@ -75,6 +79,12 @@ for m in cross native; do
   has "$m" "  -DCMAKE_LIBTOOL=<T>/$m/bin/llvm-libtool-darwin"
   has "$m" "  -DCMAKE_LIPO=<T>/$m/bin/llvm-lipo"
   has "$m" "  -DCMAKE_OSX_SYSROOT=<T>/sdk/MacOSX10.9.sdk"
+  for a in -DCMAKE_TAPI=/usr/bin/false "-DCMAKE_STRIP=<T>/$m/bin/llvm-strip" -DLD64_EXECUTABLE=/usr/bin/false \
+           "-DCMAKE_LINKER=<T>/$m/bin/ld64.lld" -DDARWIN_macosx_OVERRIDE_SDK_VERSION=10.9 \
+           -DDARWIN_macosx_CACHED_SYSROOT=\<T\>/sdk/MacOSX10.9.sdk; do has "$m" "  $a"; done
+  for s in iphoneos iphonesimulator watchos watchsimulator appletvos appletvsimulator xros xrsimulator; do
+    has "$m" "  -DDARWIN_${s}_CACHED_SYSROOT=/var/empty"
+  done
   has "$m" "<T>/$m/bin/llvm-lipo -thin x86_64 <T>/w/builtins-x86/lib/darwin/libclang_rt.osx.a -output <T>/w/builtins-x86/thin.a"
   has "$m" "guard LIPO=<T>/$m/bin/llvm-lipo OTOOL=<T>/$m/bin/llvm-otool NM=<T>/$m/bin/llvm-nm STRINGS=<T>/$m/bin/llvm-strings <T>/w/builtins-x86/lib/darwin/libclang_rt.osx.a"
   lacks "$m" "APPLE"
@@ -98,6 +108,10 @@ lacks other "shipyard-cmake"
 rm "$W/llvm-project/.mavergreen-source"
 if run nostamp native; then fail "built from an llvm-project no fetch stamped"; fi
 echo "https://github.com/swiftlang/llvm-project.git $LLVM_SHA $LLVM_TARBALL_SHA256" > "$W/llvm-project/.mavergreen-source"
+mv "$W/llvm-project/compiler-rt/cmake/base-config-ix.cmake" "$T/bci"
+if run no0005 native; then fail "built from an llvm-project without patches/llvm 0005"; fi
+lacks no0005 "shipyard-cmake"
+mv "$T/bci" "$W/llvm-project/compiler-rt/cmake/base-config-ix.cmake"
 
 echo "-- a mode that is neither is refused before anything runs"
 if run bad sideways; then fail "ran in mode 'sideways'"; fi
