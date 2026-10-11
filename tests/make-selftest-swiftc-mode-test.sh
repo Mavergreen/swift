@@ -5,8 +5,10 @@
 #   -o, and must skip every test marked `// requires: overlays`. With SWIFT_RUNTIME_PREFIX set too, each
 #   compile must also ask for header padding, and each binary's installed-runtime rpath must be replaced
 #   by the prefix's; a replacement that fails must fail the bundle, and a prefix that is relative or holds
-#   no libswiftCore.dylib is refused before anything is compiled. A fake compiler and a fake
-#   install_name_tool record their calls.
+#   no libswiftCore.dylib is refused before anything is compiled. The replacement is INSTALL_NAME_TOOL's,
+#   else clang22's llvm-install-name-tool where CLANG22_PREFIX has one (OS X 10.9's install_name_tool is a
+#   Command Line Tools stub), else install_name_tool's from PATH. A fake compiler and fake
+#   install_name_tools record their calls.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -19,7 +21,12 @@ while [ \$# -gt 0 ]; do case "\$1" in -o) printf '#!/bin/sh\nexit 0\n' > "\$2"; 
 EOF2
 mkdir -p "$T/bin"
 printf '#!/bin/sh\necho "$*" >> "%s/int-calls"\nexit "${FAKE_INT_RC:-0}"\n' "$T" > "$T/bin/install_name_tool"
-chmod +x "$T/fake-swiftc" "$T/bin/install_name_tool"
+mkdir -p "$T/c22/bin"
+printf '#!/bin/sh\necho "llvm $*" >> "%s/int-calls"\n' "$T" > "$T/c22/bin/llvm-install-name-tool"
+printf '#!/bin/sh\necho "named $*" >> "%s/int-calls"\n' "$T" > "$T/named-int"
+chmod +x "$T/fake-swiftc" "$T/bin/install_name_tool" "$T/c22/bin/llvm-install-name-tool" "$T/named-int"
+# Unless a case says otherwise, no clang22 (the box has one installed, at the default prefix).
+CLANG22_PREFIX="$T/no-clang22"; export CLANG22_PREFIX; unset INSTALL_NAME_TOOL
 B="$T/dist/swift-runtime-selftest/bin"
 
 echo "-- SWIFTC alone: exactly -O|-Onone <file> -o <out>, no rpath rewrite"
@@ -51,6 +58,15 @@ for src in "$REPO"/tests/*.swift; do
       || fail "no rpath replacement for $out: $(cat "$T/int-calls" 2>/dev/null)"
   done
 done
+
+echo "-- clang22's llvm-install-name-tool where CLANG22_PREFIX has one; INSTALL_NAME_TOOL before either"
+rm -f "$T/int-calls"
+PATH="$T/bin:$PATH" CLANG22_PREFIX="$T/c22" SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFIX="$P" DIST="$T/dist" sh "$REPO/make-selftest.sh" > /dev/null
+[ "$(cut -d' ' -f1 "$T/int-calls" | sort -u)" = llvm ] || fail "did not rewrite with clang22's llvm-install-name-tool: $(cat "$T/int-calls")"
+rm -f "$T/int-calls"
+PATH="$T/bin:$PATH" CLANG22_PREFIX="$T/c22" INSTALL_NAME_TOOL="$T/named-int" SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFIX="$P" DIST="$T/dist" \
+  sh "$REPO/make-selftest.sh" > /dev/null
+[ "$(cut -d' ' -f1 "$T/int-calls" | sort -u)" = named ] || fail "did not rewrite with INSTALL_NAME_TOOL: $(cat "$T/int-calls")"
 
 echo "-- a replacement that fails fails the bundle"
 if PATH="$T/bin:$PATH" FAKE_INT_RC=1 SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFIX="$P" DIST="$T/dist" \

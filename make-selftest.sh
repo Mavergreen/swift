@@ -11,10 +11,13 @@
 #                             on 10.9, whose defaults supply target, SDK and rpath. Skips every test
 #                             whose first line is `// requires: overlays`. With SWIFT_RUNTIME_PREFIX
 #                             also set (a staged, uninstalled runtime), each compile adds
-#                             `-Xlinker -headerpad_max_install_names`, and install_name_tool then
-#                             replaces the wrapper's rpath with $SWIFT_RUNTIME_PREFIX/lib/swift.
+#                             `-Xlinker -headerpad_max_install_names`, and an install_name_tool then
+#                             replaces the wrapper's rpath with $SWIFT_RUNTIME_PREFIX/lib/swift:
+#                             INSTALL_NAME_TOOL, else mavericks-clang-22's llvm-install-name-tool
+#                             (CLANG22_PREFIX, default /usr/local/mavergreen/clang22) where it is
+#                             installed, else install_name_tool from PATH.
 #          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, TC (toolchain usr/), DIST (output dir),
-#          SWIFT_RUNTIME_PREFIX, SWIFTC.
+#          SWIFT_RUNTIME_PREFIX, SWIFTC, INSTALL_NAME_TOOL, CLANG22_PREFIX.
 set -eu
 REPO="$(cd "$(dirname "$0")" && pwd)"
 . "$REPO/lib.sh"    # -> $SWIFT_BUILD
@@ -29,10 +32,16 @@ if [ -n "${SWIFTC:-}" ]; then
       echo "make-selftest: SWIFT_RUNTIME_PREFIX=$SWIFT_RUNTIME_PREFIX has no lib/swift/libswiftCore.dylib -- run build.sh, or name the staged runtime" >&2; exit 1; }
     # platform: the toolchain's swiftc always adds the INSTALLED runtime's rpath, first, so an added
     #           rpath would lose to it; so it is replaced. 10.9's install_name_tool refuses to grow the
-    #           load commands without the header padding the first line asks the linker for.
+    #           load commands without the header padding the first line asks the linker for, and is the
+    #           Command Line Tools', a stub without them: clang22's llvm-install-name-tool does the same.
+    INT="${INSTALL_NAME_TOOL:-}"
+    if [ -z "$INT" ]; then
+      INT="${CLANG22_PREFIX:-/usr/local/mavergreen/clang22}/bin/llvm-install-name-tool"
+      [ -x "$INT" ] || INT=install_name_tool
+    fi
     compile() {
       "$SWIFTC" "-$1" -Xlinker -headerpad_max_install_names "$2" -o "$3" >&2 &&
-        install_name_tool -rpath /usr/local/mavergreen/swift-runtime/lib/swift "$SWIFT_RUNTIME_PREFIX/lib/swift" "$3" >&2
+        "$INT" -rpath /usr/local/mavergreen/swift-runtime/lib/swift "$SWIFT_RUNTIME_PREFIX/lib/swift" "$3" >&2
     }
   else
     compile() { "$SWIFTC" "-$1" "$2" -o "$3" >&2; }
