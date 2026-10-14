@@ -60,20 +60,19 @@ but cannot compute a hash, so a bot writes them on the Swift bump's own branch
 runs `scripts/pin-source-tarballs.sh`: it fetches each tarball and, with git, the commit itself, and
 computes the SHA-256 only for a tarball that holds exactly the commit's tree; upstream's bytes never sit
 beside a token that can write. Its second job, which reads no upstream byte, writes those three values
-into `pins.env` (`scripts/pins-bot.sh`), commits them as `github-actions[bot]` and pushes. A push made
-with `GITHUB_TOKEN` starts no workflow, so that job then dispatches `release.yml` on the branch; that
-run's `build` is the check `main` requires, on the new head, and a Swift patch bump automerges on green
-as the family rule says (minor and major still wait for a human, below). The token rule is the bot's
-two jobs': the dispatched `release.yml` run builds upstream with the permissions every `release.yml` run
-has (`contents: write` workflow-wide, its checkouts keeping the token), as the push that opened the
-branch already did. `gitIgnoredAuthors` in
+into `pins.env` (`scripts/pins-bot.sh`), commits them as `mavergreen-pins-bot[bot]` and pushes with a
+token of the Mavergreen pins-bot GitHub App (`contents: write` on this repository alone; org variable
+`PINS_BOT_CLIENT_ID`, org secret `PINS_BOT_PRIVATE_KEY`). A push made with `GITHUB_TOKEN` would start no
+workflow, and a run it dispatched would not count for the PR; the App's push starts `release.yml` like any
+push, that run's `build` is the check `main` requires, on the new head, and a Swift patch bump automerges
+on green as the family rule says (minor and major still wait for a human, below). `build` fails, never
+skips, when `build-cross` fails (GitHub counts a skipped required check as passed), so a bump cannot merge
+on the stale pins before the bot has pushed. The token rule is the bot's two jobs': the `release.yml` run
+builds upstream with the permissions every `release.yml` run has (`contents: write` workflow-wide, its
+checkouts keeping the token), as the push that opened the branch already did. `gitIgnoredAuthors` in
 `.github/renovate.json` keeps the bot's commit from marking the branch as edited by someone else. Until
 the bot has run, CI fails at the first fetch, naming the pin; if the bot fails, `sh
-scripts/pin-source-tarballs.sh` on the branch does by hand what it does, and `--check` writes nothing. If
-only its dispatch failed, after the push, re-running the bot cannot mend it (the re-run checks out the
-run's original commit, finds the pins stale, and its push is refused as not a fast-forward): when the
-branch already holds the bot's commit but no `build` ran on it, run `gh workflow run release.yml --ref
-<branch>`. GitHub's
+scripts/pin-source-tarballs.sh` on the branch does by hand what it does, and `--check` writes nothing. GitHub's
 generated archives have been byte-stable (10.9's curl and a modern Mac's fetched the same SHA-256s); if
 GitHub ever regenerates them, the fetch fails rather than build other bytes.
 

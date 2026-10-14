@@ -7,21 +7,19 @@ name: pins-bot
 #   that each holds exactly its commit's tree. Upstream's bytes are read there, never run, and never beside a
 #   token that can write. scripts/pins-bot.sh fill decides: a write only when --check exits 3 (stale); its 1
 #   (an error) fails the job, and nothing is written or pushed.
-# - push (contents: write, actions: write) touches no upstream byte: it writes the three checked values into
-#   pins.env (scripts/pins-bot.sh), commits, and pushes to the branch. A push made with GITHUB_TOKEN starts no
-#   workflow, so it then dispatches release.yml on the branch (workflow_dispatch is GITHUB_TOKEN-triggerable, the
-#   family's repackage path relies on the same); that run's `build` job is main's required check on the new head.
-#   A patch bump then automerges on green; a minor or major one waits for a human (renovate.json).
-#   Its checkout keeps its credentials (actions/checkout's default) because its `git push` authenticates with
-#   them: persisting none, as the pins job does, would break the push, not harden it.
-#   "Never beside a token that can write" is these two jobs' rule. The release.yml run dispatched here builds
+# - push touches no upstream byte: it writes the three checked values into pins.env (scripts/pins-bot.sh),
+#   commits, and pushes to the branch with a token of the Mavergreen pins-bot GitHub App (org variable
+#   PINS_BOT_CLIENT_ID, org secret PINS_BOT_PRIVATE_KEY; minted for this repository with contents: write alone).
+#   A push made with GITHUB_TOKEN starts no workflow, and a run it dispatches does not count for the PR's
+#   required check; the App's push starts release.yml like any push, and that run's `build` job is main's
+#   required check on the new head. A patch bump then automerges on green; a minor or major one waits for a
+#   human (renovate.json). The job's own GITHUB_TOKEN reads only.
+#   Its checkout keeps the App's credentials (actions/checkout's default) because its `git push` authenticates
+#   with them: persisting none, as the pins job does, would break the push, not harden it.
+#   "Never beside a token that can write" is these two jobs' rule. The release.yml run the push starts builds
 #   upstream with release.yml's own permissions (contents: write, workflow-wide; its checkouts keep the token),
 #   as the push that opened the branch already started; narrowing those is release.yml's work, not this bot's.
 # renovate.json's gitIgnoredAuthors keeps this bot's commit from marking the branch as edited by someone else.
-# A dispatch that fails after the push succeeded is not mended by re-running this workflow: the re-run checks
-# out the run's original commit, finds the pins stale again, and its push is refused (not a fast-forward). When
-# the branch already holds this bot's commit but no `build` ran on it, start that run by hand:
-#   gh workflow run release.yml --ref <branch>
 
 on:
   push:
@@ -64,24 +62,31 @@ jobs:
     if: needs.pins.outputs.pins != ''
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      actions: write
+      contents: read
     steps:
-      - uses: actions/checkout@v7
+      - name: A pins-bot App token, contents write on this repository alone
+        id: app
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.PINS_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.PINS_BOT_PRIVATE_KEY }}
+          permission-contents: write
 
-      - name: Commit the pins to the branch, then run release.yml on its new head
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app.outputs.token }}
+
+      - name: Commit the pins to the branch, as the App, which starts release.yml on its new head
         env:
           PINS: ${{ needs.pins.outputs.pins }}
           BRANCH: ${{ github.ref_name }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           # A refusal fails the job here (set -e sees an assignment's status), never reads as "unchanged".
           # shellcheck disable=SC2086  # three KEY=SHA256 words; pins-bot.sh refuses anything else
           applied="$(sh scripts/pins-bot.sh apply $PINS)"
           [ "$applied" = changed ] || { echo "pins.env already holds them"; exit 0; }
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+          git -c user.name='mavergreen-pins-bot[bot]' -c user.email='342268518+mavergreen-pins-bot[bot]@users.noreply.github.com' \
             commit -q -m 'chore(pins): the tarball SHA-256s of the moved source commits' \
             -m 'Written by .github/workflows/pins-bot.yml: its pins job checked, with git, that each tarball is its commit'"'"'s tree.' pins.env
           git push origin "HEAD:refs/heads/$BRANCH"
-          gh workflow run release.yml --ref "$BRANCH"
