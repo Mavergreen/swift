@@ -317,8 +317,13 @@ jobs:
   # earlier release -- against the pinned 11.3 SDK, as self-host.sh compiles it on 10.9 with the previous
   # release; the two seeds share nothing, so a 10.9 build equal to this one is the proof that neither
   # changed it. Its stdlib and builtins are build-cross's, the cross pkg's own bytes.
+  #
+  # build is main's required check, and GitHub counts a skipped required check as passed: skipped for a
+  # failed build-cross, it let PR 9 (6.4.1) automerge with the 6.4.0 tarball pins. So it runs whatever its
+  # needs did, and its first step fails unless both succeeded.
   build:
     needs: [version, build-cross]
+    if: ${{ !cancelled() }}
     runs-on: macos-26
     timeout-minutes: 355   # safety cap under GitHub's 360; the toolchain cross-build is hours cold (mavergreen-clang's cap)
     env:
@@ -326,6 +331,15 @@ jobs:
     outputs:
       digest: ${{ steps.digest.outputs.digest }}
     steps:
+      - name: Fail unless version and build-cross succeeded
+        if: ${{ needs.version.result != 'success' || needs.build-cross.result != 'success' }}
+        env:
+          VERSION_RESULT: ${{ needs.version.result }}
+          CROSS_RESULT: ${{ needs.build-cross.result }}
+        run: |
+          echo "::error::version: $VERSION_RESULT, build-cross: $CROSS_RESULT -- build, the required check, must not pass"
+          exit 1
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
