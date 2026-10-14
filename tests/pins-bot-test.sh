@@ -12,8 +12,10 @@
 #   `moved` must exit 2, never 1, when git cannot tell (a failed diff), so `fill` fails rather than do nothing.
 #   The workflow must give the job that reads upstream's tarballs no write token, and the job that holds one
 #   no upstream bytes; run on a push to renovate/** and nothing else; put no ${{ }} in a run: block; persist
-#   no credentials in the pins job's checkout; and run the push job only after the pins job. Each of those
-#   last four checks is run against a workflow mutated to break it, and must refuse it.
+#   no credentials in the pins job's checkout; and run the push job only after the pins job. Each of those last
+#   four checks is run against a workflow mutated to break it, and must refuse it. The push job writes with the
+#   pins-bot App's token alone (contents: write; its GITHUB_TOKEN reads), dispatches nothing, and commits as the
+#   App's bot, whom renovate.json's gitIgnoredAuthors names.
 #   Offline: a fixture repository with this repo's pins.env stands in for the Renovate branch, and a stub
 #   stands in for pin-source-tarballs.sh.
 set -eu
@@ -121,8 +123,20 @@ awk '/^  pins:$/ { j = "pins" } /^  push:$/ { j = "push" } j { print j ": " $0 }
 grep -qx 'pins:       contents: read' "$T/jobs" || fail "the pins job's permissions: $(grep '^pins:' "$T/jobs" | grep -A2 permissions)"
 if grep '^pins:' "$T/jobs" | grep -q 'write\|git push\|gh workflow'; then fail "the pins job can write"; fi
 if grep '^push:' "$T/jobs" | grep -q 'pin-source-tarballs\|curl\|install@'; then fail "the push job touches upstream's tarballs"; fi
-grep -qx 'push:       contents: write' "$T/jobs" && grep -qx 'push:       actions: write' "$T/jobs" || fail "the push job's permissions"
-grep -q 'gh workflow run release.yml --ref "\$BRANCH"' "$W" || fail "the push job does not dispatch release.yml on the branch"
+# The push job's GITHUB_TOKEN reads only; it writes with the pins-bot App's token, minted for contents alone, and
+# pushes with it (the checkout's persisted credentials), so the push itself starts release.yml: no dispatch.
+[ "$(grep -A1 '^push:     permissions:$' "$T/jobs" | tail -1)" = 'push:       contents: read' ] \
+  && ! grep '^push:' "$T/jobs" | grep -q 'contents: write$\|actions: write' || fail "the push job's GITHUB_TOKEN permissions"
+grep -qx 'push:         uses: actions/create-github-app-token@v3' "$T/jobs" \
+  && grep -qx 'push:           client-id: ${{ vars.PINS_BOT_CLIENT_ID }}' "$T/jobs" \
+  && grep -qx 'push:           private-key: ${{ secrets.PINS_BOT_PRIVATE_KEY }}' "$T/jobs" \
+  && [ "$(grep -c '^push: *permission-' "$T/jobs")" = 1 ] && grep -qx 'push:           permission-contents: write' "$T/jobs" \
+  || fail "the push job does not mint the pins-bot App's token for contents: write alone"
+grep -qx 'push:           token: ${{ steps.app.outputs.token }}' "$T/jobs" || fail "the push job's checkout does not hold the App's token"
+if grep -q 'gh workflow run\|GH_TOKEN\|github.token' "$W"; then fail "the workflow dispatches a run or uses GITHUB_TOKEN to write"; fi
+grep -qF "user.email='342268518+mavergreen-pins-bot[bot]@users.noreply.github.com'" "$W" \
+  && grep -qF '"342268518+mavergreen-pins-bot[bot]@users.noreply.github.com"' "$REPO/.github/renovate.json" \
+  || fail "the bot's commit email is not the App's, or renovate.json's gitIgnoredAuthors lacks it"
 grep -qx 'pins:           pins="$(sh scripts/pins-bot.sh fill origin/main)"' "$T/jobs" || fail "the pins job does not decide by pins-bot.sh fill"
 # A refused apply must fail the push job, not read as "unchanged": its status is taken by an assignment
 # (set -e sees it there), never inside a [ "$(...)" = changed ] test, which would swallow it.

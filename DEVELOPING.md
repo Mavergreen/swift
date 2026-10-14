@@ -206,7 +206,8 @@ translated smoke of it (`tests/toolchain-smoke-test.sh`).
 
 Renovate moves the Swift, llvm-project and swift-cmark pins together, in one pull request. It cannot
 compute the SHA-256 of GitHub's tarball of each new commit; `.github/workflows/pins-bot.yml` does, on
-the PR's branch, and runs `release.yml` on its commit (INGREDIENTS.md says how). If that bot failed, do
+the PR's branch, pushing as the pins-bot GitHub App so that `release.yml` runs on its commit
+(INGREDIENTS.md says how). If that bot failed, do
 by hand on the branch what it does, and push the `pins.env` this writes:
 
 ```sh

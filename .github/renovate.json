@@ -4,6 +4,7 @@
     "github>Mavergreen/shipyard"
   ],
   "gitIgnoredAuthors": [
+    "342268518+mavergreen-pins-bot[bot]@users.noreply.github.com",
     "41898282+github-actions[bot]@users.noreply.github.com"
   ],
   "customManagers": [
@@ -58,7 +59,7 @@
   ],
   "packageRules": [
     {
-      "description": "ONE PR per Swift release, moving the Swift pin, the llvm-project pin and the swift-cmark pin together. Apart, each fails its release-pin check (build-llvm.sh, build-toolchain.sh), so none could merge. The builds fetch each commit as GitHub's tarball, verified by a SHA-256 in pins.env that Renovate cannot compute: .github/workflows/pins-bot.yml writes those on the PR's branch and runs release.yml on its commit (gitIgnoredAuthors keeps that commit from marking the branch as edited), so a patch bump still automerges on green.",
+      "description": "ONE PR per Swift release, moving the Swift pin, the llvm-project pin and the swift-cmark pin together. Apart, each fails its release-pin check (build-llvm.sh, build-toolchain.sh), so none could merge. The builds fetch each commit as GitHub's tarball, verified by a SHA-256 in pins.env that Renovate cannot compute: .github/workflows/pins-bot.yml writes those on the PR's branch, pushing as the pins-bot GitHub App so that release.yml runs on its commit (gitIgnoredAuthors keeps that commit from marking the branch as edited), so a patch bump still automerges on green.",
       "matchDepNames": [
         "swiftlang/swift",
         "swiftlang/llvm-project",
