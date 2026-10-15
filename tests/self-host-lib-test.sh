@@ -43,7 +43,7 @@ printf 'a stub, as the tarball holds it\n' > "$T/src/MacOSX10.9.sdk/usr/lib/libS
 SUM="$(shasum -a 256 < "$T/MacOSX10.9.sdk.tar" | awk '{ print $1 }')"
 # shipyard's real fetcher, so this tests what the build runs; a fake pin points it at the tarball above.
 cp "$REAL_SHIPYARD/mavericks_fetch.sh" "$T/shipyard/"
-printf 'mav_sdk_pin() { [ "$1" = x86_64 ] && echo "file://%s/MacOSX10.9.sdk.tar %s MacOSX10.9.sdk.tar MacOSX10.9.sdk"; }\n' \
+printf 'shipyard_sdk_pin() { [ "$1" = x86_64 ] && echo "file://%s/MacOSX10.9.sdk.tar %s MacOSX10.9.sdk.tar MacOSX10.9.sdk"; }\n' \
   "$T" "$SUM" > "$T/shipyard/sdk-pins.sh"
 # tapi runs only through xcrun (fetch_sdk.sh); a fake xcrun records any call.
 printf '#!/bin/sh\necho "xcrun $*" >> "%s/xcrun.log"\nexit 1\n' "$T" > "$T/bin/xcrun"; chmod +x "$T/bin/xcrun"

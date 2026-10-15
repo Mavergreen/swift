@@ -9,13 +9,14 @@ set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/pins.env"
 . "$HERE/lib.sh"   # -> $SWIFT_BUILD
+. "$HERE/msc.sh"   # -> $SHIPYARD (mavericks_fetch.sh: shipyard_curl)
+. "$SHIPYARD/mavericks_fetch.sh"
 CACHE="$SWIFT_BUILD/cache"; mkdir -p "$CACHE"
 PKG="$CACHE/$TOOLCHAIN_ASSET"
 
 if [ ! -f "$PKG" ]; then
   echo "==> downloading $TOOLCHAIN_URL (~1.5 GB)"
-  curl -fSL --retry 3 --retry-delay 5 -o "$PKG.tmp" "$TOOLCHAIN_URL"
-  mv "$PKG.tmp" "$PKG"
+  shipyard_curl --progress-bar "$TOOLCHAIN_URL" "$PKG"
 fi
 
 verify_toolchain_signature "$PKG" || { rm -f "$PKG"; exit 1; }

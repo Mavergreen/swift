@@ -5,11 +5,13 @@
 #   and must compare an annotated tag by its peeled commit. It reads the tags from the repository's ref
 #   advertisement (<url>/info/refs) with curl, never git: offline, a fake curl serves one shaped like
 #   GitHub's (pkt-lines, the first ref followed by a NUL and capabilities) and records what it was asked.
+#   The fetch is shipyard's shipyard_curl (the installed shipyard's mavericks_fetch.sh), which runs that curl.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 T="$(mktemp -d "${TMPDIR:-/tmp}/release-pin.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
+REAL_SHIPYARD="$(. "$REPO/msc.sh" 2>/dev/null && echo "$SHIPYARD")" || { echo "no shipyard -- skipping"; exit 77; }
 mkdir -p "$T/bin"
 # The advertisement: HEAD with capabilities, a lightweight tag 9.9.9, an annotated tag 8.8.8 (its tag
 # object, then its peeled commit), and a branch whose name holds the tag's.
@@ -42,7 +44,7 @@ F
 printf '#!/bin/sh\necho "git $*" >> "%s/git.log"\nexit 1\n' "$T" > "$T/bin/git"
 chmod +x "$T/bin/curl" "$T/bin/git"
 check() {  # $1 = SWIFT_VERSION, rest = check_release_pin args; sets rc
-  rc=0; ( PATH="$T/bin:$PATH"; SWIFT_VERSION="$1"; shift; . "$REPO/lib.sh"; check_release_pin "$@" ) > "$T/out" 2>&1 || rc=$?
+  rc=0; ( PATH="$T/bin:$PATH"; SHIPYARD="$REAL_SHIPYARD"; SWIFT_VERSION="$1"; shift; . "$REPO/lib.sh"; check_release_pin "$@" ) > "$T/out" 2>&1 || rc=$?
 }
 U=https://github.com/acme/widget.git
 check 9.9.9 thing 9.9.9 swift-9.9.9-RELEASE 1111111111111111111111111111111111111111 "$U"; [ "$rc" = 0 ] || fail "matching pin refused: $(cat "$T/out")"
@@ -65,7 +67,7 @@ check 9.9.9 thing 9.9.9 swift-9.9.9-RELEASE dddddddddddddddddddddddddddddddddddd
 check 9.9.9 thing 9.9.9 swift-9.9.9-RELEASE 1111111111111111111111111111111111111111 https://portal.invalid/acme/widget.git
 [ "$rc" = 1 ] || fail "took a captive portal's page for a ref advertisement"
 grep -q 'not a git ref advertisement' "$T/out" || fail "a captive portal's page: $(cat "$T/out")"
-rc=0; ( PATH="$T/bin:$PATH"; TMPDIR="$T/absent"; SWIFT_VERSION=9.9.9; . "$REPO/lib.sh"
+rc=0; ( PATH="$T/bin:$PATH"; SHIPYARD="$REAL_SHIPYARD"; TMPDIR="$T/absent"; SWIFT_VERSION=9.9.9; . "$REPO/lib.sh"
   check_release_pin thing 9.9.9 swift-9.9.9-RELEASE 1111111111111111111111111111111111111111 "$U" ) > "$T/out" 2>&1 || rc=$?
 [ "$rc" = 1 ] && grep -q 'could not make a temporary file' "$T/out" || fail "no temporary file: rc $rc, $(cat "$T/out")"
 [ ! -f "$T/git.log" ] || fail "ran git: $(cat "$T/git.log")"

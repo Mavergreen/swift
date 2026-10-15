@@ -40,6 +40,7 @@ cp "$REPO/build-toolchain.sh" "$REPO/lib.sh" "$REPO/pins.env" "$REPO/msc.sh" "$R
 cp -R "$REPO/patches/compiler" "$R/patches/"
 printf '#!/bin/sh\necho "%s/clang22"\n' "$T" > "$R/fetch-clang22.sh"
 printf '#!/bin/sh\necho "guard ALLOW=${MAVERICKS_ALLOW_ARCHS:-} LIPO=${LIPO:-} OTOOL=${OTOOL:-} NM=${NM:-} STRINGS=${STRINGS:-} $*" >> "%s/log"\n' "$T" > "$R/scripts/guard.sh"
+REAL_SHIPYARD="$(. "$REPO/msc.sh" 2>/dev/null && echo "$SHIPYARD")" || { echo "no shipyard -- skipping"; exit 77; }
 mkdir -p "$T/bin" "$T/shipyard"
 for P in "$T/clang22" "$T/clang22n"; do
   mkdir -p "$P/bin"
@@ -59,8 +60,9 @@ cat > "$T/shipyard/fetch_sdk.sh" <<F
 case "\$*" in '--arch arm64') echo "$T/sdk/MacOSX11.3.sdk" ;; '') echo "$T/sdk/MacOSX10.9.sdk" ;; *) exit 9 ;; esac
 F
 # sdk109_stubs sources these two; the stub-form SDK is already in the cache, so nothing is fetched.
-printf 'mav_fetch_pinned() { echo "fetched $*" >> "%s/log"; return 1; }\n' "$T" > "$T/shipyard/mavericks_fetch.sh"
-printf 'mav_sdk_pin() { echo "https://example.invalid/x.tar.xz 0 MacOSX10.9.sdk.tar.xz MacOSX10.9.sdk"; }\n' > "$T/shipyard/sdk-pins.sh"
+cp "$REAL_SHIPYARD/mavericks_fetch.sh" "$T/shipyard/"   # shipyard_curl, for check_release_pin
+printf 'shipyard_fetch_pinned() { echo "fetched $*" >> "%s/log"; return 1; }\n' "$T" >> "$T/shipyard/mavericks_fetch.sh"
+printf 'shipyard_sdk_pin() { echo "https://example.invalid/x.tar.xz 0 MacOSX10.9.sdk.tar.xz MacOSX10.9.sdk"; }\n' > "$T/shipyard/sdk-pins.sh"
 mkdir -p "$T/sdkcache/stubs/MacOSX10.9.sdk/usr/lib"
 printf '#!/bin/sh\necho "git $*" >> "%s/log"\nexit 1\n' "$T" > "$T/bin/git"
 cat > "$T/bin/curl" <<F

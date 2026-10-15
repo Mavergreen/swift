@@ -76,9 +76,11 @@ CMARK_REPO_URL=https://github.com/swiftlang/swift-cmark.git
 check_release_pin() {
   [ "$2" = "$SWIFT_VERSION" ] || {
     echo "FAIL: $1 is pinned at $3, but SWIFT_VERSION is $SWIFT_VERSION -- move its pins in pins.env" >&2; return 1; }
+  { [ -n "${SHIPYARD:-}" ] && [ -f "$SHIPYARD/mavericks_fetch.sh" ] && . "$SHIPYARD/mavericks_fetch.sh"; } || {
+    echo "FAIL: check_release_pin: no shipyard mavericks_fetch.sh (SHIPYARD: ${SHIPYARD:-unset}) -- source msc.sh first" >&2; return 1; }
   _rp_refs="$(mktemp "${TMPDIR:-/tmp}/release-pin.XXXXXX")" || {
     echo "FAIL: check_release_pin: could not make a temporary file in ${TMPDIR:-/tmp}" >&2; return 1; }
-  curl -fsSL --retry 3 --retry-delay 5 -o "$_rp_refs" "${5%.git}.git/info/refs?service=git-upload-pack" || {
+  shipyard_curl "${5%.git}.git/info/refs?service=git-upload-pack" "$_rp_refs" || {
     rm -f "$_rp_refs"; echo "FAIL: could not list $5's tags (curl)" >&2; return 1; }
   # platform: a ref advertisement starts with the pkt-line "001e# service=git-upload-pack" and a flush
   #           (0000); anything else (a proxy's or captive portal's page, served with a 200) is refused
@@ -536,14 +538,14 @@ sdk109_stubs() {
   _ss_cache="${MAVERICKS_SDK_CACHE:-$HOME/Library/Caches/mavericks-sdk}"
   { . "$SHIPYARD/mavericks_fetch.sh" && . "$SHIPYARD/sdk-pins.sh"; } || {
     echo "sdk109_stubs: cannot source mavericks_fetch.sh and sdk-pins.sh from $SHIPYARD" >&2; return 1; }
-  _ss_pin="$(mav_sdk_pin x86_64)" || { echo "sdk109_stubs: shipyard pins no x86_64 SDK" >&2; return 1; }
+  _ss_pin="$(shipyard_sdk_pin x86_64)" || { echo "sdk109_stubs: shipyard pins no x86_64 SDK" >&2; return 1; }
   # shellcheck disable=SC2086  # the pin is four space-free words by construction (sdk-pins.sh)
   set -- $_ss_pin
   _ss_dir="$_ss_cache/stubs"
   if [ ! -d "$_ss_dir/$4/usr/lib" ]; then
     mkdir -p "$_ss_dir" || return 1
     if [ ! -f "$_ss_dir/$3" ] && [ -f "$_ss_cache/$3" ]; then cp "$_ss_cache/$3" "$_ss_dir/$3" || return 1; fi
-    mav_fetch_pinned "$1" "$2" "$_ss_dir" "$3" || { echo "sdk109_stubs: could not fetch and verify $3" >&2; return 1; }
+    shipyard_fetch_pinned "$1" "$2" "$_ss_dir" "$3" || { echo "sdk109_stubs: could not fetch and verify $3" >&2; return 1; }
   fi
   [ -d "$_ss_dir/$4/usr/lib" ] || { echo "sdk109_stubs: $_ss_dir/$4 has no usr/lib" >&2; return 1; }
   printf '%s\n' "$_ss_dir/$4"

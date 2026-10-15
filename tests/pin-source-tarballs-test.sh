@@ -21,7 +21,9 @@ git --version >/dev/null 2>&1 || { echo "no git that runs -- skipping"; exit 77;
 T="$(mktemp -d "${TMPDIR:-/tmp}/pin-source-tarballs.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 T="$(CDPATH='' cd -P -- "$T" && pwd -P)"
+REAL_SHIPYARD="$(. "$REPO/msc.sh" 2>/dev/null && echo "$SHIPYARD")" || { echo "no shipyard -- skipping"; exit 77; }
 R="$T/repo"; mkdir -p "$R/scripts" "$T/shipyard" "$T/tarballs" "$T/tmp"
+cp "$REAL_SHIPYARD/mavericks_fetch.sh" "$T/shipyard/"   # shipyard_curl
 cp "$REPO/scripts/pin-source-tarballs.sh" "$R/scripts/"; cp "$REPO/lib.sh" "$REPO/msc.sh" "$R/"
 for n in llvm-project swift swift-cmark; do
   g="$T/up/$n"; mkdir -p "$g/sub"

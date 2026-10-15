@@ -35,8 +35,10 @@ fail() { echo "FAIL: $*" >&2; finish 1; }
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 . "$HERE/pins.env"
 . "$HERE/lib.sh"    # -> LLVM_REPO_URL, SWIFT_REPO_URL, CMARK_REPO_URL
-. "$HERE/msc.sh"    # -> $SHIPYARD (fetch_pinned_source.sh --url, clone_pinned.sh)
+. "$HERE/msc.sh"    # -> $SHIPYARD (fetch_pinned_source.sh --url, clone_pinned.sh, mavericks_fetch.sh's shipyard_curl)
 [ -f "$SHIPYARD/fetch_pinned_source.sh" ] || fail "the shipyard at $SHIPYARD has no fetch_pinned_source.sh -- install a newer shipyard pkg"
+[ -f "$SHIPYARD/mavericks_fetch.sh" ] || fail "the shipyard at $SHIPYARD has no mavericks_fetch.sh"
+. "$SHIPYARD/mavericks_fetch.sh"
 for pin in LLVM_TARBALL_SHA256 SWIFT_TARBALL_SHA256 CMARK_TARBALL_SHA256; do
   grep -q "^$pin=\"[0-9a-f]*\"" "$HERE/pins.env" || fail "pins.env has no $pin=\"...\" line"
 done
@@ -51,7 +53,7 @@ for row in "LLVM_TARBALL_SHA256 $LLVM_REPO_URL $LLVM_SHA $LLVM_TAG" "SWIFT_TARBA
   pin=$1; repo=$2; commit=$3; tag=$4
   url="$(sh "$SHIPYARD/fetch_pinned_source.sh" --url "$repo" "$commit")" || fail "shipyard has no tarball URL for $repo at '$commit'"
   echo "==> $pin: $url"
-  curl -fsSL --retry 3 --retry-delay 5 -o "$T/$pin.tar.gz" "$url" || fail "could not fetch $url"
+  shipyard_curl "$url" "$T/$pin.tar.gz" || fail "could not fetch $url"
   sha="$(shasum -a 256 < "$T/$pin.tar.gz" | cut -c1-64)"
   mkdir -p "$T/$pin.x" && tar xzf "$T/$pin.tar.gz" -C "$T/$pin.x" || fail "could not extract $url"
   top="$(ls -A "$T/$pin.x")"

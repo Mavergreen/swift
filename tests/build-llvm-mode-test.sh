@@ -24,7 +24,9 @@ T="$(CDPATH='' cd -P -- "$T" && pwd -P)"
 R="$T/repo"; mkdir -p "$R/patches"
 cp "$REPO/build-llvm.sh" "$REPO/lib.sh" "$REPO/pins.env" "$REPO/msc.sh" "$R/"
 cp -R "$REPO/patches/llvm" "$R/patches/"
+REAL_SHIPYARD="$(. "$REPO/msc.sh" 2>/dev/null && echo "$SHIPYARD")" || { echo "no shipyard -- skipping"; exit 77; }
 mkdir -p "$T/bin" "$T/shipyard" "$T/clang22n/bin"
+cp "$REAL_SHIPYARD/mavericks_fetch.sh" "$T/shipyard/"   # shipyard_curl, for check_release_pin
 # shipyard: the tarball fetcher lays out the five files patches/llvm touch, and stamps the tree.
 cat > "$T/shipyard/fetch_pinned_source.sh" <<F
 #!/bin/sh
