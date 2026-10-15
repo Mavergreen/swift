@@ -133,6 +133,10 @@ grep -qx 'push:         uses: actions/create-github-app-token@v3' "$T/jobs" \
   && [ "$(grep -c '^push: *permission-' "$T/jobs")" = 1 ] && grep -qx 'push:           permission-contents: write' "$T/jobs" \
   || fail "the push job does not mint the pins-bot App's token for contents: write alone"
 grep -qx 'push:           token: ${{ steps.app.outputs.token }}' "$T/jobs" || fail "the push job's checkout does not hold the App's token"
+# The run the App's own push starts neither cancels the run that pushed nor checks again.
+grep -qxF "  group: pins-bot-\${{ github.ref }}\${{ github.actor == 'mavergreen-pins-bot[bot]' && format('-{0}', github.run_id) || '' }}" "$W" \
+  && grep -qxF "pins:     if: github.actor != 'mavergreen-pins-bot[bot]'" "$T/jobs" \
+  || fail "the run the bot's own push starts can cancel the run that pushed, or checks again"
 if grep -q 'gh workflow run\|GH_TOKEN\|github.token' "$W"; then fail "the workflow dispatches a run or uses GITHUB_TOKEN to write"; fi
 grep -qF "user.email='342268518+mavergreen-pins-bot[bot]@users.noreply.github.com'" "$W" \
   && grep -qF '"342268518+mavergreen-pins-bot[bot]@users.noreply.github.com"' "$REPO/.github/renovate.json" \
