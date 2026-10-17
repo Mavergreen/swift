@@ -532,7 +532,7 @@ HOST_LINK_VERSION=241.9
 # (mavericks_fetch.sh) into the stubs/ dir of fetch_sdk.sh's cache (MAVERICKS_SDK_CACHE). fetch_sdk.sh
 # converts those stubs to .tbd wherever tapi exists, which is every modern Mac and never OS X 10.9, and lld
 # orders a .tbd's exports by name but a stub's in trie order, so a toolchain linked on each differed in
-# its symbol table (T4 spike Q5; shipyard BACKLOG #30): both hosts link the toolchain against these. The
+# its symbol table: both hosts link the toolchain against these. The
 # tarball fetch_sdk.sh already cached is reused. Needs $SHIPYARD (msc.sh).
 sdk109_stubs() {
   _ss_cache="${MAVERICKS_SDK_CACHE:-$HOME/Library/Caches/mavericks-sdk}"

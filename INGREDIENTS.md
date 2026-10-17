@@ -43,8 +43,8 @@ the two hosts' builds the same bytes:
   off: it reaches no shipped byte.
 - **The 10.9 SDK's stubs:** `lib.sh`'s `sdk109_stubs` fetches shipyard's pinned tarball with shipyard's
   own `sdk-pins.sh` and `mavericks_fetch.sh`, and leaves its `MH_DYLIB_STUB` files as they are.
-  `fetch_sdk.sh` converts them to `.tbd` where `tapi` exists, which is every modern Mac and never 10.9
-  (shipyard BACKLOG #30).
+  `fetch_sdk.sh` converts them to `.tbd` where `tapi` exists, which is every modern Mac and never 10.9,
+  and lld orders a `.tbd`'s exports differently from a stub's.
 - **clang's linker:** `HOST_LINK_VERSION=241.9` (10.9's ld64) and `CLANG_DEFAULT_LINKER=lld`, in
   `build-toolchain.sh`, for both toolchains.
 - **Paths:** the build root is mapped to `/mavergreen-build` in every compile.
