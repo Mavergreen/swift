@@ -54,15 +54,17 @@ Once, install:
   builds; the gate below needs none;
 - mavericks-clang-22's native package, the release `pins.env`'s `CLANG22_VERSION` names (it compiles LLVM,
   clang, lld and compiler-rt's builtins; `self-host.sh` refuses any other release's receipt);
-- the shipyard package (`shipyard-cmake`).
+- the shipyard package (`shipyard-cmake`);
+- the ninja package (`Mavergreen/ninja`), which every CMake configure here generates for;
+- the Python package (`Mavergreen/python-315`), whose `python3` runs gyb, line-directive and LLVM's CMake.
 
-Two tools still come from pkgsrc, `python3` (gyb, line-directive, LLVM's CMake) and `ninja`, until their
-Mavergreen packages exist (`Mavergreen/python-312` and `Mavergreen/ninja`). Nothing else: no git, no
-pkg-config or libxml2, and none of Xcode's Command Line Tools. The build fetches its sources with 10.9's
+Nothing else: no pkgsrc, no git, no pkg-config or libxml2, and none of Xcode's Command Line Tools. A
+build directory configured with other tools caches their paths, so after switching to these, start it
+fresh or point its `CMakeCache.txt` at them. The build fetches its sources with 10.9's
 own `curl`, unpacks them with its `tar`, patches them with its `patch`, and reads the Mach-O files it
 checks with mavericks-clang-22's `llvm-otool`, `llvm-nm`, `llvm-lipo` and `llvm-strings`. CMake picks
-gyb's python, and `build.sh` names it; 3.13 on 10.9, 3.14 in CI and 3.9 on a modern Mac have built the
-same runtime.
+gyb's python, and `build.sh` names it; 3.15 and 3.13 on 10.9, 3.14 in CI and 3.9 on a modern Mac have
+built the same runtime.
 
 No git is needed for the checkout either. 10.9's `curl` and `tar` unpack any commit, branch or tag:
 

@@ -26,7 +26,7 @@
 #   (fetch_sdk.sh's cache), MAVERICKS_SOURCE_CACHE (fetch_pinned_source.sh's).
 # Host: cmake through shipyard-cmake, ninja, python3 (gyb), curl, patch, tar. No git and, on OS X 10.9,
 # none of Xcode's Command Line Tools: natively the checks read with clang22's llvm-otool, llvm-nm and
-# llvm-strings. On 10.9 pkgsrc still supplies python3 and ninja; see DEVELOPING.md.
+# llvm-strings. On 10.9 ninja and python3 are Mavergreen's packages, not pkgsrc's; see DEVELOPING.md.
 # Output: $SWIFT_RUNTIME_OUT, in scripts/stage-runtime.sh's layout, for package.sh.
 set -eu
 
