@@ -55,8 +55,8 @@ case "$MODE:$HOST" in
 esac
 # clang's Darwin driver picks some of the flags it passes a linker by that linker's version, which it
 # reads, at configure time, from CMAKE_LINKER's -v (clang/CMakeLists.txt) unless CMAKE_LINKER is an lld:
-# the runner's Xcode ld gave 1267, so the shipped clang passed -no_deduplicate, which 10.9's ld refuses (T4
-# spike Q5). Every build now names the same value: 241.9, OS X 10.9's own ld64, the linker of the platform
+# the runner's Xcode ld gave 1267, so the shipped clang passed -no_deduplicate, which 10.9's ld refuses.
+# Every build now names the same value: 241.9, OS X 10.9's own ld64, the linker of the platform
 # these toolchains build for. Their clang defaults to lld (CLANG_DEFAULT_LINKER), for which the version
 # changes nothing, and `-fuse-ld=ld` on 10.9 gets the flags that ld understands. (lib.sh's HOST_LINK_VERSION.)
 W="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$W"; cd "$W"
@@ -80,7 +80,7 @@ if [ "$MODE" = cross ]; then
 fi
 if [ "$HOST" = x86_64 ]; then
   # The Swift half's host compiler: the wrapper by its real path, so HOSTTOOLS finds the host stdlib at
-  # <bin>/../lib/swift/macosx, and CMake's test link gets the wrapper's SDK and linker (T4 spike Q2).
+  # <bin>/../lib/swift/macosx, and CMake's test link gets the wrapper's SDK and linker.
   # Natively it defaults to the installed release (SWIFT_INSTALLED_TOOLCHAIN, which tests point elsewhere).
   HTC="${SWIFT_HOST_TOOLCHAIN:-}"
   if [ -z "$HTC" ]; then
@@ -115,7 +115,7 @@ fi
 # maps, and the answers to CMake's Apple probes (lib.sh's apple_probe_answers: no xcrun, no Command Line Tools
 # name, in either mode). LLVM archives with CMAKE_LIBTOOL on an Apple host (llvm's UseLibtool.cmake; it would take xcrun's
 # libtool), other projects with CMAKE_AR and CMAKE_RANLIB: an archive's symbol table orders what lld
-# writes (T4 spike Q5), and Apple's tools differ between 10.9 and a modern Mac, so all three are clang22's.
+# writes, and Apple's tools differ between 10.9 and a modern Mac, so all three are clang22's.
 x86_cmake() {
   if [ "$MODE" = cross ]; then
     set -- -DCMAKE_CROSSCOMPILING=ON -DCMAKE_SYSTEM_NAME=Darwin -DCMAKE_SYSTEM_PROCESSOR=x86_64 "$@"
@@ -236,7 +236,7 @@ if [ "$HOST" = x86_64 ]; then
   fi
   # The Swift half compiles against the pinned 11.3 SDK: the 10.9 SDK's single Darwin module cannot
   # coexist with modular libc++ (T1 spike blocker 3), and a Mavergreen host needs the 11.3 SDK's
-  # SwiftShims-era overlays (T4 spike Q5). Its module cache stays in the build root. libc++ ABI v1 is
+  # SwiftShims-era overlays. Its module cache stays in the build root. libc++ ABI v1 is
   # shared by both halves.
   x86_cmake -S "$SC" -B "$S" \
     -DCMAKE_Swift_COMPILER="$HTC/bin/swiftc" "-DCMAKE_EXE_LINKER_FLAGS=-L$DARWIN_LIB" -DSWIFT_LIPO="$X/llvm-lipo" \

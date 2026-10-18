@@ -12,7 +12,7 @@
 #     /usr/local/mavergreen/clang22).
 #   Both: that toolchain's llvm-libtool-darwin and llvm-lipo make the archive, and its llvm-nm, llvm-lipo
 #   and llvm-ar read it back, so the archive is the same bytes on both hosts (Apple's libtool differs
-#   between them: T4 spike Q1); the compat guard reads it with its llvm-lipo, llvm-otool, llvm-nm and
+#   between them); the compat guard reads it with its llvm-lipo, llvm-otool, llvm-nm and
 #   llvm-strings, never the Command Line Tools', which OS X 10.9 has only as stubs without them.
 # Run after build-llvm.sh. Output: $SWIFT_WORK/builtins-x86/lib/darwin/libclang_rt.osx.a.
 # Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, MAVERICKS_MODE, CLANG22_PREFIX.
@@ -50,8 +50,8 @@ rm -rf "$B"
 #   -mmacosx-version-min=10.7 compiler-rt hard-codes (clang warns -Woverriding-option; minOS 10.9 ships).
 # CMAKE_LIBTOOL and CMAKE_LIPO: llvm's UseLibtool.cmake archives each slice with CMAKE_LIBTOOL, and
 #   compiler-rt joins the slices with CMAKE_LIPO; without them it takes the host's Apple libtool, whose
-#   10.9 version writes each member's owner and date and whose symbol table differs from a modern one's
-#   (T4 spike Q1). llvm-libtool-darwin writes every member's owner and date as 0.
+#   10.9 version writes each member's owner and date and whose symbol table differs from a modern one's.
+#   llvm-libtool-darwin writes every member's owner and date as 0.
 # LLVM_ENABLE_LIBXML2=OFF and CMAKE_IGNORE_PREFIX_PATH=/opt/pkg: hygiene, as in build-llvm.sh.
 # No xcrun and no Command Line Tools name, in either mode (T5a): CMake's Apple probes answered (lib.sh's
 #   apple_probe_answers); CMAKE_LINKER clang22's lld, so compiler-rt's `ld -v` arch probe runs no ld (its

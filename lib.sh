@@ -493,7 +493,7 @@ toolchain_digests_agree() {
 # ${CLANG22_PREFIX:-/usr/local/mavergreen/clang22}. Fails, naming it, when one of the tools both modes
 # take from it is not there: clang, clang++ and ld64.lld, and llvm-ar, llvm-ranlib, llvm-libtool-darwin,
 # llvm-lipo and llvm-nm -- one archiver, one indexer and one reader on both hosts, so the archives the
-# build makes, and what links them, are the same bytes on both (T4 spike Q1 and Q5) -- and llvm-otool
+# build makes, and what links them, are the same bytes on both -- and llvm-otool
 # and llvm-strings, the readers the build's checks run in place of the Command Line Tools' (T5a).
 clang22_prefix() {
   case "$1" in
@@ -524,7 +524,8 @@ apple_probe_answers() {
 
 # HOST_LINK_VERSION -- the linker version every clang configure names (build-toolchain.sh's, and build-llvm.sh's
 # natively): clang's CMake otherwise runs CMAKE_LINKER's -v for it, and its Darwin driver picks some of the
-# flags it passes a linker by that version. 241.9 is OS X 10.9's own ld64 (T4 spike Q5).
+# flags it passes a linker by that version. 241.9 is OS X 10.9's own ld64: a newer version makes clang pass
+# flags 10.9's ld refuses.
 HOST_LINK_VERSION=241.9
 
 # sdk109_stubs -- prints the pinned MacOSX10.9.sdk exactly as its tarball holds it, its libraries the
