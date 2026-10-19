@@ -19,18 +19,15 @@ name: release
 # lld that links the runtime), build-builtins.sh (compiler-rt's builtins for 10.9) and
 # mirror-toolchain.sh (the swift.org compiler, signer-verified), all pinned in pins.env.
 #
-# RELEASE GATING: CI proves the build succeeds and the compat guard passes -- necessary hygiene, but
-# a macOS 26 runner is structurally blind to the 10.9-only behaviour this runtime exists to fix (it
-# needs six source patches for exactly that reason). ACCEPTANCE is manual real-10.9 validation:
-# install the .pkg on real 10.9.5 and run it. This runtime was validated 500/500 + Guard Malloc /
-# MallocScribble there. Do not treat CI green as acceptance. The toolchain's acceptance is the same
-# real-10.9 gate: on 10.9, with its .pkg installed, build the corpus with
-# `SWIFTC=/usr/local/mavergreen/bin/swiftc sh make-selftest.sh` and run it (`run-selftest.sh --gate`);
-# the cross toolchain's is the same corpus built on an Apple-silicon Mac, gated on 10.9.
-# CI's Rosetta smoke (tests/toolchain-smoke-test.sh) only proves the staged native toolchain compiles and
-# links for 10.9, and its native arm64 run the same of the cross one; they run nothing they build.
-# (The automated self-test bundle + 10.9 gate were dropped this release; the hand-rolled self-test
-# linked Increment-1 siblings the core .pkg doesn't ship. They return rebuilt to match the .pkg.)
+# RELEASE GATING: a macOS 26 runner is structurally blind to the 10.9-only behaviour this runtime exists to
+# fix (it needs six source patches for exactly that reason), so ACCEPTANCE happens on Mac OS X 10.9: the
+# vm-test job boots Mavergreen/mavericks-vm's 10.9.5 guest (no Command Line Tools), installs this run's
+# runtime and native toolchain pkgs, builds the self-test corpus there with the installed swiftc
+# (`SWIFTC=/usr/local/mavergreen/bin/swiftc sh make-selftest.sh`) and runs its gate (`run-selftest.sh
+# --gate`: 500x plus 10x under Guard Malloc, -O and -Onone); publish waits for it. The cross toolchain's
+# acceptance (the same corpus built on an Apple-silicon Mac, gated on 10.9) is still by hand. CI's
+# Rosetta smoke (tests/toolchain-smoke-test.sh) proves the staged native toolchain compiles and links for
+# 10.9, and its native arm64 run the same of the cross one.
 
 on:
   push:
@@ -620,7 +617,7 @@ jobs:
       SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
 
   publish:
-    needs: [collect, scan]
+    needs: [collect, scan, vm-test]
     if: needs.collect.outputs.publish == 'true'
     permissions:
       contents: write
@@ -629,6 +626,38 @@ jobs:
       version: ${{ needs.collect.outputs.version }}
       artifact: swift
 
-  # The real-10.9 self-test acceptance job is removed with the self-test bundle. Acceptance for this
-  # release is manual (install the .pkg on real 10.9; the runtime was validated 500/500 + Guard
-  # Malloc/Scribble). An automated 10.9 gate returns when the self-tests are rebuilt to match the .pkg.
+  # Acceptance on Mac OS X 10.9 (Mavergreen/mavericks-vm: a 10.9.5 guest without the Command Line Tools), every run:
+  # this run's runtime and native toolchain pkgs install there, the installed swiftc builds the self-test
+  # bundle on 10.9 itself (make-selftest.sh's SWIFTC= mode), and the bundle's gate runs against the installed
+  # runtime: 500x plus 10x under Guard Malloc, at -O and -Onone. publish waits for it.
+  vm-test:
+    needs: [version, build-cross, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: actions/download-artifact@v8
+        with: { name: swift-cross, path: dist }
+      - uses: actions/download-artifact@v8
+        with: { name: swift-native, path: dist }
+      - name: Install the pkgs, build the self-test with the installed swiftc, and gate it, on Mac OS X 10.9
+        uses: Mavergreen/mavericks-vm@v1
+        with:
+          image-key: ${{ secrets.MAVERICKS_VM_KEY }}
+          copyback: false
+          run: |
+            set -eu
+            sw_vers
+            if [ -e /Library/Developer/CommandLineTools ]; then echo "this guest has the Command Line Tools"; else echo "this guest has no Command Line Tools"; fi
+            sudo -n true || { echo "the guest's user cannot sudo without a password, and installer needs root"; exit 1; }
+            for p in dist/swift-runtime-*.pkg dist/swift-toolchain-[0-9]*.pkg; do
+              [ -f "$p" ] || { echo "no $p in this run's artifacts"; exit 1; }
+              sudo installer -pkg "$p" -target /
+            done
+            /usr/local/mavergreen/bin/swiftc -version
+            SWIFTC=/usr/local/mavergreen/bin/swiftc MAVERICKS_BUILD_ROOT="$HOME/mm-build" DIST="$PWD/gate" sh make-selftest.sh
+            cd gate && tar -xzf swift-runtime-selftest.tar.gz && sh swift-runtime-selftest/run-selftest.sh --gate
