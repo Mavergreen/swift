@@ -53,7 +53,9 @@ Once, install:
   one of another Swift version. The same release's runtime package runs the programs its `swiftc`
   builds; the gate below needs none;
 - mavericks-clang-22's native package, the release `pins.env`'s `CLANG22_VERSION` names (it compiles LLVM,
-  clang, lld and compiler-rt's builtins; `self-host.sh` refuses any other release's receipt);
+  clang, lld and compiler-rt's builtins; `self-host.sh` refuses any other release's receipt), and libcxx22
+  from the same release, the family's shared libc++, which the runtime links (`fetch-libcxx22.sh` fetches it
+  for the build when it is not installed; installing the runtime needs it installed);
 - the shipyard package (`shipyard-cmake`);
 - the ninja package (`Mavergreen/ninja`), which every CMake configure here generates for;
 - the Python package (`Mavergreen/python-315`), whose `python3` runs gyb, line-directive and LLVM's CMake.

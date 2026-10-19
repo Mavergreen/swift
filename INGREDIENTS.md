@@ -15,12 +15,35 @@ was merged in (2026-09) and deleted (2026-10). Its 6.4.0 installer mirror is now
 | swiftlang/llvm-project commit | `LLVM_SWIFT_RELEASE` + `LLVM_SHA` + `LLVM_TARBALL_SHA256` in `pins.env` | ✅ `github-tags` on `swiftlang/llvm-project`, in the same "Swift release" PR; the SHA-256 as for Swift | moves only WITH the Swift pin: `build-llvm.sh` fails unless `LLVM_SWIFT_RELEASE` equals `SWIFT_VERSION` and `LLVM_SHA` is llvm-project's `swift-<SWIFT_VERSION>-RELEASE` |
 | swiftlang/swift-cmark commit | `CMARK_SWIFT_RELEASE` + `CMARK_SHA` + `CMARK_TARBALL_SHA256` in `pins.env` | ✅ `github-tags` on `swiftlang/swift-cmark`, in the same "Swift release" PR; the SHA-256 as for Swift | moves only WITH the Swift pin: `build-toolchain.sh` runs `check_release_pin` on it |
 | mavericks-clang-22 cross toolchain (compiles the 10.9-hosted toolchain and compiler-rt's builtins, and its `llvm-libtool-darwin`, `llvm-ar`, `llvm-ranlib` and `llvm-lipo` make their archives; on OS X 10.9, `self-host.sh` uses the native package of the same release) | `CLANG22_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/clang-22`, `-mavericks.N` versioning | auto-repackages `-mavericks.(N+1)` |
+| libcxx22, the family's shared libc++ (the stdlib's C++ compiles against the pinned clang22's libc++ headers and links libcxx22's `libc++.1.dylib`; the runtime and native toolchain pkgs require it at install) | `CLANG22_VERSION` in `pins.env`: one clang-22 release publishes clang22, clang22-cross and libcxx22 under one version | ✅ with the clang22 pin (`github-releases` on `Mavergreen/clang-22`) | auto-repackages `-mavericks.(N+1)`, and the pkgs then require that libcxx22 or later |
 | LLVM and compiler source patches (`patches/llvm/`, `patches/compiler/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | swift.org toolchain `.pkg` (CI's one seed: it compiles the cross toolchain's Swift half, and a first stdlib that only makes that toolchain runnable; everything the release ships is compiled by this repo's own compilers, below) | `TOOLCHAIN_URL`, derived from `SWIFT_VERSION` | ✅ moves with the Swift pin | verified by **signer identity**, not a hash (below) |
 | Runtime source patches (`patches/runtime/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | Sparkle framework, MacOSX10.9 SDK (the toolchains link against its original stub files, fetched with shipyard's pin by `lib.sh`'s `sdk109_stubs`, on every host: below) | `Mavergreen/shipyard@v1` | ✅ github-actions manager tracks the tag | `@v1` is a moving tag; nothing auto-repackages |
 | MacOSX11.3.sdk, the pinned modern SDK the runtime builds against (CI and OS X 10.9 alike), and the cross toolchain's arm64 binaries too | `Mavergreen/shipyard@v1` (`sdk-pins.sh`'s arm64 pin, fetched by `fetch_sdk.sh --arch arm64`) | ✅ github-actions manager tracks the tag | `@v1` is a moving tag; nothing auto-repackages |
 | Apple clang, the `macos-26` runner's Command Line Tools (compiles the cross toolchain's LLVM, clang, lld and the C++ half of `swift-frontend`) | the runner image, not pinned | ❌ untrackable: no datasource for a hosted runner's Command Line Tools. The pinned MacOSX11.3.sdk bounds what those binaries record (minOS 11.0, SDK 11.3, checked by the compat guard), and `scripts/audit-imports.py` checks every Swift, C++ and ObjC runtime import of `swift-frontend` against it (it audits only a binary that links libswiftCore, so not `clang` or `ld64.lld`, whose libc++ imports nothing checks) | a runner-image change reaches the next release; those checks run on every build |
+
+## One C++ runtime: libcxx22, on the OS's own libc++abi
+
+The runtime is C++ as well as Swift, and the family keeps one shared libc++ in every process, its own,
+never the OS's (`/usr/lib/libc++.1.dylib`, which predates clang22's headers and belongs to Apple's code).
+So the stdlib's C++ compiles against the pinned clang22's own libc++ headers (`-nostdinc++ -isystem`, the
+directory prefix-mapped, since cross and native find it in different places) and `-nostdlib++` links
+libcxx22's `libc++.1.dylib` by path: `-L` would be searched inside the SDK first, `-isysroot`'s doing, and
+find the SDK's libc++, which on 10.9 is the OS's. Runtime patch 0009 drops `Metadata.cpp`'s `-lc++`
+autolink, which exists for a statically linked libswiftCore (never built here) and would load the OS's
+libc++ beside libcxx22's. libcxx22 re-exports the OS's `/usr/lib/libc++abi.dylib`, so a process has one
+C++ exception runtime: two copies crash when one catches what the other threw, which is why the pin must be
+22.1.8-mavericks.5 or later, the first libcxx22 built that way (`tests/pins-test.sh` refuses older).
+`build.sh` refuses a runtime dylib that does not link libcxx22's libc++, links the OS's beside it, or
+defines a C++ ABI symbol of its own. libobjc on 10.9 itself links the OS's libc++, so a Swift process
+loads both libc++ dylibs; they coexist under different install names, and share the one libc++abi.
+
+The runtime pkg and the native toolchain pkg (whose stdlib dylibs are the runtime's bytes, loaded on 10.9)
+require libcxx22 at the pin or later (`--requires "libcxx22>=$CLANG22_VERSION"`: shipyard's generated
+preinstall refuses a missing or older one before installing anything); the cross toolchain only links against its copies, on a modern Mac, and requires nothing. The
+install name `/usr/local/mavergreen/libcxx22/lib/libc++.1.dylib` lasts until the family's flag day, when
+libcxx22 becomes the unlined `libcxx` under `/opt` and this runtime, moving there too, relinks.
 
 ## Two seeds, one result
 
@@ -129,7 +152,7 @@ and the same bytes in both toolchain pkgs), the next to the cross toolchain pkg'
 next ones to the swift.org mirror attached to `-mavericks.1` releases, and the two `rosetta` entries,
 last, to CI's native-toolchain smoke.
 
-- sdk-pin:*/swift-runtime/lib/swift/*.dylib: the Swift runtime cannot be built against the 10.9 SDK, which has no libc++ headers at all (only libstdc++ 4.2.1) while Swift 6.4 requires C++17, and which lacks declarations of post-10.9 APIs the runtime calls behind availability checks. Its build uses a modern SDK, pinned: MacOSX11.3.sdk, shipyard's arm64 pin (`fetch_sdk.sh --arch arm64`), the same in CI and on 10.9, so a runtime built on 10.9 is byte-identical to CI's. It records sdk 11.3; its libc++ imports are all exported by 10.9's `/usr/lib/libc++.1.dylib`. minos stays 10.9, and the real-10.9 gate is its acceptance. Revisit if the gate gains per-product pins.
+- sdk-pin:*/swift-runtime/lib/swift/*.dylib: the Swift runtime cannot be built against the 10.9 SDK, which has no libc++ headers at all (only libstdc++ 4.2.1) while Swift 6.4 requires C++17, and which lacks declarations of post-10.9 APIs the runtime calls behind availability checks. Its build uses a modern SDK, pinned: MacOSX11.3.sdk, shipyard's arm64 pin (`fetch_sdk.sh --arch arm64`), the same in CI and on 10.9, so a runtime built on 10.9 is byte-identical to CI's. It records sdk 11.3; its libc++ is libcxx22's, not the SDK's ("One C++ runtime", above). minos stays 10.9, and the real-10.9 gate is its acceptance. Revisit if the gate gains per-product pins.
 - sdk-pin:*/swift-toolchain/lib/swift/macosx/*.dylib: the toolchain's stdlib dylibs are the runtime's own bytes, staged from the one stdlib build (scripts/stage-toolchain.sh), so the runtime's reason above applies verbatim. The compiler, lld and clang beside them record the pinned 10.9 SDK and take no exemption.
 - sdk-pin:*/swift-toolchain-cross/lib/swift/macosx/*.dylib: the cross toolchain's stdlib dylibs are the runtime's own bytes too: CI's build-cross job builds the one stdlib, with that cross toolchain, and stages it into all three pkgs, and collect refuses a release whose two toolchains' stdlib and builtins trees differ in a byte, so the runtime's reason above applies verbatim. The compiler, lld and clang beside them are arm64 and record the family's arm64 pin (minOS 11.0, SDK 11.3) and take no exemption.
 - floor:swift-toolchain-cross-*.pkg: the cross toolchain runs on an Apple-silicon Mac with macOS 11 or later and only targets 10.9, so its archive's install floor is 11.0 (arm64), not 10.9.5; clang22-cross and rust-cross declare the same.

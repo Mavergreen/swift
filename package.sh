@@ -41,6 +41,11 @@ UPD_APP="${UPD_APP:-$SWIFT_BUILD/build/updater/swift-runtime-updater.app}"
 rm -rf "$OUT/Library"
 SCR="$DIST/pkg-scripts"; rm -rf "$SCR"
 set -- --stage "$OUT" --product swift-runtime --name "Mavericks Swift Runtime" --version "$VERSION" --scripts-out "$SCR"
+# spec: INGREDIENTS.md "One C++ runtime" -- the runtime links libcxx22's
+#       libc++, so the pkg requires libcxx22 at pins.env's CLANG22_VERSION or later
+CLANG22_VERSION="$(sed -n 's/^CLANG22_VERSION="\([^"]*\)".*/\1/p' "$HERE/pins.env")"
+[ -n "$CLANG22_VERSION" ] || { echo "no CLANG22_VERSION in $HERE/pins.env" >&2; exit 1; }
+set -- "$@" --requires "libcxx22>=$CLANG22_VERSION"
 if [ -d "$UPD_APP" ]; then
   set -- "$@" --updater-app "$UPD_APP"
 elif [ "${REQUIRE_UPDATER:-}" = 1 ]; then

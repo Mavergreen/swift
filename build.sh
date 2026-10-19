@@ -17,7 +17,9 @@
 #   where the driver puts its own; the build root prefix-mapped to /mavergreen-build; the swift source as
 #   GitHub's tarball of SWIFT_SHA, verified by SWIFT_TARBALL_SHA256 and patched with the OS's patch;
 #   mavericks-clang-22's llvm-ar and llvm-ranlib make the stdlib's archives (pins.env's CLANG22_VERSION:
-#   cross, fetch-clang22.sh's; native, the installed one, CLANG22_PREFIX).
+#   cross, fetch-clang22.sh's; native, the installed one, CLANG22_PREFIX); the stdlib's C++ compiles against
+#   that clang22's libc++ headers and links libcxx22's libc++.1.dylib (fetch-libcxx22.sh, the same release),
+#   the family's one shared libc++, never the SDK's, which on 10.9 is the OS's own.
 # Env: MAVERICKS_BUILD_ROOT (build root, see lib.sh), SWIFT_WORK (sources and build trees, default
 #   $SWIFT_BUILD/work), SWIFT_RUNTIME_OUT (the staged payload, default $SWIFT_BUILD/payload/runtime),
 #   MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_HOST_TOOLCHAIN_VERSION (the release of a host toolchain no
@@ -98,6 +100,21 @@ SDK_RUNTIME="$(sh "$SHIPYARD/fetch_sdk.sh" --arch arm64)" || { echo "FAIL: could
 # llvm-strings.
 X="$(clang22_prefix "$MODE" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
 if [ "$MODE" = native ]; then OTOOL="$X/llvm-otool"; STRINGS="$X/llvm-strings"; export OTOOL; else STRINGS=strings; fi
+# spec: INGREDIENTS.md "One C++ runtime" -- one shared libc++ per process,
+#       the family's, never the OS's: libcxx22's headers from the clang22 above, its dylib by path
+#       (-L would be searched inside the SDK first, -isysroot's doing), and the headers' directory mapped,
+#       since cross and native find them in different places
+CXXINC="$(dirname "$X")/include/c++/v1"
+[ -f "$CXXINC/__config" ] || { echo "FAIL: no libc++ headers at $CXXINC (mavericks-clang-22 ships them)"; exit 1; }
+LIBCXX_PREFIX="$(sh "$HERE/fetch-libcxx22.sh")" || { echo "FAIL: could not fetch libcxx22 $CLANG22_VERSION"; exit 1; }
+LIBCXX="$LIBCXX_PREFIX/lib/libc++.1.dylib"
+# platform: ld64.lld follows libc++.1.dylib's re-export of libc++abi.1.dylib by its install name, under each
+#           -syslibroot, and has no -dylib_file; a fetched libcxx22 is not at that name, so a second root
+#           holds it there (CI's runner has no libcxx22 installed; the SDK stays the first root)
+LIBCXX_ROOT="$ROOT/libcxx22-root"
+rm -rf "$LIBCXX_ROOT"; mkdir -p "$LIBCXX_ROOT/usr/local/mavergreen"
+ln -s "$LIBCXX_PREFIX" "$LIBCXX_ROOT/usr/local/mavergreen/libcxx22"
+CXX_LIBCXX="-nostdinc++ -isystem $CXXINC -ffile-prefix-map=$CXXINC=/mavergreen-libcxx22/include"
 clang_resource_shim "$CLANG_INC" "$BUILTINS" "$ROOT/clang-resource" || { echo "FAIL: could not lay out $ROOT/clang-resource"; exit 1; }
 echo "    host compiler $TC; SDK $SDK_RUNTIME; linker $LLD; builtins $BUILTINS"
 
@@ -105,8 +122,6 @@ echo "==> 2. pinned swift source (GitHub's tarball of SWIFT_SHA, verified by SWI
 fetch_source swift "$SWIFT_REPO_URL" "$SWIFT_SHA" "$SWIFT_TARBALL_SHA256" SWIFT_TARBALL_SHA256 || exit 1
 
 echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order)"
-#  0001 unsized operator delete  — 10.9's libc++ lacks __ZdlPvm (sized delete).
-#       Safe: IRGen (the only consumer needing sized dealloc) isn't built here.
 #  0002 os-version 10.9 fallback — guards os_system_version_get_current_version
 #       (macOS 10.10, called unguarded by the availability backing) with a
 #       CoreFoundation plist fallback so `if #available` works instead of aborting
@@ -136,10 +151,13 @@ echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order
 #       __TEXT,__lldbsummaries) and drops a String fast path in StringBridge.swift. 0008 drops
 #       the file and keeps the fast path in both modes, so both build the same Swift code. Lost:
 #       LLDB's ObjectIdentifier summary. Undone when the toolchain gains macros (milestone L).
+#  0009 no libc++ autolink — Metadata.cpp's `.linker_option "-lc++"` (for a statically linked
+#       libswiftCore, never built here) would resolve to the SDK's libc++, i.e. 10.9's own, and load a
+#       second libc++ beside libcxx22's, which the link names by path.
 # Patches are --no-prefix format; patch_source applies them with -p0. A new patch needs its number here and a marker grep
 # below: a patch file this list lacks fails the build rather than being skipped, and
 # tests/runtime-patch-list-test.sh holds the list, the files and the marker greps together.
-RUNTIME_PATCHES="0001 0002 0003 0004 0005 0007 0008"
+RUNTIME_PATCHES="0002 0003 0004 0005 0007 0008 0009"
 PATCHES_DIR="$HERE/patches/runtime"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $RUNTIME_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED"
@@ -149,13 +167,13 @@ for n in $RUNTIME_PATCHES; do
     patch_source "$ROOT/swift" "$p" || exit 1
   done
 done
-grep -q 'fno-sized-deallocation' swift/CMakeLists.txt || { echo "patch 0001 not applied"; exit 1; }
 grep -q 'CFPropertyListCreateWithStream' swift/stdlib/public/stubs/Availability.mm || { echo "patch 0002 not applied"; exit 1; }
 grep -q 'mav_minimalRealize' swift/stdlib/public/runtime/SwiftObject.mm || { echo "patch 0003 (realization) not applied"; exit 1; }
 grep -q 'mav_roFromClassData' swift/stdlib/public/runtime/Metadata.cpp || { echo "patch 0004 (getROData) not applied"; exit 1; }
 grep -q 'class_getInstanceSize((Class)const_cast' swift/stdlib/public/runtime/Metadata.cpp || { echo "patch 0005 (objc-super size) not applied"; exit 1; }
 grep -q 'ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101404' swift/include/swift/Runtime/Config.h || { echo "patch 0007 (is-swift mask) not applied"; exit 1; }
 grep -q 'was: hasFeature(Macros)' swift/stdlib/public/core/StringBridge.swift || { echo "patch 0008 (DebugDescription) not applied"; exit 1; }
+grep -q 'Mavericks: no libc++ autolink' swift/stdlib/public/runtime/Metadata.cpp || { echo "patch 0009 (no libc++ autolink) not applied"; exit 1; }
 # de-instrumented: no debug logging must ship
 ! grep -rq 'getenv("MAV_' swift/stdlib/public/runtime/ || { echo "MAV debug logging leaked into patches"; exit 1; }
 
@@ -171,7 +189,7 @@ LINK="-fuse-ld=lld --ld-path=$LLD"
 # change (a toolchain update, say, or a pin moved to an older commit, whose tarball's files all carry that
 # commit's date), and would keep the objects the previous ones built; and a configured tree keeps its
 # first CMAKE_AR.
-STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS" "$X/llvm-ar" && source_stamp swift)" || { echo "FAIL: could not stamp the host inputs and the swift source"; exit 1; }
+STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS" "$X/llvm-ar" "$LIBCXX" "$CXXINC/__config" && source_stamp swift)" || { echo "FAIL: could not stamp the host inputs and the swift source"; exit 1; }
 reuse_build_dir "$ROOT/stdlib-build" "$STAMP" || exit 1
 # LLVM_BUILD_* are build-tree-only variables that an install tree does not define, but
 # SwiftSharedCMakeConfig.cmake preconditions on them. LLVM_BUILD_MAIN_SRC_DIR only needs to be
@@ -195,9 +213,9 @@ shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
   -DCMAKE_AR="$X/llvm-ar" -DCMAKE_RANLIB="$X/llvm-ranlib" -DSWIFT_LIPO="$X/llvm-lipo" \
   -DSWIFT_ENABLE_LIBXML2=OFF -DCMAKE_DISABLE_FIND_PACKAGE_LibXml2=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibEdit=ON \
   -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON \
-  "-DCMAKE_C_FLAGS=$PM_C" "-DCMAKE_CXX_FLAGS=$PM_C" \
+  "-DCMAKE_C_FLAGS=$PM_C" "-DCMAKE_CXX_FLAGS=$PM_C $CXX_LIBCXX" \
   "-DCMAKE_EXE_LINKER_FLAGS=$LINK" "-DCMAKE_MODULE_LINKER_FLAGS=$LINK" \
-  "-DCMAKE_SHARED_LINKER_FLAGS=$LINK -resource-dir $ROOT/clang-resource" \
+  "-DCMAKE_SHARED_LINKER_FLAGS=$LINK -resource-dir $ROOT/clang-resource -nostdlib++ $LIBCXX -Wl,-syslibroot,$LIBCXX_ROOT" \
   -DLLVM_DIR="$LLVMB/lib/cmake/llvm" \
   -DLLVM_BUILD_LIBRARY_DIR="$LLVMB/lib" \
   -DLLVM_BUILD_BINARY_DIR="$LLVMB/bin" \
@@ -265,9 +283,20 @@ for lib in "$CORE" "$(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib"; do
   if printf '%s\n' "$S" | grep -F -e "$ROOT" -e "$RP" -e "$LP"; then
     echo "FAIL: $lib carries the build root's path (listed above)"; exit 1
   fi
-  FOREIGN="$(printf '%s\n' "$S" | grep -E '^/[A-Za-z][A-Za-z0-9._-]+/' | grep -v -e '^/mavergreen-build/' -e '^/usr/lib/' -e '^/System/' || :)"
+  FOREIGN="$(printf '%s\n' "$S" | grep -E '^/[A-Za-z][A-Za-z0-9._-]+/' | grep -v -e '^/mavergreen-build/' -e '^/usr/lib/' -e '^/System/' \
+    -e '^/usr/local/mavergreen/libcxx22/lib/libc++\.1\.dylib$' || :)"
   if [ -n "$FOREIGN" ]; then
-    printf '%s\n' "$FOREIGN"; echo "FAIL: $lib carries an absolute path outside /mavergreen-build, /usr/lib and /System (listed above)"; exit 1
+    printf '%s\n' "$FOREIGN"; echo "FAIL: $lib carries an absolute path outside /mavergreen-build, /usr/lib, /System and libcxx22's libc++ (listed above)"; exit 1
   fi
+  # spec: INGREDIENTS.md "One C++ runtime" -- one libc++, the family's,
+  #       and one libc++abi, the OS's (libcxx22 re-exports it)
+  DEPS="$("${OTOOL:-otool}" -L "$lib" | sed 1d | sed 's/^[[:space:]]*//; s/ (compatibility.*//')" || { echo "FAIL: could not list $lib's libraries"; exit 1; }
+  printf '%s\n' "$DEPS" | grep -qx '/usr/local/mavergreen/libcxx22/lib/libc++\.1\.dylib' \
+    || { printf '%s\n' "$DEPS"; echo "FAIL: $lib does not link libcxx22's libc++ (listed above)"; exit 1; }
+  if printf '%s\n' "$DEPS" | grep -qx '/usr/lib/libc++\.1\.dylib'; then
+    printf '%s\n' "$DEPS"; echo "FAIL: $lib links the OS's libc++ beside libcxx22's (listed above)"; exit 1
+  fi
+  ABI="$("${NM:-nm}" -gU "$lib" | awk '{print $NF}' | grep -E '^___cxa_|^___gxx_personality|^__Unwind_' || :)"
+  [ -z "$ABI" ] || { printf '%s\n' "$ABI"; echo "FAIL: $lib defines C++ ABI symbols of its own (listed above)"; exit 1; }
 done
 echo "OK: no os_unfair_lock; objc_readClassPair weak-guarded; no debug strings; no build paths; staged in $OUT"

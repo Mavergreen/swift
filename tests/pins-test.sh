@@ -34,6 +34,11 @@ printf '%s' "$6" | grep -Eq '^[0-9a-f]{40}$' || fail "LLVM_SHA '$6' is not a com
 [ "${14}" = "swift-${13}-RELEASE" ] || fail "CMARK_TAG '${14}' is not derived from CMARK_SWIFT_RELEASE"
 printf '%s' "${15}" | grep -Eq '^[0-9a-f]{40}$' || fail "CMARK_SHA '${15}' is not a commit"
 printf '%s' "${16}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-mavericks\.[0-9]+$' || fail "CLANG22_VERSION '${16}' is not a -mavericks.N release"
+# spec: INGREDIENTS.md "One C++ runtime" -- the pin is libcxx22's minimum too,
+#       and a libcxx22 before 22.1.8-mavericks.5 carries its own libc++abi
+printf '%s\n%s\n' "$(printf '%s' "${16}" | sed 's/-mavericks\./ /; s/\./ /g')" "22 1 8 5" \
+  | awk 'NR == 1 { split($0, h, " ") } NR == 2 { split($0, m, " "); for (i = 1; i <= 4; i++) { if (h[i] + 0 > m[i] + 0) exit 0; if (h[i] + 0 < m[i] + 0) exit 1 } exit 0 }' \
+  || fail "CLANG22_VERSION '${16}' is older than 22.1.8-mavericks.5, the first libcxx22 on the OS's own libc++abi"
 for h in "${17}" "${18}" "${19}"; do
   printf '%s' "$h" | grep -Eq '^[0-9a-f]{64}$' || fail "a *_TARBALL_SHA256 pin '$h' is not a SHA-256 (scripts/pin-source-tarballs.sh writes them)"
 done

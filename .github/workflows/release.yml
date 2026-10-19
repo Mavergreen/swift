@@ -644,6 +644,18 @@ jobs:
         with: { name: swift-cross, path: dist }
       - uses: actions/download-artifact@v8
         with: { name: swift-native, path: dist }
+      # The runtime links libcxx22's libc++ and its pkg requires libcxx22 at pins.env's CLANG22_VERSION or later:
+      # that release's pkg, checked against its own SHA256SUMS, installs first.
+      - name: Fetch libcxx22 at the pinned clang22 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          v="$(sed -n 's/^CLANG22_VERSION="\([^"]*\)".*/\1/p' pins.env)"
+          [ -n "$v" ] || { echo "::error::no CLANG22_VERSION in pins.env"; exit 1; }
+          mkdir -p libcxx && cd libcxx
+          gh release download "$v" -R Mavergreen/clang-22 -p "libcxx22-$v.pkg" -p SHA256SUMS
+          grep " libcxx22-$v.pkg\$" SHA256SUMS | sha256sum -c -
       - name: Install the pkgs, build the self-test with the installed swiftc, and gate it, on Mac OS X 10.9
         uses: Mavergreen/mavericks-vm@v1
         with:
@@ -654,7 +666,7 @@ jobs:
             sw_vers
             if [ -e /Library/Developer/CommandLineTools ]; then echo "this guest has the Command Line Tools"; else echo "this guest has no Command Line Tools"; fi
             sudo -n true || { echo "the guest's user cannot sudo without a password, and installer needs root"; exit 1; }
-            for p in dist/swift-runtime-*.pkg dist/swift-toolchain-[0-9]*.pkg; do
+            for p in libcxx/libcxx22-*.pkg dist/swift-runtime-*.pkg dist/swift-toolchain-[0-9]*.pkg; do
               [ -f "$p" ] || { echo "no $p in this run's artifacts"; exit 1; }
               sudo installer -pkg "$p" -target /
             done

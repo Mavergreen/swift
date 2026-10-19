@@ -1,0 +1,14 @@
+diff --git stdlib/public/runtime/Metadata.cpp stdlib/public/runtime/Metadata.cpp
+--- stdlib/public/runtime/Metadata.cpp
++++ stdlib/public/runtime/Metadata.cpp
+@@ -8556,7 +8556,6 @@
+ #define OVERRIDE_CVW_METADATA COMPATIBILITY_OVERRIDE
+ #include "../CompatibilityOverride/CompatibilityOverrideIncludePath.h"
+ 
+-// Autolink with libc++, for cases where libswiftCore is linked statically.
+-#if defined(__MACH__)
+-asm(".linker_option \"-lc++\"\n");
+-#endif // defined(__MACH__)
++// Mavericks: no libc++ autolink. libswiftCore is built only as a dylib, and it links the family's libcxx by
++// path; an autolinked -lc++ would resolve to the SDK's, i.e. 10.9's own /usr/lib/libc++.1.dylib, and load
++// a second libc++ beside it.

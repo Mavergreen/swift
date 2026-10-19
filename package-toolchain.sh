@@ -53,6 +53,14 @@ else
   set -- --stage "$OUT" --product "$PRODUCT" --name "Mavericks Swift Toolchain (cross)" --group swift --line cross \
     --version "$VERSION" "$@"
 fi
+if [ "$PRODUCT" = swift-toolchain ]; then
+  # spec: INGREDIENTS.md "One C++ runtime" -- the 10.9 toolchain's stdlib
+  #       dylibs (the runtime's bytes) link libcxx22's libc++ and load on 10.9; the cross toolchain only
+  #       links against its copies, on a modern Mac, so it requires nothing
+  CLANG22_VERSION="$(sed -n 's/^CLANG22_VERSION="\([^"]*\)".*/\1/p' "$HERE/pins.env")"
+  [ -n "$CLANG22_VERSION" ] || { echo "no CLANG22_VERSION in $HERE/pins.env" >&2; exit 1; }
+  set -- "$@" --requires "libcxx22>=$CLANG22_VERSION"
+fi
 if [ -d "$UPD_APP" ]; then
   set -- "$@" --updater-app "$UPD_APP"
 elif [ "${REQUIRE_UPDATER:-}" = 1 ]; then

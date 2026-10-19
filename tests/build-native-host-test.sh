@@ -111,6 +111,13 @@ for t in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lip
   printf '#!/bin/sh\n' > "$C22/bin/$t"; chmod +x "$C22/bin/$t"
 done
 printf '#!/bin/sh\necho "%s/sdk/MacOSX11.3.sdk"\n' "$T" > "$T/shipyard/fetch_sdk.sh"
+# libcxx22: clang22's libc++ headers, and fetch-libcxx22.sh's pkg, unpacked where it names (its last argument)
+mkdir -p "$C22/include/c++/v1"; : > "$C22/include/c++/v1/__config"
+cat > "$T/shipyard/fetch_product_pkg.sh" <<'F'
+#!/bin/sh
+for d in "$@"; do :; done
+mkdir -p "$d/lib" && : > "$d/lib/libc++.1.dylib" && : > "$d/lib/libc++abi.1.dylib"
+F
 cat > "$T/shipyard/fetch_pinned_source.sh" <<F
 #!/bin/sh
 echo "fetch_pinned_source \$*" >> "$T/log"
@@ -128,13 +135,13 @@ while [ $# -gt 0 ]; do case "$1" in -i) p="$2"; shift 2 ;; *) shift ;; esac; don
 [ "$dry" = 1 ] && exit 0
 echo "patch $(basename "$p")" >> "$FAKE_LOG"
 case "$(basename "$p")" in
-  0001-*) echo fno-sized-deallocation >> CMakeLists.txt ;;
   0002-*) echo CFPropertyListCreateWithStream >> stdlib/public/stubs/Availability.mm ;;
   0003-*) echo mav_minimalRealize >> stdlib/public/runtime/SwiftObject.mm ;;
   0004-*) echo mav_roFromClassData >> stdlib/public/runtime/Metadata.cpp ;;
   0005-*) echo 'class_getInstanceSize((Class)const_cast' >> stdlib/public/runtime/Metadata.cpp ;;
   0007-*) echo 'ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101404' >> include/swift/Runtime/Config.h ;;
   0008-*) echo 'was: hasFeature(Macros)' >> stdlib/public/core/StringBridge.swift ;;
+  0009-*) echo 'Mavericks: no libc++ autolink' >> stdlib/public/runtime/Metadata.cpp ;;
 esac
 F
 # The stdlib configure records its arguments and leaves a cache; the build (ninja) stops the run.
@@ -150,20 +157,25 @@ receipt "$SWIFT_VERSION-mavericks.9"
 build_native() {  # build.sh's native mode past step 1, everything faked; ninja stops it after the configure
   : > "$T/log"
   if ( export PATH="$T/fakebin:$PATH" FAKE_LOG="$T/log" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=native \
-        SWIFT_HOST_TOOLCHAIN="$H" CLANG22_PREFIX="$C22"
+        SWIFT_HOST_TOOLCHAIN="$H" CLANG22_PREFIX="$C22" MAVERICKS_CLANG_CACHE="$T/clang-cache"
       unset SWIFT_WORK SWIFT_BUILTINS NM
       sh "$REPO/build.sh" ) > "$T/out" 2>&1; then fail "build.sh got past a build that failed: $(cat "$T/out")"; fi
 }
 build_native
 grep -qxF "fetch_pinned_source https://github.com/swiftlang/swift.git $SWIFT_SHA $SWIFT_TARBALL_SHA256 swift" "$T/log" \
   || fail "did not fetch the swift tarball by its pin: $(cat "$T/out")"
-[ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0001 0002 0003 0004 0005 0007 0008 " ] \
+[ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0002 0003 0004 0005 0007 0008 0009 " ] \
   || fail "patched in another order: $(grep '^patch' "$T/log" | tr '\n' ' ')"
 for a in "-DCMAKE_AR=$C22/bin/llvm-ar" "-DCMAKE_RANLIB=$C22/bin/llvm-ranlib" "-DSWIFT_LIPO=$C22/bin/llvm-lipo" -DSWIFT_ENABLE_LIBXML2=OFF \
          -DCMAKE_TAPI=/usr/bin/false "-DCMAKE_STRIP=$C22/bin/llvm-strip" -DLD64_EXECUTABLE=/usr/bin/false -DCMAKE_Swift_COMPILER=NOTFOUND \
          -DCMAKE_DISABLE_FIND_PACKAGE_LibXml2=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibEdit=ON -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON; do
   grep -qxF -e "  $a" "$T/log" || fail "the stdlib configure lacks $a: $(cat "$T/log")"
 done
+LCX="$T/clang-cache/$CLANG22_VERSION/libcxx22/lib/libc++.1.dylib"
+grep -qxF -e "  -DCMAKE_CXX_FLAGS=$(grep -m1 '^  -DCMAKE_C_FLAGS=' "$T/log" | sed 's/^  -DCMAKE_C_FLAGS=//') -nostdinc++ -isystem $C22/include/c++/v1 -ffile-prefix-map=$C22/include/c++/v1=/mavergreen-libcxx22/include" "$T/log" \
+  || fail "the stdlib's C++ does not compile against clang22's libc++ headers alone: $(grep CMAKE_CXX_FLAGS "$T/log")"
+grep -q -e "^  -DCMAKE_SHARED_LINKER_FLAGS=.* -nostdlib++ $LCX -Wl,-syslibroot,$R/swift/work/libcxx22-root\$" "$T/log" \
+  || fail "the runtime does not link libcxx22's libc++ by path, alone: $(grep CMAKE_SHARED_LINKER_FLAGS "$T/log")"
 if grep -q '^git \|^xcrun ' "$T/log"; then fail "ran $(grep '^git \|^xcrun ' "$T/log" | head -1)"; fi
 SB="$R/swift/work/stdlib-build"
 grep -q '^archiver ' "$SB/mavergreen-inputs.stamp" \
