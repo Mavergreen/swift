@@ -20,12 +20,9 @@ WHAT IS AND ISN'T REDISTRIBUTED HERE
     the macOS SDK are used only as *build inputs* on the builder's machine;
     none of their bytes are included in this artifact.
 
-Local modifications (full diffs in ./patches/runtime) — 0003-0007 all confined to making
+Local modifications (full diffs in ./patches/runtime) — 0004-0007 all confined to making
 Swift's runtime work on 10.9's objc4-532, all gated to the 10.9/10.10 code path; 0008
 keeps a runtime built on OS X 10.9 identical to the one CI builds; 0009 keeps one libc++:
-  0003  objc_readClassPair guard + minimal in-place realization — 10.9 lacks the
-        10.11 SPI; realize runtime-instantiated generic classes in objc4-532's
-        class_rw_t layout instead.
   0004  realization-aware getROData — follow rw->ro when RW_REALIZED, because
         objc4-532 realizes classes eagerly at image load.
   0005  objc-super instance-size fix — size subclasses from
@@ -42,7 +39,7 @@ keeps a runtime built on OS X 10.9 identical to the one CI builds; 0009 keeps on
         load the OS's libc++ beside libcxx22's, the one the runtime links.
 
 libswiftCore also contains, statically linked, the definitions of
-os_system_version_get_current_version from Recaulk (librecaulk.a, the release
+os_system_version_get_current_version and objc_readClassPair from Recaulk (librecaulk.a, the release
 pinned in pins.env), https://github.com/Mavergreen/recaulk, under this license:
 
   Copyright (c) 2025 Wowfunhappy

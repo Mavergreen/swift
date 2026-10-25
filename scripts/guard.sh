@@ -17,6 +17,6 @@ SHARED="$SHIPYARD/assert_binary_compatible.sh"
 # Full post-10.9 os_* family, tolerant of the one/two leading-underscore SPI naming.
 export MAVERICKS_POST_10_9_SYMBOLS='__?os_signpost.*|__?os_log.*|_os_system_version_get_current_version|__?os_availability.*'
 # Guarded-weak allowlist: OK only when weak. (os_unfair_lock intentionally absent.)
-export MAVERICKS_ALLOW_GUARDED_WEAK='_objc_realizeClassFromSwift|_objc_readClassPair|_objc_setHook_.*|_objc_addLoadImageFunc|__?os_log.*|__?os_signpost.*|__availability_version_check|__dyld_is_objc_constant'
+export MAVERICKS_ALLOW_GUARDED_WEAK='_objc_realizeClassFromSwift|_objc_setHook_.*|_objc_addLoadImageFunc|__?os_log.*|__?os_signpost.*|__availability_version_check|__dyld_is_objc_constant'
 
 exec sh "$SHARED" "$@"

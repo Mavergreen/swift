@@ -34,8 +34,8 @@ diff --git stdlib/public/runtime/Metadata.cpp stdlib/public/runtime/Metadata.cpp
 +      // load, after which their is-swift bit is not observed, so an
 +      // actually-Swift superclass lands here (superIsTypeMetadata==0) instead of
 +      // the Swift branch above. rodata->InstanceStart is only a placeholder start
-+      // (e.g. 16), and nothing slides it on 10.9 (we don't have objc_readClassPair
-+      // and our in-place realization doesn't reconcile ivars) -> the subclass ends
++      // (e.g. 16), and nothing slides it on 10.9 (libobjc has no objc_readClassPair,
++      // and Recaulk's realization doesn't reconcile ivars) -> the subclass ends
 +      // up smaller than its superclass and its instances overrun the heap. The
 +      // superclass's TRUE size is its realized objc instanceSize; start from that.
 +      // Gated to a libobjc without readClassPair (10.9/10.10) so the modern path

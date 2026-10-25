@@ -119,11 +119,13 @@ ln -s "$LIBCXX_PREFIX" "$LIBCXX_ROOT/usr/local/mavergreen/libcxx22"
 CXX_LIBCXX="-nostdinc++ -isystem $CXXINC -ffile-prefix-map=$CXXINC=/mavergreen-libcxx22/include"
 # spec: INGREDIENTS.md "Recaulk" -- libswiftCore takes Recaulk's definition of each API named here, and
 #       only those: a forwarder that calls the OS's where it has one (macOS 10.12 and later, for
-#       os_system_version_get_current_version) and Recaulk's body on 10.9. The whole archive would also
+#       os_system_version_get_current_version; macOS 10.11, objc_readClassPair) and Recaulk's body on
+#       10.9. Not _objc_realizeClassFromSwift: upstream's legacy, fragile-layout path stays, as a 10.9
+#       deployment target's metadata expects. The whole archive would also
 #       bind weak imports whose presence the runtime reads as "the OS has this" (os_signpost_enabled
 #       turns tracing on over a NULL os_log_create on 10.9), so lib.sh's recaulk_subset picks the members
 #       by symbol, and the link hides every global they define.
-RECAULK_RUNTIME_SYMBOLS="_os_system_version_get_current_version"
+RECAULK_RUNTIME_SYMBOLS="_os_system_version_get_current_version _objc_readClassPair"
 RECAULK_PREFIX="$(sh "$HERE/fetch-recaulk.sh")" || { echo "FAIL: could not fetch Recaulk $RECAULK_VERSION"; exit 1; }
 RECAULK_A="$ROOT/recaulk-runtime.a"; RECAULK_UNX="$ROOT/recaulk-runtime.unexported"
 # shellcheck disable=SC2086  # space-free symbol names
@@ -137,16 +139,11 @@ echo "==> 2. pinned swift source (GitHub's tarball of SWIFT_SHA, verified by SWI
 fetch_source swift "$SWIFT_REPO_URL" "$SWIFT_SHA" "$SWIFT_TARBALL_SHA256" SWIFT_TARBALL_SHA256 || exit 1
 
 echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order)"
-#  0003 guard objc_readClassPair (macOS 10.11) in swift_instantiateObjCClass AND
-#       do the minimal in-place objc4-532 realization of runtime-instantiated
-#       generic classes when it is absent (calloc class_rw_t, RW_REALIZED,
-#       rw->ro=ro, empty cache/vtable, install into data_NEVER_USE) so the ObjC
-#       runtime can read/message them on 10.9. (Replaces the earlier broken "skip".)
 #  0004 realization-aware getROData — objc4-532 realizes classes eagerly at image
 #       load, so a class's Data word may be a class_rw_t; follow rw->ro when
 #       RW_REALIZED is set. Both overloads. Fixes garbage ro reads on 10.9.
-#  0005 objc-super instance size — in initClassFieldOffsetVector, on the
-#       readClassPair-absent (10.9/10.10) runtime, size a subclass from
+#  0005 objc-super instance size — in initClassFieldOffsetVector, where
+#       libobjc lacks readClassPair (10.9/10.10), size a subclass from
 #       class_getInstanceSize(super) when the objc-super branch would otherwise
 #       under-size it (static Swift super's is-swift bit not observed on 10.9).
 #  0007 is-swift mask legacy bit — SWIFT_CLASS_IS_SWIFT_MASK=1 for sub-10.14.4
@@ -168,7 +165,7 @@ echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order
 # Patches are --no-prefix format; patch_source applies them with -p0. A new patch needs its number here and a marker grep
 # below: a patch file this list lacks fails the build rather than being skipped, and
 # tests/runtime-patch-list-test.sh holds the list, the files and the marker greps together.
-RUNTIME_PATCHES="0003 0004 0005 0007 0008 0009"
+RUNTIME_PATCHES="0004 0005 0007 0008 0009"
 PATCHES_DIR="$HERE/patches/runtime"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $RUNTIME_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED"
@@ -178,7 +175,6 @@ for n in $RUNTIME_PATCHES; do
     patch_source "$ROOT/swift" "$p" || exit 1
   done
 done
-grep -q 'mav_minimalRealize' swift/stdlib/public/runtime/SwiftObject.mm || { echo "patch 0003 (realization) not applied"; exit 1; }
 grep -q 'mav_roFromClassData' swift/stdlib/public/runtime/Metadata.cpp || { echo "patch 0004 (getROData) not applied"; exit 1; }
 grep -q 'class_getInstanceSize((Class)const_cast' swift/stdlib/public/runtime/Metadata.cpp || { echo "patch 0005 (objc-super size) not applied"; exit 1; }
 grep -q 'ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101404' swift/include/swift/Runtime/Config.h || { echo "patch 0007 (is-swift mask) not applied"; exit 1; }
@@ -261,7 +257,7 @@ echo "==> 7. self pre-flight (must show minOS 10.9 and NO os_unfair_lock)"
 #           needs Rosetta AND an x86_64 slice in dyld_info, and Command Line Tools 27 ships it arm64-only.
 #           OS X 10.9 has none: macho_minos and macho_imports (lib.sh) fall back to otool and nm.
 # Captured before any grep: piped straight into grep, a reader that could not run read as "no
-# os_unfair_lock, no hard objc_readClassPair" and this step printed OK having checked nothing.
+# os_unfair_lock" and this step printed OK having checked nothing.
 MINOS="$(DYLDINFO="$DYLDINFO" macho_minos "$CORE")"
 IMPORTS_OUT="$(DYLDINFO="$DYLDINFO" macho_imports "$CORE")" || { echo "FAIL: could not read $CORE's imports"; exit 1; }
 echo "minOS $MINOS; $(printf '%s\n' "$IMPORTS_OUT" | grep -c .) imports (read with ${DYLDINFO:-${OTOOL:-otool} and ${NM:-nm}})"
@@ -269,10 +265,6 @@ echo "minOS $MINOS; $(printf '%s\n' "$IMPORTS_OUT" | grep -c .) imports (read wi
 [ -n "$IMPORTS_OUT" ] || { echo "FAIL: read no imports from $CORE"; exit 1; }
 if printf '%s\n' "$IMPORTS_OUT" | grep -q 'os_unfair_lock'; then
   echo "FAIL: os_unfair_lock still imported"; exit 1
-fi
-# objc_readClassPair must be present only as a *weak* import (guarded), never hard.
-if printf '%s\n' "$IMPORTS_OUT" | grep 'objc_readClassPair' | grep -qv '\[weak-import\]'; then
-  echo "FAIL: objc_readClassPair is a HARD import"; exit 1
 fi
 # spec: INGREDIENTS.md "Recaulk" -- each API Recaulk supplies is defined in the image and hidden, never
 #       imported; the weak imports whose presence the runtime reads as the OS's answer stay the OS's
@@ -327,4 +319,4 @@ for lib in "$CORE" "$(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib"; do
   ABI="$("${NM:-nm}" -gU "$lib" | awk '{print $NF}' | grep -E '^___cxa_|^___gxx_personality|^__Unwind_' || :)"
   [ -z "$ABI" ] || { printf '%s\n' "$ABI"; echo "FAIL: $lib defines C++ ABI symbols of its own (listed above)"; exit 1; }
 done
-echo "OK: no os_unfair_lock; objc_readClassPair weak-guarded; Recaulk's $RECAULK_RUNTIME_SYMBOLS defined and hidden; no debug strings; no build paths; staged in $OUT"
+echo "OK: no os_unfair_lock; Recaulk's $RECAULK_RUNTIME_SYMBOLS defined and hidden; no debug strings; no build paths; staged in $OUT"

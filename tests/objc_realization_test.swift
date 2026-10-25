@@ -1,7 +1,7 @@
 // objc_realization_test.swift — classes the RUNTIME realizes for objc4-532 on 10.9, seen from libobjc.
 //
 // A generic class's metadata, and so its Objective-C class, is made at run time by
-// swift_instantiateObjCClass, which on 10.9 (no objc_readClassPair) realizes it itself (patch 0003);
+// swift_instantiateObjCClass, through objc_readClassPair: libobjc's, or on 10.9 Recaulk's (linked in);
 // a generic NSObject subclass's ivars are laid out after its superclass's (patch 0005). libobjc then
 // has to see a sane class: a metaclass, the inherited selectors, methods added to a superclass later,
 // and an instance size that covers every field, which Guard Malloc in the gate holds it to.

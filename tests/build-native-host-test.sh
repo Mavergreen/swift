@@ -115,7 +115,8 @@ cat > "$C22/bin/llvm-nm" <<'F'
 #!/bin/sh
 [ "$1" = -A ] || exit 0
 printf '%s\n' "$2:fwd-97.o: 0000000000000000 T _os_system_version_get_current_version" "$2:fwd-97.o:                  U ___recaulk_resolve" \
-  "$2:fwd-resolve.o: 0000000000000000 T ___recaulk_resolve" "$2:fwd-9.o: 0000000000000000 T _os_signpost_enabled"
+  "$2:fwd-resolve.o: 0000000000000000 T ___recaulk_resolve" "$2:fwd-9.o: 0000000000000000 T _os_signpost_enabled" \
+  "$2:fwd-90.o: 0000000000000000 T _objc_readClassPair" "$2:fwd-90.o:                  U ___recaulk_resolve"
 F
 printf '#!/bin/sh\ncase "$1" in rcs) : > "$2" ;; esac\n' > "$C22/bin/llvm-ar"; chmod +x "$C22/bin/llvm-nm" "$C22/bin/llvm-ar"
 printf '#!/bin/sh\necho "%s/sdk/MacOSX11.3.sdk"\n' "$T" > "$T/shipyard/fetch_sdk.sh"
@@ -146,7 +147,6 @@ while [ $# -gt 0 ]; do case "$1" in -i) p="$2"; shift 2 ;; *) shift ;; esac; don
 [ "$dry" = 1 ] && exit 0
 echo "patch $(basename "$p")" >> "$FAKE_LOG"
 case "$(basename "$p")" in
-  0003-*) echo mav_minimalRealize >> stdlib/public/runtime/SwiftObject.mm ;;
   0004-*) echo mav_roFromClassData >> stdlib/public/runtime/Metadata.cpp ;;
   0005-*) echo 'class_getInstanceSize((Class)const_cast' >> stdlib/public/runtime/Metadata.cpp ;;
   0007-*) echo 'ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101404' >> include/swift/Runtime/Config.h ;;
@@ -174,7 +174,7 @@ build_native() {  # build.sh's native mode past step 1, everything faked; ninja 
 build_native
 grep -qxF "fetch_pinned_source https://github.com/swiftlang/swift.git $SWIFT_SHA $SWIFT_TARBALL_SHA256 swift" "$T/log" \
   || fail "did not fetch the swift tarball by its pin: $(cat "$T/out")"
-[ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0003 0004 0005 0007 0008 0009 " ] \
+[ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0004 0005 0007 0008 0009 " ] \
   || fail "patched in another order: $(grep '^patch' "$T/log" | tr '\n' ' ')"
 for a in "-DCMAKE_AR=$C22/bin/llvm-ar" "-DCMAKE_RANLIB=$C22/bin/llvm-ranlib" "-DSWIFT_LIPO=$C22/bin/llvm-lipo" -DSWIFT_ENABLE_LIBXML2=OFF \
          -DCMAKE_TAPI=/usr/bin/false "-DCMAKE_STRIP=$C22/bin/llvm-strip" -DLD64_EXECUTABLE=/usr/bin/false -DCMAKE_Swift_COMPILER=NOTFOUND \
@@ -186,8 +186,8 @@ grep -qxF -e "  -DCMAKE_CXX_FLAGS=$(grep -m1 '^  -DCMAKE_C_FLAGS=' "$T/log" | se
   || fail "the stdlib's C++ does not compile against clang22's libc++ headers alone: $(grep CMAKE_CXX_FLAGS "$T/log")"
 grep -q -e "^  -DCMAKE_SHARED_LINKER_FLAGS=.* -nostdlib++ $LCX -Wl,-syslibroot,$R/swift/work/libcxx22-root $R/swift/work/recaulk-runtime.a -Wl,-unexported_symbols_list,$R/swift/work/recaulk-runtime.unexported\$" "$T/log" \
   || fail "the runtime does not link libcxx22's libc++ by path, alone, then Recaulk's subset, hidden: $(grep CMAKE_SHARED_LINKER_FLAGS "$T/log")"
-# The subset is the one API and what it needs, never the archive's other APIs.
-[ "$(tr '\n' ' ' < "$R/swift/work/recaulk-runtime.unexported")" = "___recaulk_resolve _os_system_version_get_current_version " ] \
+# The subset is the APIs named and what they need, never the archive's other APIs.
+[ "$(tr '\n' ' ' < "$R/swift/work/recaulk-runtime.unexported")" = "___recaulk_resolve _objc_readClassPair _os_system_version_get_current_version " ] \
   || fail "Recaulk's subset: $(cat "$R/swift/work/recaulk-runtime.unexported")"
 if grep -q '^git \|^xcrun ' "$T/log"; then fail "ran $(grep '^git \|^xcrun ' "$T/log" | head -1)"; fi
 SB="$R/swift/work/stdlib-build"

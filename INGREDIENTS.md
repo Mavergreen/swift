@@ -49,10 +49,22 @@ libcxx22 becomes the unlined `libcxx` under `/opt` and this runtime, moving ther
 ## Recaulk: the OS APIs 10.9 lacks, one owner
 
 Where the runtime calls an API OS X 10.9 lacks, and the family's Recaulk back-fills it, libswiftCore links
-Recaulk's definition instead of carrying a patch of its own: today `os_system_version_get_current_version`
-(macOS 10.12), which runtime patch 0002 used to guard with a CoreFoundation plist read. Recaulk's
-definition is a forwarder: where the OS has the function, it calls the OS's; on 10.9, Recaulk's body,
-which reads SystemVersion.plist. Upstream's own failure value stays (0.0.0, never a guessed 10.9.0):
+Recaulk's definition instead of carrying a patch of its own: `os_system_version_get_current_version`
+(macOS 10.12), which runtime patch 0002 used to guard with a CoreFoundation plist read, and
+`objc_readClassPair` (10.11), for which patch 0003 used to realize runtime-instantiated classes itself.
+Each definition is a forwarder: where the OS has the function, it calls the OS's; on 10.9, Recaulk's
+body. Recaulk's realization does what 0003's did and more: it carries the superclass's custom
+retain/release and allocWithZone flags, without which objc_retain counts in libobjc's side table while
+Swift counts in the object, and attaches the class's own methods, without which a bridged Dictionary
+or Set answers nothing (`tests/objc_refcount_bridging_test.swift`; both failed on 0003's path). Not
+`_objc_realizeClassFromSwift`: upstream keeps its legacy, fragile-layout path when that is absent, which
+is what a 10.9 deployment target's class metadata is built for; revisit if a 10.9 consumer reports
+"does not have a fragile layout" or needs resilient ObjC class stubs. A known gap, 0003's too: on 10.9 a
+runtime-realized class is not linked into its superclass's subclass list, so a method swizzled, replaced or
+added by a category on an ancestor after the class has cached that selector is not flushed from its cache;
+don't rely on swizzling or KVO in such ancestries on 10.9 until shipyard's QUEUE #101 lands. Patch 0005 asks libobjc itself,
+not the weak import, whether it has `objc_readClassPair`, since Recaulk's realization slides no ivars
+either. For the OS version, upstream's own failure value stays (0.0.0, never a guessed 10.9.0):
 `#available` does not go through it, compiler-rt's `__isPlatformVersionAtLeast` in each binary does, and
 only `_swift_stdlib_operatingSystemVersion`, an ABI entry point kept for old binaries, calls it
 (`tests/availability_test.swift` holds both to 10.9.5 on 10.9.5).
@@ -61,7 +73,7 @@ only `_swift_stdlib_operatingSystemVersion`, an ABI entry point kept for old bin
 libswiftCore's weak imports where it means one: the runtime reads a weak import's presence as "the OS has
 this", so `os_signpost_enabled` would turn its tracing on and then call the `os_log_create` and
 `os_signpost_id_generate` no 10.9 has, and `objc_readClassPair` and `_objc_realizeClassFromSwift` would
-flip the realization paths patches 0003 and 0005 choose by. `lib.sh`'s `recaulk_subset` picks, by symbol,
+flip the realization paths upstream and patch 0005 choose by. `lib.sh`'s `recaulk_subset` picks, by symbol,
 the members that define each name in `RECAULK_RUNTIME_SYMBOLS` and what they need from the archive, and
 refuses a member that defines any other API; the link hides every global they define
 (`-unexported_symbols_list`), so libswiftCore exports what it did before. Step 7 refuses a runtime that
