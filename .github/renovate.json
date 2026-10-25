@@ -79,17 +79,6 @@
       "prBodyNotes": [
         "**The tarball pins:** `.github/workflows/pins-bot.yml` writes `LLVM_TARBALL_SHA256`, `SWIFT_TARBALL_SHA256` and `CMARK_TARBALL_SHA256` on this branch, after checking that each tarball is its commit's tree, and runs `release.yml` on its commit; that run's `build` is the check this PR merges on. Until then CI fails at the first fetch, naming the pin. If the bot failed, run `sh scripts/pin-source-tarballs.sh` on this branch and push `pins.env` (INGREDIENTS.md)."
       ]
-    },
-    {
-      "description": "EXCEPTION to the family ship-if-green default. A MINOR or MAJOR Swift bump is held: the runtime patches are cut against specific stdlib and runtime internals, so a bump that happens to build proves nothing about the 10.9 behaviour a macOS 26 runner cannot see. Needs a human until CI can run the real-10.9 gate (umbrella track E, vm-guest). A PATCH bump takes the family default.",
-      "matchDepNames": [
-        "swiftlang/swift"
-      ],
-      "matchUpdateTypes": [
-        "minor",
-        "major"
-      ],
-      "automerge": false
     }
   ]
 }

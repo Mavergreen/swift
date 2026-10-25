@@ -11,7 +11,7 @@ was merged in (2026-09) and deleted (2026-10). Its 6.4.0 installer mirror is now
 
 | Ingredient | Pinned in | Renovate | On a bump |
 |---|---|---|---|
-| Swift release (own upstream) | `SWIFT_VERSION` + `SWIFT_SHA` + `SWIFT_TARBALL_SHA256` in `pins.env` | ✅ `github-tags` on `swiftlang/swift`, grouped with llvm-project; minor/major held for a human (below); the tarball's SHA-256 is written on the PR's branch by the pins bot (below) | auto-cuts `<upstream>-mavericks.1` on the push to main |
+| Swift release (own upstream) | `SWIFT_VERSION` + `SWIFT_SHA` + `SWIFT_TARBALL_SHA256` in `pins.env` | ✅ `github-tags` on `swiftlang/swift`, grouped with llvm-project; patch, minor and major alike merge on green, the real-10.9 gate included (below); the tarball's SHA-256 is written on the PR's branch by the pins bot (below) | auto-cuts `<upstream>-mavericks.1` on the push to main |
 | swiftlang/llvm-project commit | `LLVM_SWIFT_RELEASE` + `LLVM_SHA` + `LLVM_TARBALL_SHA256` in `pins.env` | ✅ `github-tags` on `swiftlang/llvm-project`, in the same "Swift release" PR; the SHA-256 as for Swift | moves only WITH the Swift pin: `build-llvm.sh` fails unless `LLVM_SWIFT_RELEASE` equals `SWIFT_VERSION` and `LLVM_SHA` is llvm-project's `swift-<SWIFT_VERSION>-RELEASE` |
 | swiftlang/swift-cmark commit | `CMARK_SWIFT_RELEASE` + `CMARK_SHA` + `CMARK_TARBALL_SHA256` in `pins.env` | ✅ `github-tags` on `swiftlang/swift-cmark`, in the same "Swift release" PR; the SHA-256 as for Swift | moves only WITH the Swift pin: `build-toolchain.sh` runs `check_release_pin` on it |
 | mavericks-clang-22 cross toolchain (compiles the 10.9-hosted toolchain and compiler-rt's builtins, and its `llvm-libtool-darwin`, `llvm-ar`, `llvm-ranlib` and `llvm-lipo` make their archives; on OS X 10.9, `self-host.sh` uses the native package of the same release) | `CLANG22_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/clang-22`, `-mavericks.N` versioning | auto-repackages `-mavericks.(N+1)` |
@@ -136,12 +136,13 @@ GitHub ever regenerates them, the fetch fails rather than build other bytes.
 The caller declares `own-upstream-paths: pins.env:SWIFT_VERSION` — a *key*, not a path, because both
 kinds of pin live in one file. Without it a Swift bump would publish twice.
 
-## Why a minor or major Swift bump waits for a human
+## Every Swift bump merges on green, the real-10.9 gate included
 
-The runtime patches are cut against specific stdlib and runtime internals, so a bump that happens to
-build proves nothing about the 10.9 behaviour a macOS 26 runner cannot see. The exit condition is CI
-that runs the real-10.9 gate (the umbrella's track E, once `Mavergreen/vm-guest` can boot a 10.9 image
-in GitHub Actions); then a bump whose patches apply and whose gate passes automerges.
+The runtime patches are cut against specific stdlib and runtime internals, so a bump that merely builds
+proves nothing about 10.9. A minor or major bump used to wait for a human for that reason, until CI could
+run the real-10.9 gate. It does: `vm-test`, a required check, installs each run's pkgs on Mac OS X 10.9
+(`Mavergreen/mavericks-vm`) and gates them there, so a bump whose patches apply and whose gate passes
+merges like any other, as the family's default has it.
 
 ## Why LLVM is pinned by release tag, and checked against the Swift pin
 
