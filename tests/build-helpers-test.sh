@@ -110,6 +110,13 @@ printf B > "$T/cl"; s2="$(host_inputs_stamp "$T/fe" "$T/cl" "$T/bi")"
 printf e > "$T/ar"; s5="$(host_inputs_stamp "$T/fe" "$T/cl" "$T/bi" "$T/ar")" || fail "host_inputs_stamp failed with an archiver"
 [ "$(printf '%s\n' "$s5" | awk '{ print $1 }' | tr '\n' ' ')" = "swift-frontend clang clang.cfg clang++.cfg builtins archiver " ] || fail "stamp roles with an archiver: $s5"
 [ "$(printf '%s\n' "$s5" | sed 6d)" = "$s2" ] || fail "an archiver changed the other lines: $s5"
+# Each further input is a line of its own: libcxx22 and the Recaulk archive once went unhashed.
+printf f > "$T/in1"; printf g > "$T/in2"
+s6="$(host_inputs_stamp "$T/fe" "$T/cl" "$T/bi" "$T/ar" "$T/in1" "$T/in2")" || fail "host_inputs_stamp failed with further inputs"
+[ "$(printf '%s\n' "$s6" | sed -n '7,8p' | awk '{ print $1 }' | tr '\n' ' ')" = "input input " ] || fail "further inputs' roles: $s6"
+[ "$(printf '%s\n' "$s6" | sed '7,8d')" = "$s5" ] || fail "further inputs changed the other lines: $s6"
+printf G > "$T/in2"; [ "$(host_inputs_stamp "$T/fe" "$T/cl" "$T/bi" "$T/ar" "$T/in1" "$T/in2")" != "$s6" ] || fail "a changed further input left the stamp as it was"
+if host_inputs_stamp "$T/fe" "$T/cl" "$T/bi" "$T/ar" "$T/absent" > /dev/null 2>&1; then fail "stamped a missing further input"; fi
 printf E > "$T/ar"; s6="$(host_inputs_stamp "$T/fe" "$T/cl" "$T/bi" "$T/ar")"
 [ "$s6" != "$s5" ] || fail "a changed archiver left the stamp as it was"
 

@@ -19,7 +19,9 @@
 #   mavericks-clang-22's llvm-ar and llvm-ranlib make the stdlib's archives (pins.env's CLANG22_VERSION:
 #   cross, fetch-clang22.sh's; native, the installed one, CLANG22_PREFIX); the stdlib's C++ compiles against
 #   that clang22's libc++ headers and links libcxx22's libc++.1.dylib (fetch-libcxx22.sh, the same release),
-#   the family's one shared libc++, never the SDK's, which on 10.9 is the OS's own.
+#   the family's one shared libc++, never the SDK's, which on 10.9 is the OS's own; libswiftCore links
+#   Recaulk's definitions of the post-10.9 APIs RECAULK_RUNTIME_SYMBOLS names, statically, from
+#   librecaulk.a (fetch-recaulk.sh, pins.env's RECAULK_VERSION), and nothing else of Recaulk's.
 # Env: MAVERICKS_BUILD_ROOT (build root, see lib.sh), SWIFT_WORK (sources and build trees, default
 #   $SWIFT_BUILD/work), SWIFT_RUNTIME_OUT (the staged payload, default $SWIFT_BUILD/payload/runtime),
 #   MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_HOST_TOOLCHAIN_VERSION (the release of a host toolchain no
@@ -115,6 +117,19 @@ LIBCXX_ROOT="$ROOT/libcxx22-root"
 rm -rf "$LIBCXX_ROOT"; mkdir -p "$LIBCXX_ROOT/usr/local/mavergreen"
 ln -s "$LIBCXX_PREFIX" "$LIBCXX_ROOT/usr/local/mavergreen/libcxx22"
 CXX_LIBCXX="-nostdinc++ -isystem $CXXINC -ffile-prefix-map=$CXXINC=/mavergreen-libcxx22/include"
+# spec: INGREDIENTS.md "Recaulk" -- libswiftCore takes Recaulk's definition of each API named here, and
+#       only those: a forwarder that calls the OS's where it has one (macOS 10.12 and later, for
+#       os_system_version_get_current_version) and Recaulk's body on 10.9. The whole archive would also
+#       bind weak imports whose presence the runtime reads as "the OS has this" (os_signpost_enabled
+#       turns tracing on over a NULL os_log_create on 10.9), so lib.sh's recaulk_subset picks the members
+#       by symbol, and the link hides every global they define.
+RECAULK_RUNTIME_SYMBOLS="_os_system_version_get_current_version"
+RECAULK_PREFIX="$(sh "$HERE/fetch-recaulk.sh")" || { echo "FAIL: could not fetch Recaulk $RECAULK_VERSION"; exit 1; }
+RECAULK_A="$ROOT/recaulk-runtime.a"; RECAULK_UNX="$ROOT/recaulk-runtime.unexported"
+# shellcheck disable=SC2086  # space-free symbol names
+( NM="$X/llvm-nm"; AR="$X/llvm-ar"; recaulk_subset "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_A" "$RECAULK_UNX" $RECAULK_RUNTIME_SYMBOLS ) \
+  || { echo "FAIL: could not take $RECAULK_RUNTIME_SYMBOLS from $RECAULK_PREFIX/lib/librecaulk.a"; exit 1; }
+echo "    Recaulk $RECAULK_VERSION: $RECAULK_RUNTIME_SYMBOLS, $(grep -c . "$RECAULK_UNX") globals, all unexported"
 clang_resource_shim "$CLANG_INC" "$BUILTINS" "$ROOT/clang-resource" || { echo "FAIL: could not lay out $ROOT/clang-resource"; exit 1; }
 echo "    host compiler $TC; SDK $SDK_RUNTIME; linker $LLD; builtins $BUILTINS"
 
@@ -122,10 +137,6 @@ echo "==> 2. pinned swift source (GitHub's tarball of SWIFT_SHA, verified by SWI
 fetch_source swift "$SWIFT_REPO_URL" "$SWIFT_SHA" "$SWIFT_TARBALL_SHA256" SWIFT_TARBALL_SHA256 || exit 1
 
 echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order)"
-#  0002 os-version 10.9 fallback — guards os_system_version_get_current_version
-#       (macOS 10.10, called unguarded by the availability backing) with a
-#       CoreFoundation plist fallback so `if #available` works instead of aborting
-#       under 10.9's dyld. Turns an unguarded weak import into a guarded one.
 #  0003 guard objc_readClassPair (macOS 10.11) in swift_instantiateObjCClass AND
 #       do the minimal in-place objc4-532 realization of runtime-instantiated
 #       generic classes when it is absent (calloc class_rw_t, RW_REALIZED,
@@ -157,7 +168,7 @@ echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order
 # Patches are --no-prefix format; patch_source applies them with -p0. A new patch needs its number here and a marker grep
 # below: a patch file this list lacks fails the build rather than being skipped, and
 # tests/runtime-patch-list-test.sh holds the list, the files and the marker greps together.
-RUNTIME_PATCHES="0002 0003 0004 0005 0007 0008 0009"
+RUNTIME_PATCHES="0003 0004 0005 0007 0008 0009"
 PATCHES_DIR="$HERE/patches/runtime"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $RUNTIME_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED"
@@ -167,7 +178,6 @@ for n in $RUNTIME_PATCHES; do
     patch_source "$ROOT/swift" "$p" || exit 1
   done
 done
-grep -q 'CFPropertyListCreateWithStream' swift/stdlib/public/stubs/Availability.mm || { echo "patch 0002 not applied"; exit 1; }
 grep -q 'mav_minimalRealize' swift/stdlib/public/runtime/SwiftObject.mm || { echo "patch 0003 (realization) not applied"; exit 1; }
 grep -q 'mav_roFromClassData' swift/stdlib/public/runtime/Metadata.cpp || { echo "patch 0004 (getROData) not applied"; exit 1; }
 grep -q 'class_getInstanceSize((Class)const_cast' swift/stdlib/public/runtime/Metadata.cpp || { echo "patch 0005 (objc-super size) not applied"; exit 1; }
@@ -189,7 +199,7 @@ LINK="-fuse-ld=lld --ld-path=$LLD"
 # change (a toolchain update, say, or a pin moved to an older commit, whose tarball's files all carry that
 # commit's date), and would keep the objects the previous ones built; and a configured tree keeps its
 # first CMAKE_AR.
-STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS" "$X/llvm-ar" "$LIBCXX" "$CXXINC/__config" && source_stamp swift)" || { echo "FAIL: could not stamp the host inputs and the swift source"; exit 1; }
+STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS" "$X/llvm-ar" "$LIBCXX" "$CXXINC/__config" "$RECAULK_A" && source_stamp swift)" || { echo "FAIL: could not stamp the host inputs and the swift source"; exit 1; }
 reuse_build_dir "$ROOT/stdlib-build" "$STAMP" || exit 1
 # LLVM_BUILD_* are build-tree-only variables that an install tree does not define, but
 # SwiftSharedCMakeConfig.cmake preconditions on them. LLVM_BUILD_MAIN_SRC_DIR only needs to be
@@ -215,7 +225,7 @@ shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
   -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON \
   "-DCMAKE_C_FLAGS=$PM_C" "-DCMAKE_CXX_FLAGS=$PM_C $CXX_LIBCXX" \
   "-DCMAKE_EXE_LINKER_FLAGS=$LINK" "-DCMAKE_MODULE_LINKER_FLAGS=$LINK" \
-  "-DCMAKE_SHARED_LINKER_FLAGS=$LINK -resource-dir $ROOT/clang-resource -nostdlib++ $LIBCXX -Wl,-syslibroot,$LIBCXX_ROOT" \
+  "-DCMAKE_SHARED_LINKER_FLAGS=$LINK -resource-dir $ROOT/clang-resource -nostdlib++ $LIBCXX -Wl,-syslibroot,$LIBCXX_ROOT $RECAULK_A -Wl,-unexported_symbols_list,$RECAULK_UNX" \
   -DLLVM_DIR="$LLVMB/lib/cmake/llvm" \
   -DLLVM_BUILD_LIBRARY_DIR="$LLVMB/lib" \
   -DLLVM_BUILD_BINARY_DIR="$LLVMB/bin" \
@@ -264,6 +274,24 @@ fi
 if printf '%s\n' "$IMPORTS_OUT" | grep 'objc_readClassPair' | grep -qv '\[weak-import\]'; then
   echo "FAIL: objc_readClassPair is a HARD import"; exit 1
 fi
+# spec: INGREDIENTS.md "Recaulk" -- each API Recaulk supplies is defined in the image and hidden, never
+#       imported; the weak imports whose presence the runtime reads as the OS's answer stay the OS's
+#       (a whole-archive link would bind them, and os_signpost_enabled would turn tracing on over NULLs).
+CORE_EXPORTS="$("${NM:-nm}" -gU "$CORE" | awk '{ print $NF }')" || { echo "FAIL: could not read $CORE's exports"; exit 1; }
+CORE_SYMS="$("${NM:-nm}" "$CORE")" || { echo "FAIL: could not read $CORE's symbols"; exit 1; }
+[ -n "$CORE_EXPORTS" ] || { echo "FAIL: read no exports from $CORE"; exit 1; }
+for s in $RECAULK_RUNTIME_SYMBOLS; do
+  if printf '%s\n' "$IMPORTS_OUT" | grep -q "${s#_}"; then echo "FAIL: $s is imported, not Recaulk's"; exit 1; fi
+  printf '%s\n' "$CORE_SYMS" | grep -Eq " [Tt] $s\$" || { echo "FAIL: $CORE does not define $s"; exit 1; }
+  if printf '%s\n' "$CORE_EXPORTS" | grep -qx "$s"; then echo "FAIL: $CORE exports Recaulk's $s"; exit 1; fi
+done
+if printf '%s\n' "$CORE_EXPORTS" | grep -q '^___recaulk_'; then
+  printf '%s\n' "$CORE_EXPORTS" | grep '^___recaulk_'; echo "FAIL: $CORE exports Recaulk's internals (listed above)"; exit 1
+fi
+for s in objc_realizeClassFromSwift os_signpost_enabled os_signpost_emit_with_name_impl availability_version_check; do
+  printf '%s\n' "$IMPORTS_OUT" | grep "$s" | grep -q '\[weak-import\]' \
+    || { echo "FAIL: $s is not a weak import of the OS's (a Recaulk definition bound it?)"; exit 1; }
+done
 # The strings checks below capture strings' output first, as above: a dylib strings could not read
 # would otherwise read as "no MAV_, no paths".
 # release build must carry no debug-logging leftovers.
@@ -299,4 +327,4 @@ for lib in "$CORE" "$(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib"; do
   ABI="$("${NM:-nm}" -gU "$lib" | awk '{print $NF}' | grep -E '^___cxa_|^___gxx_personality|^__Unwind_' || :)"
   [ -z "$ABI" ] || { printf '%s\n' "$ABI"; echo "FAIL: $lib defines C++ ABI symbols of its own (listed above)"; exit 1; }
 done
-echo "OK: no os_unfair_lock; objc_readClassPair weak-guarded; no debug strings; no build paths; staged in $OUT"
+echo "OK: no os_unfair_lock; objc_readClassPair weak-guarded; Recaulk's $RECAULK_RUNTIME_SYMBOLS defined and hidden; no debug strings; no build paths; staged in $OUT"

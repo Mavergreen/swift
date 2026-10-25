@@ -270,10 +270,11 @@ host_toolchain_release() {
   printf '%s (%s)\n' "$_hr_v" "$_hr_how"
 }
 
-# host_inputs_stamp <swift-frontend> <clang> <builtins-archive> [<archiver>] -- five lines, `<role>
-# <sha256>`, for the host compiler, the host clang, the clang.cfg and clang++.cfg that clang reads
+# host_inputs_stamp <swift-frontend> <clang> <builtins-archive> [<archiver> [<input>...]] -- five lines,
+# `<role> <sha256>`, for the host compiler, the host clang, the clang.cfg and clang++.cfg that clang reads
 # (`<role> none` for one that is absent) and the builtins archive a stdlib build is configured with,
-# and a sixth, `archiver <sha256>`, when <archiver> is given. Their bytes reach the runtime, yet the
+# a sixth, `archiver <sha256>`, when <archiver> is given, and `input <sha256>` for each further file
+# (libcxx22's dylib and headers, the Recaulk archive the runtime links). Their bytes reach the runtime, yet the
 # build cannot see them change: nothing in the stdlib's CMake depends on an external
 # SWIFT_NATIVE_SWIFT_TOOLS_PATH compiler, no C++ object on its compiler's bytes or flags from a cfg, no
 # link on the archive -resource-dir names, and a configured tree keeps the CMAKE_AR it was first
@@ -289,7 +290,11 @@ host_inputs_stamp() {
     case "$_hs_l" in /*) _hs_c="$_hs_l" ;; *) _hs_c="$(dirname "$_hs_c")/$_hs_l" ;; esac
   done
   _hs_d="$(dirname "$_hs_c")"
-  for _hs_r in swift-frontend:"$1" clang:"$2" clang.cfg:"$_hs_d/clang.cfg" clang++.cfg:"$_hs_d/clang++.cfg" builtins:"$3" ${4:+archiver:"$4"}; do
+  _hs_1="$1" _hs_2="$2" _hs_3="$3" _hs_4="${4:-}"; shift 3; [ $# -eq 0 ] || shift
+  set -- swift-frontend:"$_hs_1" clang:"$_hs_2" clang.cfg:"$_hs_d/clang.cfg" clang++.cfg:"$_hs_d/clang++.cfg" builtins:"$_hs_3" \
+    ${_hs_4:+archiver:"$_hs_4"} "$@"
+  for _hs_r in "$@"; do
+    case "$_hs_r" in swift-frontend:*|clang:*|clang.cfg:*|clang++.cfg:*|builtins:*|archiver:*) ;; *) _hs_r="input:$_hs_r" ;; esac
     _hs_f="${_hs_r#*:}"
     case "${_hs_r%%:*}" in
       *.cfg) if [ ! -e "$_hs_f" ] && [ ! -L "$_hs_f" ]; then printf '%s none\n' "${_hs_r%%:*}"; continue; fi ;;
@@ -344,6 +349,61 @@ runtime_patches_unlisted() {
   done
   [ "$_rp_n" -gt 0 ] || { echo "runtime_patches_unlisted: no patches in $_rp_dir" >&2; return 1; }
   [ "$_rp_bad" -eq 0 ]
+}
+
+# recaulk_subset <librecaulk.a> <out.a> <out.unexported> <symbol>... -- writes <out.a>, the members of
+# <librecaulk.a> that define each <symbol> and, transitively, every symbol those members need that the
+# archive defines (a forwarder's ___recaulk_impl_ body, ___recaulk_resolve), chosen by symbol and never by
+# member name, in member-name order so the archive's bytes do not depend on the input's order; and
+# <out.unexported>, every global those members define, one per line, sorted, for the link's
+# -unexported_symbols_list. Fails, naming them, when a <symbol> is defined by no member, or when the
+# members define a global that is neither a <symbol> nor ___recaulk_-prefixed: libswiftCore takes the
+# APIs it names and nothing more, since the whole archive would bind weak imports whose presence the
+# runtime reads as "the OS has this" (os_signpost_enabled turns tracing on over a NULL os_log_create on
+# 10.9). ${NM:-nm} reads the archive (-A), ${AR:-ar} extracts and writes it.
+recaulk_subset() {
+  _rs_in="$1"; _rs_out="$2"; _rs_unx="$3"; shift 3
+  [ $# -gt 0 ] || { echo "recaulk_subset: no symbols named" >&2; return 2; }
+  [ -f "$_rs_in" ] || { echo "recaulk_subset: no archive $_rs_in" >&2; return 1; }
+  case "$_rs_in" in /*) ;; *) _rs_in="$PWD/$_rs_in" ;; esac
+  case "$_rs_out" in /*) ;; *) _rs_out="$PWD/$_rs_out" ;; esac
+  _rs_t="$(mktemp -d "${TMPDIR:-/tmp}/recaulk-subset.XXXXXX")" || return 1
+  "${NM:-nm}" -A "$_rs_in" > "$_rs_t/nm" || { echo "recaulk_subset: ${NM:-nm} could not read $_rs_in" >&2; rm -rf "$_rs_t"; return 1; }
+  # Each line is "<archive>:<member>: [value] <type> <name>": the member is the first word's second-last
+  # colon-separated field.
+  awk -v want="$*" -v members="$_rs_t/members" -v globals="$_rs_t/globals" '
+    { np = split($1, p, ":"); m = p[np - 1]; ty = $(NF - 1); n = $NF
+      if (ty == "U") { und[m] = und[m] " " n } else if (ty ~ /^[A-Z]$/) { def[n] = m; glob[m] = glob[m] " " n } }
+    END {
+      nw = split(want, w, " "); bad = 0; nq = 0
+      for (i = 1; i <= nw; i++) {
+        if (!(w[i] in def)) { print "recaulk_subset: no member defines " w[i] > "/dev/stderr"; bad = 1; continue }
+        if (!(def[w[i]] in sel)) { sel[def[w[i]]] = 1; q[++nq] = def[w[i]] }
+      }
+      for (j = 1; j <= nq; j++) {
+        nu = split(und[q[j]], u, " ")
+        for (k = 1; k <= nu; k++) if ((u[k] in def) && !(def[u[k]] in sel)) { sel[def[u[k]]] = 1; q[++nq] = def[u[k]] }
+      }
+      for (m in sel) {
+        print m > members
+        ng = split(glob[m], g, " ")
+        for (k = 1; k <= ng; k++) {
+          ok = (g[k] ~ /^___recaulk_/); for (i = 1; i <= nw; i++) if (g[k] == w[i]) ok = 1
+          if (!ok) { print "recaulk_subset: " m " also defines " g[k] ", which is not asked for" > "/dev/stderr"; bad = 1 }
+          print g[k] > globals
+        }
+      }
+      exit bad
+    }' "$_rs_t/nm" || { rm -rf "$_rs_t"; return 1; }
+  _rs_m="$(sort "$_rs_t/members")"
+  mkdir "$_rs_t/x"
+  # shellcheck disable=SC2086  # member names are space-free words
+  ( cd "$_rs_t/x" && "${AR:-ar}" x "$_rs_in" $_rs_m ) || { echo "recaulk_subset: ${AR:-ar} could not extract from $_rs_in" >&2; rm -rf "$_rs_t"; return 1; }
+  rm -f "$_rs_out"
+  # shellcheck disable=SC2086
+  ( cd "$_rs_t/x" && "${AR:-ar}" rcs "$_rs_out" $_rs_m ) || { echo "recaulk_subset: ${AR:-ar} could not write $_rs_out" >&2; rm -rf "$_rs_t"; return 1; }
+  sort -u "$_rs_t/globals" > "$_rs_unx"
+  rm -rf "$_rs_t"
 }
 
 # macho_minos <macho> -- the minimum macOS <macho> records. dyld_info when $DYLDINFO names it; else

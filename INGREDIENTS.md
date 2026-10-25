@@ -16,6 +16,7 @@ was merged in (2026-09) and deleted (2026-10). Its 6.4.0 installer mirror is now
 | swiftlang/swift-cmark commit | `CMARK_SWIFT_RELEASE` + `CMARK_SHA` + `CMARK_TARBALL_SHA256` in `pins.env` | ✅ `github-tags` on `swiftlang/swift-cmark`, in the same "Swift release" PR; the SHA-256 as for Swift | moves only WITH the Swift pin: `build-toolchain.sh` runs `check_release_pin` on it |
 | mavericks-clang-22 cross toolchain (compiles the 10.9-hosted toolchain and compiler-rt's builtins, and its `llvm-libtool-darwin`, `llvm-ar`, `llvm-ranlib` and `llvm-lipo` make their archives; on OS X 10.9, `self-host.sh` uses the native package of the same release) | `CLANG22_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/clang-22`, `-mavericks.N` versioning | auto-repackages `-mavericks.(N+1)` |
 | libcxx22, the family's shared libc++ (the stdlib's C++ compiles against the pinned clang22's libc++ headers and links libcxx22's `libc++.1.dylib`; the runtime and native toolchain pkgs require it at install) | `CLANG22_VERSION` in `pins.env`: one clang-22 release publishes clang22, clang22-cross and libcxx22 under one version | ✅ with the clang22 pin (`github-releases` on `Mavergreen/clang-22`) | auto-repackages `-mavericks.(N+1)`, and the pkgs then require that libcxx22 or later |
+| Recaulk, the family's back-fills of post-10.9 OS APIs (libswiftCore links Recaulk's definitions of the APIs `build.sh`'s `RECAULK_RUNTIME_SYMBOLS` names, and only those, statically: below) | `RECAULK_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/recaulk`, `YYYYMMDD.N` versioning | auto-repackages `-mavericks.(N+1)`; nothing is required at install, since the link is static |
 | LLVM and compiler source patches (`patches/llvm/`, `patches/compiler/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | swift.org toolchain `.pkg` (CI's one seed: it compiles the cross toolchain's Swift half, and a first stdlib that only makes that toolchain runnable; everything the release ships is compiled by this repo's own compilers, below) | `TOOLCHAIN_URL`, derived from `SWIFT_VERSION` | ✅ moves with the Swift pin | verified by **signer identity**, not a hash (below) |
 | Runtime source patches (`patches/runtime/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
@@ -44,6 +45,30 @@ require libcxx22 at the pin or later (`--requires "libcxx22>=$CLANG22_VERSION"`:
 preinstall refuses a missing or older one before installing anything); the cross toolchain only links against its copies, on a modern Mac, and requires nothing. The
 install name `/usr/local/mavergreen/libcxx22/lib/libc++.1.dylib` lasts until the family's flag day, when
 libcxx22 becomes the unlined `libcxx` under `/opt` and this runtime, moving there too, relinks.
+
+## Recaulk: the OS APIs 10.9 lacks, one owner
+
+Where the runtime calls an API OS X 10.9 lacks, and the family's Recaulk back-fills it, libswiftCore links
+Recaulk's definition instead of carrying a patch of its own: today `os_system_version_get_current_version`
+(macOS 10.12), which runtime patch 0002 used to guard with a CoreFoundation plist read. Recaulk's
+definition is a forwarder: where the OS has the function, it calls the OS's; on 10.9, Recaulk's body,
+which reads SystemVersion.plist. Upstream's own failure value stays (0.0.0, never a guessed 10.9.0):
+`#available` does not go through it, compiler-rt's `__isPlatformVersionAtLeast` in each binary does, and
+only `_swift_stdlib_operatingSystemVersion`, an ABI entry point kept for old binaries, calls it
+(`tests/availability_test.swift` holds both to 10.9.5 on 10.9.5).
+
+`build.sh` links a subset of `librecaulk.a`, never the whole archive, which would bind six of
+libswiftCore's weak imports where it means one: the runtime reads a weak import's presence as "the OS has
+this", so `os_signpost_enabled` would turn its tracing on and then call the `os_log_create` and
+`os_signpost_id_generate` no 10.9 has, and `objc_readClassPair` and `_objc_realizeClassFromSwift` would
+flip the realization paths patches 0003 and 0005 choose by. `lib.sh`'s `recaulk_subset` picks, by symbol,
+the members that define each name in `RECAULK_RUNTIME_SYMBOLS` and what they need from the archive, and
+refuses a member that defines any other API; the link hides every global they define
+(`-unexported_symbols_list`), so libswiftCore exports what it did before. Step 7 refuses a runtime that
+still imports a Recaulk-supplied API, does not define it, exports it or any `___recaulk_` name, or no
+longer weak-imports the APIs whose presence the runtime reads from the OS. The archive's SHA-256 is one of
+the stdlib build's stamped inputs, so a Recaulk bump starts that build afresh. Recaulk's notice is in
+`NOTICE`.
 
 ## Two seeds, one result
 

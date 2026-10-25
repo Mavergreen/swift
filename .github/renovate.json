@@ -55,6 +55,16 @@
       "packageNameTemplate": "Mavergreen/clang-22",
       "datasourceTemplate": "github-releases",
       "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
+    },
+    {
+      "description": "Recaulk, whose librecaulk.a supplies the few post-10.9 APIs build.sh's RECAULK_RUNTIME_SYMBOLS names, linked statically into libswiftCore. The whole pin is the version: fetch-recaulk.sh verifies the pkg against that release's own SHA256SUMS. Recaulk tags YYYYMMDD.N; the versioning regex reads N as the build, so two releases on one day order.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^pins\\.env$/"],
+      "matchStrings": ["RECAULK_VERSION=\"(?<currentValue>[^\"]+)\""],
+      "depNameTemplate": "Mavergreen/recaulk",
+      "packageNameTemplate": "Mavergreen/recaulk",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "regex:^(?<major>\\d{8})\\.(?<minor>\\d+)$"
     }
   ],
   "packageRules": [

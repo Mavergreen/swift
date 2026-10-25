@@ -20,14 +20,9 @@ WHAT IS AND ISN'T REDISTRIBUTED HERE
     the macOS SDK are used only as *build inputs* on the builder's machine;
     none of their bytes are included in this artifact.
 
-Local modifications (full diffs in ./patches/runtime) — 0001-0007 all confined to making
+Local modifications (full diffs in ./patches/runtime) — 0003-0007 all confined to making
 Swift's runtime work on 10.9's objc4-532, all gated to the 10.9/10.10 code path; 0008
-keeps a runtime built on OS X 10.9 identical to the one CI builds:
-  0001  unsized operator delete — emit operator delete(void*) instead of the
-        C++14 sized operator delete(void*, size_t), absent from 10.9's libc++.
-  0002  os_system_version 10.9 fallback — guard the macOS-10.10 symbol
-        os_system_version_get_current_version; fall back to the SystemVersion
-        plist so `if #available` works on 10.9.
+keeps a runtime built on OS X 10.9 identical to the one CI builds; 0009 keeps one libc++:
   0003  objc_readClassPair guard + minimal in-place realization — 10.9 lacks the
         10.11 SPI; realize runtime-instantiated generic classes in objc4-532's
         class_rw_t layout instead.
@@ -43,6 +38,27 @@ keeps a runtime built on OS X 10.9 identical to the one CI builds:
         summary, whose macro needs swift-syntax, which the 10.9-hosted toolchain
         lacks; and keep a String fast path that the same missing macro support
         would compile out. Lost: LLDB's ObjectIdentifier summary.
+  0009  no libc++ autolink — drop Metadata.cpp's -lc++ linker option, which would
+        load the OS's libc++ beside libcxx22's, the one the runtime links.
+
+libswiftCore also contains, statically linked, the definitions of
+os_system_version_get_current_version from Recaulk (librecaulk.a, the release
+pinned in pins.env), https://github.com/Mavergreen/recaulk, under this license:
+
+  Copyright (c) 2025 Wowfunhappy
+  Copyright (c) 2026 Amitai Schleier
+
+  Permission to use, copy, modify, and distribute this software for any
+  purpose with or without fee is hereby granted, provided that the above
+  copyright notice and this permission notice appear in all copies.
+
+  THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+  WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+  MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+  ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+  WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+  ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+  OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 Build configuration (threading package = pthreads, deployment target = 10.9,
 availability flag) is recorded in MANIFEST and build.sh.
