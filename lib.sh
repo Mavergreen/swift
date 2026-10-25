@@ -406,8 +406,7 @@ recaulk_subset() {
   rm -rf "$_rs_t"
 }
 
-# macho_minos <macho> -- the minimum macOS <macho> records. dyld_info when $DYLDINFO names it; else
-# otool's LC_VERSION_MIN_MACOSX or LC_BUILD_VERSION (OS X 10.9 has no dyld_info). Prints nothing when
+# macho_minos <macho> -- the minimum macOS <macho> records: macho_version's first word. Prints nothing when
 # the file records neither.
 macho_minos() {
   macho_version "$1" | awk '{ print $1 }'   # the pipe's status is awk's, as before: a reader failure prints nothing
@@ -612,25 +611,22 @@ sdk109_stubs() {
   printf '%s\n' "$_ss_dir/$4"
 }
 
-# macho_version <macho> -- `<minOS> <SDK>` as <macho> records them: dyld_info when $DYLDINFO names it;
-# else ${OTOOL:-otool}'s LC_VERSION_MIN_MACOSX or LC_BUILD_VERSION (OS X 10.9 has no dyld_info). Prints
-# nothing when the file records neither; fails when the reader fails. The one parser: macho_minos is its
-# first word.
+# macho_version <macho> -- `<minOS> <SDK>` as <macho> records them, from ${OTOOL:-otool}'s
+# LC_VERSION_MIN_MACOSX or LC_BUILD_VERSION, on every host; an SDK of 0 is `n/a`, as otool prints it.
+# Never dyld_info, whatever $DYLDINFO says: dyld_info -platform prints the minOS in the SDK column when
+# the SDK is 0, so a program linked with no SDK version read as recording SDK 10.9 (every swiftc-linked
+# program did, and CI's checks passed it). Prints nothing when the file records neither; fails when the
+# reader fails. The one parser: macho_minos is its first word.
 macho_version() {
-  if [ -n "${DYLDINFO:-}" ]; then
-    _mv="$("$DYLDINFO" -platform "$1")" || return 1
-    printf '%s\n' "$_mv" | awk '$1 == "macOS" { print $2, $3; exit }'
-  else
-    _mv="$("${OTOOL:-otool}" -l "$1")" || return 1
-    # platform: Apple's otool prints LC_BUILD_VERSION's minos before its sdk, clang22's llvm-otool the
-    #           sdk first (and a header table before the load commands); a tool's own "version" line in
-    #           LC_BUILD_VERSION is the linker's, not the minOS.
-    printf '%s\n' "$_mv" | awk '$1 == "cmd" { c = $2; v = ""; s = "" }
-      c == "LC_VERSION_MIN_MACOSX" && $1 == "version" { v = $2 }
-      c == "LC_BUILD_VERSION" && $1 == "minos" { v = $2 }
-      (c == "LC_VERSION_MIN_MACOSX" || c == "LC_BUILD_VERSION") && $1 == "sdk" { s = $2 }
-      v != "" && s != "" { print v, s; exit }'
-  fi
+  _mv="$("${OTOOL:-otool}" -l "$1")" || return 1
+  # platform: Apple's otool prints LC_BUILD_VERSION's minos before its sdk, clang22's llvm-otool the
+  #           sdk first (and a header table before the load commands); a tool's own "version" line in
+  #           LC_BUILD_VERSION is the linker's, not the minOS.
+  printf '%s\n' "$_mv" | awk '$1 == "cmd" { c = $2; v = ""; s = "" }
+    c == "LC_VERSION_MIN_MACOSX" && $1 == "version" { v = $2 }
+    c == "LC_BUILD_VERSION" && $1 == "minos" { v = $2 }
+    (c == "LC_VERSION_MIN_MACOSX" || c == "LC_BUILD_VERSION") && $1 == "sdk" { s = $2 }
+    v != "" && s != "" { print v, s; exit }'
 }
 
 # macho_rpaths <macho> -- each LC_RPATH <macho> records, one per line, in order: dyld_info when $DYLDINFO

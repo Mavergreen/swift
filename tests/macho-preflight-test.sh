@@ -21,6 +21,9 @@ cc -arch x86_64 -mmacosx-version-min=10.9 -dynamiclib "$T/f.c" -o "$T/f109.dylib
 cc -arch x86_64 -mmacosx-version-min=11.0 -dynamiclib "$T/f.c" -o "$T/f11.dylib" || fail "cannot build the 11.0 fixture"
 cc -arch x86_64 -mmacosx-version-min=10.9 -dynamiclib -Wl,-rpath,@loader_path/../lib/swift/macosx -Wl,-rpath,/usr/lib/swift \
   "$T/f.c" -o "$T/frp.dylib" || fail "cannot build the rpath fixture"
+# What Swift's driver links when the SDK has no SDKSettings.json: an SDK version of 0.
+cc -arch x86_64 -mmacosx-version-min=10.9 -dynamiclib -Wl,-platform_version,macos,10.9,0.0 "$T/f.c" -o "$T/f0.dylib" \
+  || fail "cannot build the no-SDK-version fixture"
 
 echo "-- the otool and nm fallback (DYLDINFO empty, as on OS X 10.9)"
 [ "$(DYLDINFO='' macho_minos "$T/f109.dylib")" = 10.9 ] || fail "minOS from LC_VERSION_MIN_MACOSX is '$(DYLDINFO='' macho_minos "$T/f109.dylib")', not 10.9"
@@ -67,14 +70,16 @@ if [ -n "$DI" ]; then
   echo "-- the fallback says what dyld_info says ($DI)"
   for f in f109 f11; do
     [ "$(DYLDINFO="$DI" macho_minos "$T/$f.dylib")" = "$(DYLDINFO='' macho_minos "$T/$f.dylib")" ] || fail "$f: minOS differs from dyld_info's"
-    [ "$(DYLDINFO="$DI" macho_version "$T/$f.dylib")" = "$(DYLDINFO='' macho_version "$T/$f.dylib")" ] \
-      || fail "$f: minOS and SDK '$(DYLDINFO='' macho_version "$T/$f.dylib")' differ from dyld_info's '$(DYLDINFO="$DI" macho_version "$T/$f.dylib")'"
     DYLDINFO="$DI" macho_imports "$T/$f.dylib" | sort > "$T/$f.di"
     DYLDINFO='' macho_imports "$T/$f.dylib" | sort > "$T/$f.nm"
     cmp -s "$T/$f.di" "$T/$f.nm" || fail "$f: imports differ from dyld_info's: $(diff "$T/$f.di" "$T/$f.nm")"
   done
   [ "$(DYLDINFO="$DI" macho_rpaths "$T/frp.dylib")" = "$(DYLDINFO='' macho_rpaths "$T/frp.dylib")" ] \
     || fail "rpaths differ from dyld_info's: $(DYLDINFO="$DI" macho_rpaths "$T/frp.dylib" | tr '\n' ' ')"
+  echo "-- an SDK of 0 reads as n/a even where dyld_info is named (dyld_info shows the minOS there)"
+  [ "$(DYLDINFO="$DI" macho_version "$T/f0.dylib")" = "10.9 n/a" ] || fail "f0: read '$(DYLDINFO="$DI" macho_version "$T/f0.dylib")', not '10.9 n/a'"
+  "$DI" -platform "$T/f0.dylib" | grep -q 'macOS *10\.9 *10\.9' \
+    || echo "   (this dyld_info no longer masks a zero SDK: macho_version could read with it again)"
 else
   echo "-- no dyld_info here: the fallback is the only reader"
 fi
