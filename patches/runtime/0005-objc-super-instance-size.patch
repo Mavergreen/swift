@@ -1,8 +1,31 @@
 diff --git stdlib/public/runtime/Metadata.cpp stdlib/public/runtime/Metadata.cpp
-index e7d03f66..adae1e5f 100644
 --- stdlib/public/runtime/Metadata.cpp
 +++ stdlib/public/runtime/Metadata.cpp
-@@ -3782,6 +3800,23 @@ static void initClassFieldOffsetVector(ClassMetadata *self,
+@@ -4068,7 +4068,23 @@
+           header, classWords);
+     }
+   }
++}
++
++#if SWIFT_OBJC_INTEROP
++#include <dlfcn.h>
++// Mavericks 10.9: whether libobjc itself lacks objc_readClassPair (10.9 and 10.10),
++// which is what leaves a runtime-realized class's ivars unslid. Asked of libobjc by
++// name, never of the weak import or RTLD_DEFAULT: a definition from elsewhere (a
++// back-fill linked into this image or into the program) realizes the class without
++// sliding its ivars either.
++static bool mav_libobjcLacksReadClassPair() {
++  void *objc = dlopen("/usr/lib/libobjc.A.dylib", RTLD_LAZY | RTLD_NOLOAD);
++  bool lacks = !objc || !dlsym(objc, "objc_readClassPair");
++  if (objc)
++    dlclose(objc);
++  return lacks;
+ }
++#endif
+ 
+ static void initClassFieldOffsetVector(ClassMetadata *self,
+                                        size_t numFields,
+@@ -4100,6 +4116,23 @@
      } else {
        size = rodata->InstanceStart;
        alignMask = 0xF; // malloc alignment guarantee
@@ -15,9 +38,9 @@ index e7d03f66..adae1e5f 100644
 +      // and our in-place realization doesn't reconcile ivars) -> the subclass ends
 +      // up smaller than its superclass and its instances overrun the heap. The
 +      // superclass's TRUE size is its realized objc instanceSize; start from that.
-+      // Gated to the readClassPair-absent (10.9/10.10) runtime so the modern path
-+      // -- where objc performs the slide itself -- is byte-for-byte unchanged.
-+      if (!SWIFT_RUNTIME_WEAK_CHECK(objc_readClassPair)) {
++      // Gated to a libobjc without readClassPair (10.9/10.10) so the modern path
++      // -- where objc performs the slide itself -- is unchanged.
++      if (SWIFT_LAZY_CONSTANT(mav_libobjcLacksReadClassPair())) {
 +        size_t superObjCSize =
 +            (size_t)class_getInstanceSize((Class)const_cast<ClassMetadata *>(super));
 +        if (superObjCSize > size)
