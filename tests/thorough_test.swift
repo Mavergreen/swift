@@ -115,9 +115,9 @@ func exerciseARC() {
     mix(w != nil)
 }
 
-// ---- OS-version availability query (exercises the guarded os_system_version
-//      fallback added for 10.9). On 10.9 these must return the low branch
-//      WITHOUT crashing — the whole point of the Availability.mm guard.
+// ---- OS-version availability query. `#available` is compiler-rt's, linked into
+//      this binary; on 10.9 these must return the low branch. The runtime's own
+//      OS-version entry point is availability_test.swift's.
 func exerciseAvailability() {
     if #available(macOS 10.10, *) { mix("ge-10.10") } else { mix("lt-10.10") }
     if #available(macOS 26.0, *)  { mix("ge-26")    } else { mix("lt-26") }
