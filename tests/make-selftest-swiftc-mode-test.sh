@@ -28,12 +28,16 @@ chmod +x "$T/fake-swiftc" "$T/bin/install_name_tool" "$T/c22/bin/llvm-install-na
 # Unless a case says otherwise, no clang22 (the box has one installed, at the default prefix).
 CLANG22_PREFIX="$T/no-clang22"; export CLANG22_PREFIX; unset INSTALL_NAME_TOOL
 B="$T/dist/swift-runtime-selftest/bin"
+# The corpus, and one test only an overlay-carrying compiler builds.
+mkdir -p "$T/src"; cp "$REPO"/tests/*.swift "$T/src/"
+printf '%s\n' '// requires: overlays' 'import Foundation' > "$T/src/overlay_only_test.swift"
+SELFTEST_SRC="$T/src"; export SELFTEST_SRC
 
 echo "-- SWIFTC alone: exactly -O|-Onone <file> -o <out>, no rpath rewrite"
 tarball="$(unset SWIFT_RUNTIME_PREFIX; PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" DIST="$T/dist" sh "$REPO/make-selftest.sh" | tail -1)"
 [ -f "$tarball" ] || fail "no tarball (got '$tarball')"
-grep -q 'objc_interop_test' "$T/calls" && fail "compiled a // requires: overlays test"
-for src in "$REPO"/tests/*.swift; do
+grep -q 'overlay_only_test' "$T/calls" && fail "compiled a // requires: overlays test"
+for src in "$T/src"/*.swift; do
   n="$(basename "$src" .swift)"
   [ "$(head -1 "$src")" = "// requires: overlays" ] && continue
   grep -qx -- "-O $src -o $B/$n" "$T/calls" || fail "no exact -O call for $n: $(cat "$T/calls")"
@@ -41,14 +45,15 @@ for src in "$REPO"/tests/*.swift; do
 done
 [ ! -f "$T/int-calls" ] || fail "rewrote an rpath without SWIFT_RUNTIME_PREFIX: $(cat "$T/int-calls")"
 tar -tzf "$tarball" | grep -q 'swift-runtime-selftest/run-selftest.sh' || fail "bundle lacks run-selftest.sh"
-tar -tzf "$tarball" | grep -q 'objc_interop_test' && fail "bundle holds a skipped test"
+tar -tzf "$tarball" | grep -q 'overlay_only_test' && fail "bundle holds a skipped test"
+tar -tzf "$tarball" | grep -q 'bin/objc_interop_test$' || fail "bundle lacks objc_interop_test, which needs no overlay"
 
 echo "-- SWIFTC with SWIFT_RUNTIME_PREFIX: header padding, then the prefix's rpath replaces the installed one"
 rm -f "$T/calls"
 P="$T/staged/usr/local/mavergreen/swift-runtime"
 mkdir -p "$P/lib/swift"; : > "$P/lib/swift/libswiftCore.dylib"
 PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFIX="$P" DIST="$T/dist" sh "$REPO/make-selftest.sh" > /dev/null
-for src in "$REPO"/tests/*.swift; do
+for src in "$T/src"/*.swift; do
   n="$(basename "$src" .swift)"
   [ "$(head -1 "$src")" = "// requires: overlays" ] && continue
   for o in O Onone; do

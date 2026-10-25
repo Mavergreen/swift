@@ -17,7 +17,8 @@
 #                             (CLANG22_PREFIX, default /usr/local/mavergreen/clang22) where it is
 #                             installed, else install_name_tool from PATH.
 #          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, TC (toolchain usr/), DIST (output dir),
-#          SWIFT_RUNTIME_PREFIX, SWIFTC, INSTALL_NAME_TOOL, CLANG22_PREFIX.
+#          SWIFT_RUNTIME_PREFIX, SWIFTC, INSTALL_NAME_TOOL, CLANG22_PREFIX, SELFTEST_SRC (the dir whose
+#          *.swift are the tests, default this repo's tests/).
 set -eu
 REPO="$(cd "$(dirname "$0")" && pwd)"
 . "$REPO/lib.sh"    # -> $SWIFT_BUILD
@@ -59,7 +60,7 @@ fi
 
 NAME=swift-runtime-selftest
 B="$DIST/$NAME"; rm -rf "$B"; mkdir -p "$B/bin"
-for src in "$REPO"/tests/*.swift; do
+for src in "${SELFTEST_SRC:-$REPO/tests}"/*.swift; do
   [ -f "$src" ] || continue
   n="$(basename "$src" .swift)"
   if [ -n "${SWIFTC:-}" ] && [ "$(head -1 "$src")" = "// requires: overlays" ]; then
