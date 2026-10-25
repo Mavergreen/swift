@@ -21,13 +21,14 @@ name: release
 #
 # RELEASE GATING: a macOS 26 runner is structurally blind to the 10.9-only behaviour this runtime exists to
 # fix (it needs six source patches for exactly that reason), so ACCEPTANCE happens on Mac OS X 10.9: the
-# vm-test job boots Mavergreen/mavericks-vm's 10.9.5 guest (no Command Line Tools), installs this run's
-# runtime and native toolchain pkgs, builds the self-test corpus there with the installed swiftc
-# (`SWIFTC=/usr/local/mavergreen/bin/swiftc sh make-selftest.sh`) and runs its gate (`run-selftest.sh
-# --gate`: 500x plus 10x under Guard Malloc, -O and -Onone); publish waits for it. The cross toolchain's
-# acceptance (the same corpus built on an Apple-silicon Mac, gated on 10.9) is still by hand. CI's
-# Rosetta smoke (tests/toolchain-smoke-test.sh) proves the staged native toolchain compiles and links for
-# 10.9, and its native arm64 run the same of the cross one.
+# vm-test job boots Mavergreen/mavericks-vm's 10.9.5 guest (no Command Line Tools), installs the previous
+# release's runtime and native toolchain pkgs and then this run's over them, as a user's upgrade does,
+# checks the family install (`mavergreen check`), builds the self-test corpus there with the installed
+# swiftc (`SWIFTC=/usr/local/mavergreen/bin/swiftc sh make-selftest.sh`) and runs its gate
+# (`run-selftest.sh --gate`: 500x plus 10x under Guard Malloc, -O and -Onone), then the native toolchain's
+# smoke (tests/toolchain-smoke-test.sh), natively, on 10.9; publish waits for it. The cross toolchain's
+# smoke runs natively in build-cross, on the arm64 runner; its acceptance (the same corpus built on an
+# Apple-silicon Mac, gated on 10.9) is still by hand.
 
 on:
   push:
@@ -262,7 +263,7 @@ jobs:
           echo "$d"
           echo "digest=$d" >> "$GITHUB_OUTPUT"
 
-      # The cross toolchain runs natively here: no Rosetta. A SKIP is a failure, as in build's smoke.
+      # The cross toolchain runs natively here, as the native one does on 10.9 in vm-test. A SKIP is a failure.
       - name: Cross toolchain smoke, native arm64 (the staged swiftc compiles and links; must not skip)
         run: |
           rc=0; STAGE_HOST=arm64 sh tests/toolchain-smoke-test.sh || rc=$?
@@ -447,26 +448,6 @@ jobs:
           # The builtins archive is not executable, so the list above misses it; guard it by name.
           ./scripts/guard.sh "$SWIFT_BUILD"/payload/toolchain/usr/local/mavergreen/swift-toolchain/lib/clang/*/lib/darwin/libclang_rt.osx.a
 
-      # INGREDIENTS.md declares this: rosetta:.github/workflows/release.yml. The runner is arm64 and the
-      # toolchain x86_64, so the smoke below runs its compiler and linker translated.
-      - name: Ensure this runner can run x86_64 (Rosetta)
-        run: |
-          # Already installed is fine (porthole's pattern); an install that fails is a failure here.
-          if arch -x86_64 /usr/bin/true 2>/dev/null; then
-            echo "Rosetta is already installed"
-          else
-            sudo softwareupdate --install-rosetta --agree-to-license
-          fi
-
-      # CI's one run of the toolchain it ships: the staged swiftc compiles and links for 10.9 (see the
-      # test's header). Here a SKIP is a failure -- a runner that lost Rosetta would otherwise let a
-      # compiler that cannot compile automerge on green.
-      - name: Toolchain smoke under Rosetta (the staged swiftc compiles and links; must not skip)
-        run: |
-          rc=0; sh tests/toolchain-smoke-test.sh || rc=$?
-          [ "$rc" -ne 77 ] || { echo "::error::the toolchain smoke SKIPPED, so this run never ran the toolchain it ships"; exit 1; }
-          exit "$rc"
-
       - name: Build swift-toolchain-updater.app (Cocoa/Sparkle; must NOT link Swift)
         run: |
           shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater-toolchain" -DSWIFT_UPDATER_PRODUCT=swift-toolchain \
@@ -627,9 +608,12 @@ jobs:
       artifact: swift
 
   # Acceptance on Mac OS X 10.9 (Mavergreen/mavericks-vm: a 10.9.5 guest without the Command Line Tools), every run:
-  # this run's runtime and native toolchain pkgs install there, the installed swiftc builds the self-test
-  # bundle on 10.9 itself (make-selftest.sh's SWIFTC= mode), and the bundle's gate runs against the installed
-  # runtime: 500x plus 10x under Guard Malloc, at -O and -Onone. publish waits for it.
+  # the previous release's runtime and native toolchain pkgs install there, then this run's over them (an
+  # upgrade, as a user's is), the family install checks, the installed swiftc builds the self-test bundle on
+  # 10.9 itself (make-selftest.sh's SWIFTC= mode), and the bundle's gate runs against the installed runtime:
+  # 500x plus 10x under Guard Malloc, at -O and -Onone. Then the native toolchain's smoke runs, natively, its
+  # load commands read with mavericks-clang-22's llvm-otool and llvm-nm (10.9's are Command Line Tools stubs),
+  # installed only after the gate so the gate ran on what a user's Mac has. publish waits for it.
   vm-test:
     needs: [version, build-cross, build]
     runs-on: ubuntu-latest
@@ -645,31 +629,57 @@ jobs:
       - uses: actions/download-artifact@v8
         with: { name: swift-native, path: dist }
       # The runtime links libcxx22's libc++ and its pkg requires libcxx22 at pins.env's CLANG22_VERSION or later:
-      # that release's pkg, checked against its own SHA256SUMS, installs first.
-      - name: Fetch libcxx22 at the pinned clang22 release
+      # that release's pkg, checked against its own SHA256SUMS, installs first. Its native clang22 pkg, from the
+      # same release, supplies the smoke's Mach-O readers.
+      - name: Fetch libcxx22 and mavericks-clang-22 at the pinned clang22 release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           v="$(sed -n 's/^CLANG22_VERSION="\([^"]*\)".*/\1/p' pins.env)"
           [ -n "$v" ] || { echo "::error::no CLANG22_VERSION in pins.env"; exit 1; }
-          mkdir -p libcxx && cd libcxx
-          gh release download "$v" -R Mavergreen/clang-22 -p "libcxx22-$v.pkg" -p SHA256SUMS
-          grep " libcxx22-$v.pkg\$" SHA256SUMS | sha256sum -c -
+          mkdir -p libcxx clang22
+          ( cd libcxx && gh release download "$v" -R Mavergreen/clang-22 -p "libcxx22-$v.pkg" -p SHA256SUMS &&
+            grep " libcxx22-$v.pkg\$" SHA256SUMS | sha256sum -c - )
+          ( cd clang22 && gh release download "$v" -R Mavergreen/clang-22 -p "mavericks-clang-22-native-$v.pkg" -p SHA256SUMS &&
+            grep " mavericks-clang-22-native-$v.pkg\$" SHA256SUMS | sha256sum -c - )
+      # A user upgrades: the latest release's pkgs install first, this run's over them.
+      - name: Fetch the previous release's runtime and native toolchain pkgs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          prev="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          [ -n "$prev" ] || { echo "::error::no previous release to upgrade from"; exit 1; }
+          mkdir -p prev && cd prev
+          gh release download "$prev" -R "$GITHUB_REPOSITORY" -p "swift-runtime-$prev.pkg" -p "swift-toolchain-$prev.pkg" -p SHA256SUMS
+          grep -E " swift-(runtime|toolchain)-$prev\.pkg\$" SHA256SUMS | sha256sum -c -
       - name: Install the pkgs, build the self-test with the installed swiftc, and gate it, on Mac OS X 10.9
         uses: Mavergreen/mavericks-vm@v1
+        env:
+          SWIFT_FULL_VERSION: ${{ needs.version.outputs.version }}
         with:
           image-key: ${{ secrets.MAVERICKS_VM_KEY }}
+          envs: SWIFT_FULL_VERSION
           copyback: false
           run: |
             set -eu
             sw_vers
             if [ -e /Library/Developer/CommandLineTools ]; then echo "this guest has the Command Line Tools"; else echo "this guest has no Command Line Tools"; fi
             sudo -n true || { echo "the guest's user cannot sudo without a password, and installer needs root"; exit 1; }
-            for p in libcxx/libcxx22-*.pkg dist/swift-runtime-*.pkg dist/swift-toolchain-[0-9]*.pkg; do
-              [ -f "$p" ] || { echo "no $p in this run's artifacts"; exit 1; }
-              sudo installer -pkg "$p" -target /
+            install() { for p in "$@"; do [ -f "$p" ] || { echo "no $p"; exit 1; }; sudo installer -pkg "$p" -target /; done; }
+            install libcxx/libcxx22-*.pkg prev/swift-runtime-*.pkg prev/swift-toolchain-[0-9]*.pkg
+            echo "upgrading from: $(/usr/local/mavergreen/bin/swiftc -version 2>&1 | head -1)"
+            install dist/swift-runtime-*.pkg dist/swift-toolchain-[0-9]*.pkg
+            for id in dev.mavergreen.swift-runtime dev.mavergreen.swift-toolchain; do
+              got="$(pkgutil --pkg-info "$id" | sed -n 's/^version: //p')"
+              [ "$got" = "$SWIFT_FULL_VERSION" ] || { echo "$id is $got after the upgrade, not $SWIFT_FULL_VERSION"; exit 1; }
             done
+            /usr/local/bin/mavergreen check
             /usr/local/mavergreen/bin/swiftc -version
             SWIFTC=/usr/local/mavergreen/bin/swiftc MAVERICKS_BUILD_ROOT="$HOME/mm-build" DIST="$PWD/gate" sh make-selftest.sh
-            cd gate && tar -xzf swift-runtime-selftest.tar.gz && sh swift-runtime-selftest/run-selftest.sh --gate
+            ( cd gate && tar -xzf swift-runtime-selftest.tar.gz && sh swift-runtime-selftest/run-selftest.sh --gate )
+            install clang22/mavericks-clang-22-native-*.pkg
+            rc=0; MAVERICKS_BUILD_ROOT="$HOME/mm-smoke" sh tests/toolchain-smoke-test.sh || rc=$?
+            [ "$rc" -ne 77 ] || { echo "the native toolchain smoke SKIPPED on 10.9"; exit 1; }
+            exit "$rc"
