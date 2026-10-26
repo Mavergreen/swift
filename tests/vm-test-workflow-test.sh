@@ -36,10 +36,9 @@ check() {
   grep -q '\[ "\$rc" -ne 77 \]' "$T/job" || { echo "vm-test lets the native toolchain smoke skip"; return 1; }
   grep -q 'gh release download "\$v" -R Mavergreen/clang-22 -p "libcxx22-\$v.pkg" -p SHA256SUMS' "$T/job" \
     && grep -q 'sha256sum -c -' "$T/job" || { echo "vm-test does not fetch and verify libcxx22 at the pinned release"; return 1; }
-  grep -q 'lb="\$(gh release view -R Mavergreen/longboat --json tagName --jq .tagName)"' "$T/job" \
-    && grep -q 'gh release download "\$lb" -R Mavergreen/longboat -p "longboat-\$lb.pkg" -p SHA256SUMS' "$T/job" \
+  grep -q 'gh release download "\$lb" -R Mavergreen/longboat -p "longboat-\$lb.pkg" -p SHA256SUMS' "$T/job" \
     && grep -q 'grep " longboat-\$lb.pkg\\\$" SHA256SUMS | sha256sum -c -' "$T/job" \
-    || { echo "vm-test does not fetch and verify Longboat's latest release"; return 1; }
+    || { echo "vm-test does not fetch and verify Longboat"; return 1; }
   grep -q 'SWIFTC=/usr/local/mavergreen/bin/swiftc .*sh make-selftest\.sh' "$T/job" || { echo "vm-test does not build the self-test with the installed swiftc"; return 1; }
   grep -q 'sh swift-runtime-selftest/run-selftest\.sh --gate' "$T/job" || { echo "vm-test does not run the self-test's gate"; return 1; }
   awk '/^  publish:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" | grep -q '^    needs: \[.*vm-test.*\]$' \

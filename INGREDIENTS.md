@@ -62,7 +62,8 @@ is what a 10.9 deployment target's class metadata is built for; revisit if a 10.
 "does not have a fragile layout" or needs resilient ObjC class stubs. A known gap, 0003's too: on 10.9 a
 runtime-realized class is not linked into its superclass's subclass list, so a method swizzled, replaced or
 added by a category on an ancestor after the class has cached that selector is not flushed from its cache;
-don't rely on swizzling or KVO in such ancestries on 10.9 until shipyard's QUEUE #101 lands. Patch 0005 asks libobjc itself,
+don't rely on swizzling or KVO in such ancestries on 10.9 until a Recaulk release links its realized classes into
+libobjc's class tables. Patch 0005 asks libobjc itself,
 not the weak import, whether it has `objc_readClassPair`, since Recaulk's realization slides no ivars
 either. For the OS version, upstream's own failure value stays (0.0.0, never a guessed 10.9.0):
 `#available` does not go through it, compiler-rt's `__isPlatformVersionAtLeast` in each binary does, and
