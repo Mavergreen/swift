@@ -32,7 +32,7 @@ if [ "$HOST" = arm64 ]; then
   # The cross toolchain's frontend runs on the OS's /usr/lib/swift (no compiler patch 0002).
   TC="$(dirname "$(dirname "$STAGED")")"
   . "$REPO/msc.sh"     # -> $SHIPYARD
-  SDKROOT="$(sh "$SHIPYARD/fetch_sdk.sh")" || fail "could not obtain the Mac OS X 10.9 SDK"
+  SDKROOT="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$SHIPYARD/fetch_sdk.sh")" || fail "could not obtain the Mac OS X 10.9 SDK"
 else
   TC="${SMOKE_TOOLCHAIN:-/usr/local/mavergreen/$TH_PRODUCT}"
   [ -x "$TC/bin/swiftc" ] || { echo "no installed native toolchain at $TC -- skipping"; exit 77; }
@@ -40,8 +40,8 @@ else
   #           loads its own Swift runtime into the same process and crashes it, so it runs on 10.9 only.
   [ "$(uname -m)" = x86_64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" != 1 ] \
     || { echo "this host does not run x86_64 code natively -- skipping"; exit 77; }
-  # The toolchain's own SDK fetch, the one its swiftc runs: no shipyard on the user's Mac.
-  SDKROOT="$(sh "$TC/libexec/mavergreen-swift/fetch_sdk.sh")" || fail "could not obtain the Mac OS X 10.9 SDK"
+  # The toolchain's own SDK fetch, as its swiftc runs it: no shipyard on the user's Mac.
+  SDKROOT="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$TC/libexec/mavergreen-swift/fetch_sdk.sh")" || fail "could not obtain the Mac OS X 10.9 SDK"
 fi
 export SDKROOT
 # platform: OS X 10.9 without the Command Line Tools has only stubs for otool and nm. Never dyld_info for the

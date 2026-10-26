@@ -3,7 +3,8 @@
 # usage: sh tests/swiftc-wrapper-test.sh
 #   toolchain/swiftc must find its prefix through links -- the family link farm's relative one, an
 #   absolute one, a chain -- put the 10.9 defaults before the user's arguments, honour SDKROOT without
-#   fetching, and refuse to run on a failed SDK fetch or an SDK that is not a directory.
+#   fetching, ask the fetch for the SDK that has SDKSettings.json, and refuse to run on a failed SDK
+#   fetch or an SDK that is not a directory.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -23,7 +24,7 @@ for a in "\$@"; do echo "\$a"; done
 EOF
 cat > "$P/libexec/mavergreen-swift/fetch_sdk.sh" <<EOF
 #!/bin/sh
-: > "$T/fetched"
+echo "\${MAVERICKS_SDK_SETTINGS_JSON:-unset}" > "$T/fetched"
 [ -f "$T/fetch-fails" ] && exit 1
 [ -f "$T/fetch-empty" ] && exit 0
 echo "$T/fake-sdk"
@@ -57,6 +58,8 @@ foo"
 $out
 wanted
 $want"
+# Swift's driver reads the SDK version only from SDKSettings.json: without it every link records SDK 0.
+[ "$(cat "$T/fetched")" = 1 ] || fail "fetched the SDK with MAVERICKS_SDK_SETTINGS_JSON=$(cat "$T/fetched"), not 1"
 
 ln -s ../swift-toolchain/bin/swiftc "$T/mg/bin/swiftc"
 ln -s "$P/bin/swiftc" "$T/links/abs-swiftc"

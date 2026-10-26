@@ -20,7 +20,9 @@ PREFIX="$(dirname "$BIN")"
 LIBEXEC="$PREFIX/libexec/mavergreen-swift"
 SDK="${SDKROOT:-}"
 if [ -z "$SDK" ]; then
-  SDK="$(sh "$LIBEXEC/fetch_sdk.sh")" || { echo "swiftc: could not obtain the Mac OS X 10.9 SDK" >&2; exit 1; }
+  # Swift's driver reads the SDK version only from SDKSettings.json, which the 10.9 SDK lacks: without it
+  # every link records SDK 0. The variable asks fetch_sdk.sh for the copy that has one.
+  SDK="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$LIBEXEC/fetch_sdk.sh")" || { echo "swiftc: could not obtain the Mac OS X 10.9 SDK" >&2; exit 1; }
 fi
 [ -d "$SDK" ] || { echo "swiftc: no Mac OS X 10.9 SDK at '$SDK'" >&2; exit 1; }
 SWIFT_AVOID_WARNING_USING_OLD_DRIVER=1; export SWIFT_AVOID_WARNING_USING_OLD_DRIVER
