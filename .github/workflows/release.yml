@@ -613,7 +613,8 @@ jobs:
   # 10.9 itself (make-selftest.sh's SWIFTC= mode), and the bundle's gate runs against the installed runtime:
   # 500x plus 10x under Guard Malloc, at -O and -Onone. Then the native toolchain's smoke runs, natively, its
   # load commands read with mavericks-clang-22's llvm-otool and llvm-nm (10.9's are Command Line Tools stubs),
-  # installed only after the gate so the gate ran on what a user's Mac has. publish waits for it.
+  # installed, with the Longboat its pkg requires, only after the gate so the gate ran on what a user's Mac
+  # has. publish waits for it.
   vm-test:
     needs: [version, build-cross, build]
     runs-on: ubuntu-latest
@@ -643,6 +644,17 @@ jobs:
             grep " libcxx22-$v.pkg\$" SHA256SUMS | sha256sum -c - )
           ( cd clang22 && gh release download "$v" -R Mavergreen/clang-22 -p "mavericks-clang-22-native-$v.pkg" -p SHA256SUMS &&
             grep " mavericks-clang-22-native-$v.pkg\$" SHA256SUMS | sha256sum -c - )
+      # mavericks-clang-22's pkg refuses to install without Longboat, and points the user at its latest release.
+      - name: Fetch Longboat's latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          lb="$(gh release view -R Mavergreen/longboat --json tagName --jq .tagName)"
+          [ -n "$lb" ] || { echo "::error::no Longboat release"; exit 1; }
+          mkdir -p longboat && cd longboat
+          gh release download "$lb" -R Mavergreen/longboat -p "longboat-$lb.pkg" -p SHA256SUMS
+          grep " longboat-$lb.pkg\$" SHA256SUMS | sha256sum -c -
       # A user upgrades: the latest release's pkgs install first, this run's over them.
       - name: Fetch the previous release's runtime and native toolchain pkgs
         env:
@@ -667,7 +679,9 @@ jobs:
             sw_vers
             if [ -e /Library/Developer/CommandLineTools ]; then echo "this guest has the Command Line Tools"; else echo "this guest has no Command Line Tools"; fi
             sudo -n true || { echo "the guest's user cannot sudo without a password, and installer needs root"; exit 1; }
-            install() { for p in "$@"; do [ -f "$p" ] || { echo "no $p"; exit 1; }; sudo installer -pkg "$p" -target /; done; }
+            # installer says only "an error"; the reason (a preinstall's refusal, say) is in install.log.
+            install() { for p in "$@"; do [ -f "$p" ] || { echo "no $p"; exit 1; }
+              sudo installer -pkg "$p" -target / || { tail -40 /var/log/install.log; exit 1; }; done; }
             install libcxx/libcxx22-*.pkg prev/swift-runtime-*.pkg prev/swift-toolchain-[0-9]*.pkg
             echo "upgrading from: $(/usr/local/mavergreen/bin/swiftc -version 2>&1 | head -1)"
             install dist/swift-runtime-*.pkg dist/swift-toolchain-[0-9]*.pkg
@@ -679,7 +693,7 @@ jobs:
             /usr/local/mavergreen/bin/swiftc -version
             SWIFTC=/usr/local/mavergreen/bin/swiftc MAVERICKS_BUILD_ROOT="$HOME/mm-build" DIST="$PWD/gate" sh make-selftest.sh
             ( cd gate && tar -xzf swift-runtime-selftest.tar.gz && sh swift-runtime-selftest/run-selftest.sh --gate )
-            install clang22/mavericks-clang-22-native-*.pkg
+            install longboat/longboat-[0-9]*.pkg clang22/mavericks-clang-22-native-*.pkg
             rc=0; MAVERICKS_BUILD_ROOT="$HOME/mm-smoke" sh tests/toolchain-smoke-test.sh || rc=$?
             [ "$rc" -ne 77 ] || { echo "the native toolchain smoke SKIPPED on 10.9"; exit 1; }
             exit "$rc"

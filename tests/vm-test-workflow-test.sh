@@ -5,7 +5,8 @@
 #   Mavergreen/mavericks-vm's guest, libcxx22 and the previous release's runtime and native toolchain pkgs, then
 #   this run's over them, holds both receipts to this run's version, runs `mavergreen check`, builds the
 #   self-test bundle there with the installed swiftc, runs the bundle's gate, and only then installs
-#   mavericks-clang-22 and runs the native toolchain smoke, a SKIP of which fails; publish waits for it. The
+#   Longboat's latest release and mavericks-clang-22 (whose pkg requires Longboat) and runs the native
+#   toolchain smoke, a SKIP of which fails; publish waits for it. The
 #   build job runs no Rosetta smoke. Each check is run against a workflow mutated to break it, and must refuse it.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,10 +25,10 @@ check() {
        /install dist\/swift-runtime-\*\.pkg dist\/swift-toolchain-\[0-9\]\*\.pkg$/ { b = NR }
        /\/usr\/local\/bin\/mavergreen check$/ { c = NR }
        /run-selftest\.sh --gate/ { g = NR }
-       /install clang22\/mavericks-clang-22-native-\*\.pkg$/ { k = NR }
+       /install longboat\/longboat-\[0-9\]\*\.pkg clang22\/mavericks-clang-22-native-\*\.pkg$/ { k = NR }
        /sh tests\/toolchain-smoke-test\.sh/ { s = NR }
        END { exit !(a && a < b && b < c && c < g && g < k && k < s) }' "$T/job" \
-    || { echo "vm-test does not install libcxx22 and the previous release, then this run's, check the install, gate, then install clang22 and smoke, in that order"; return 1; }
+    || { echo "vm-test does not install libcxx22 and the previous release, then this run's, check the install, gate, then install Longboat and clang22 and smoke, in that order"; return 1; }
   grep -q '\[ "\$got" = "\$SWIFT_FULL_VERSION" \]' "$T/job" && grep -q 'SWIFT_FULL_VERSION: \${{ needs.version.outputs.version }}' "$T/job" \
     || { echo "vm-test does not hold the upgraded receipts to this run's version"; return 1; }
   grep -q 'gh release download "\$prev" -R "\$GITHUB_REPOSITORY" -p "swift-runtime-\$prev.pkg" -p "swift-toolchain-\$prev.pkg" -p SHA256SUMS' "$T/job" \
@@ -35,6 +36,10 @@ check() {
   grep -q '\[ "\$rc" -ne 77 \]' "$T/job" || { echo "vm-test lets the native toolchain smoke skip"; return 1; }
   grep -q 'gh release download "\$v" -R Mavergreen/clang-22 -p "libcxx22-\$v.pkg" -p SHA256SUMS' "$T/job" \
     && grep -q 'sha256sum -c -' "$T/job" || { echo "vm-test does not fetch and verify libcxx22 at the pinned release"; return 1; }
+  grep -q 'lb="\$(gh release view -R Mavergreen/longboat --json tagName --jq .tagName)"' "$T/job" \
+    && grep -q 'gh release download "\$lb" -R Mavergreen/longboat -p "longboat-\$lb.pkg" -p SHA256SUMS' "$T/job" \
+    && grep -q 'grep " longboat-\$lb.pkg\\\$" SHA256SUMS | sha256sum -c -' "$T/job" \
+    || { echo "vm-test does not fetch and verify Longboat's latest release"; return 1; }
   grep -q 'SWIFTC=/usr/local/mavergreen/bin/swiftc .*sh make-selftest\.sh' "$T/job" || { echo "vm-test does not build the self-test with the installed swiftc"; return 1; }
   grep -q 'sh swift-runtime-selftest/run-selftest\.sh --gate' "$T/job" || { echo "vm-test does not run the self-test's gate"; return 1; }
   awk '/^  publish:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" | grep -q '^    needs: \[.*vm-test.*\]$' \
@@ -55,8 +60,11 @@ mutant "vm-test does not upgrade from the previous release" 's| prev/swift-runti
 mutant "the previous release goes unfetched" 's|gh release download "\$prev"|echo "$prev"|'
 mutant "the upgraded receipts are not checked" 's/\[ "\$got" = "\$SWIFT_FULL_VERSION" \]/true/'
 mutant "the family install is not checked" 's|/usr/local/bin/mavergreen check$|true|'
-mutant "clang22 is installed before the gate" '/install clang22\/mavericks-clang-22-native/d; s|^\(            install dist/swift-runtime-\*\.pkg.*\)$|\1\
-            install clang22/mavericks-clang-22-native-*.pkg|'
+mutant "clang22 is installed before the gate" '/install longboat\/longboat-.*clang22\/mavericks-clang-22-native/d; s|^\(            install dist/swift-runtime-\*\.pkg.*\)$|\1\
+            install longboat/longboat-[0-9]*.pkg clang22/mavericks-clang-22-native-*.pkg|'
+mutant "Longboat is not installed before clang22" 's|install longboat/longboat-\[0-9\]\*\.pkg clang22/|install clang22/|'
+mutant "Longboat goes unfetched" 's|gh release download "\$lb"|echo "$lb"|'
+mutant "Longboat goes unverified" 's/grep " longboat-\$lb.pkg\\\$" SHA256SUMS | sha256sum -c -/true/'
 mutant "the native smoke does not run" 's|sh tests/toolchain-smoke-test\.sh|true|'
 mutant "the native smoke may skip" 's/\[ "\$rc" -ne 77 \]/true/'
 mutant "the build job smokes under Rosetta again" 's|^      - name: Build swift-toolchain-updater.app|      - name: Toolchain smoke under Rosetta\
