@@ -17,6 +17,7 @@ DIST="${DIST:-$SWIFT_BUILD/dist}"
 [ -f "$HERE/UPSTREAM_VERSION" ] || sh "$HERE/scripts/derive-upstream-version.sh" >/dev/null
 . "$HERE/msc.sh"        # -> $SHIPYARD: resolve-version, stage_product and set_install_floor
 VERSION="$(MAVERICKS_ROOT="$HERE" sh "$SHIPYARD/resolve-version.sh")"
+export_source_date_epoch "$HERE"
 IDENTIFIER="${PKG_IDENTIFIER:-dev.mavergreen.swift-runtime}"
 NAME="swift-runtime-${VERSION}"
 mkdir -p "$DIST"

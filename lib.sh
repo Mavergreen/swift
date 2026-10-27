@@ -773,3 +773,12 @@ pkg_extract_product() {
   mv "$_pe_hit/usr/local/mavergreen/$2" "$3/usr/local/mavergreen/$2" && rm -rf "$3.x" || return 1
   printf '%s\n' "$3/usr/local/mavergreen/$2"
 }
+
+# export_source_date_epoch <repo> -- exports SOURCE_DATE_EPOCH, the pkg's file times in shipyard's pkg seams,
+# as <repo>'s last commit time unless it is already set. The seams fall back to `git log` in their caller's
+# working directory, so packaging from outside the checkout would find no history; this reads <repo>'s own.
+# Without git (OS X 10.9 without the Command Line Tools) it exports nothing, and the seams ask for one.
+export_source_date_epoch() {
+  [ -n "${SOURCE_DATE_EPOCH:-}" ] || SOURCE_DATE_EPOCH="$(git -C "$1" log -1 --format=%ct 2>/dev/null)" || :
+  [ -z "${SOURCE_DATE_EPOCH:-}" ] || export SOURCE_DATE_EPOCH
+}
