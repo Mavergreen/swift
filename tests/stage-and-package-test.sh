@@ -25,11 +25,17 @@ done
 
 echo "-- staging refuses a build with no libswiftSwiftOnoneSupport.dylib"
 mkdir -p "$T/partial"; cp "$T/built/libswiftCore.dylib" "$T/partial/"
-if sh scripts/stage-runtime.sh "$T/partial" "$T/out-partial" LICENSE 2> "$T/partial.err"; then
+if sh scripts/stage-runtime.sh "$T/partial" "$T/out-partial" LICENSE NOTICE 2> "$T/partial.err"; then
   fail "stage-runtime.sh succeeded without libswiftSwiftOnoneSupport.dylib"
 fi
 grep -q 'has no libswiftSwiftOnoneSupport.dylib' "$T/partial.err" \
   || fail "stage-runtime.sh failed, but not for the missing dylib: $(cat "$T/partial.err")"
+
+echo "-- staging refuses a missing notice file"
+if sh scripts/stage-runtime.sh "$T/built" "$T/out-nonotice" LICENSE "$T/no-such-NOTICE" 2> "$T/nonotice.err"; then
+  fail "stage-runtime.sh succeeded without a notice file"
+fi
+grep -q "no notice at" "$T/nonotice.err" || fail "stage-runtime.sh failed, but not for the missing notice: $(cat "$T/nonotice.err")"
 
 echo "-- staging refuses an empty out-dir, or / by any name, before writing anything"
 # Every command that writes is faked (and fails), so a regressed guard fails this test instead of
@@ -41,7 +47,7 @@ for c in rm mkdir cp mv ln chmod; do
 done
 ln -s /bin "$T/rootchild"
 for bad in "" // /. /tmp/.. "$T/rootchild/.."; do
-  rc=0; PATH="$T/fakebin:$PATH" sh scripts/stage-runtime.sh "$T/built" "$bad" LICENSE 2>/dev/null || rc=$?
+  rc=0; PATH="$T/fakebin:$PATH" sh scripts/stage-runtime.sh "$T/built" "$bad" LICENSE NOTICE 2>/dev/null || rc=$?
   [ "$rc" = 2 ] || fail "stage-runtime.sh out-dir '$bad': exit $rc, not 2 (refused)"
   [ ! -f "$T/writes.log" ] || fail "stage-runtime.sh tried to write, with out-dir '$bad': $(cat "$T/writes.log")"
 done
@@ -65,16 +71,17 @@ mkdir -p "$T/out/usr/lib/swift" "$T/out/usr/local/share/doc/mavericks-swift-runt
 : > "$T/out/$I/lib/swift/libswiftCore.dylib"
 : > "$T/out/$I/LICENSE.txt"
 : > "$T/out/LICENSE.txt"
-sh scripts/stage-runtime.sh "$T/built" "$T/out" LICENSE
+sh scripts/stage-runtime.sh "$T/built" "$T/out" LICENSE NOTICE
 got="$(cd "$T/out" && find usr LICENSE.txt Library 2>/dev/null | sort)"
 want="$(printf '%s\n' Library Library/keep usr usr/local usr/local/mavergreen "$P" "$P/lib" \
   "$P/lib/swift" "$P/lib/swift/libswiftCore.dylib" "$P/lib/swift/libswiftSwiftOnoneSupport.dylib" \
-  "$P/share" "$P/share/doc" "$P/share/doc/LICENSE.txt" | sort)"
+  "$P/share" "$P/share/doc" "$P/share/doc/LICENSE.txt" "$P/share/doc/NOTICE" | sort)"
 [ "$got" = "$want" ] || fail "staged tree is
 $got
 wanted
 $want"
 cmp -s LICENSE "$T/out/$P/share/doc/LICENSE.txt" || fail "staged LICENSE.txt is not this repo's LICENSE"
+cmp -s NOTICE "$T/out/$P/share/doc/NOTICE" || fail "staged NOTICE is not this repo's NOTICE"
 
 expand_pkg() {
   rm -rf "$2"; pkgutil --expand "$1" "$2" || fail "pkgutil --expand $1 failed"
@@ -97,7 +104,7 @@ payload_of() { lsbom -s "$comp/Bom" | grep -v '/\._' | sort; }
 outside_of() { _i=0; while _v="$(/usr/libexec/PlistBuddy -c "Print :outside:$_i" "$1" 2>/dev/null)"; do echo "$_v"; _i=$((_i + 1)); done; }
 want_payload="$(printf '%s\n' . ./usr ./usr/local ./usr/local/mavergreen "./$P" "./$P/lib" "./$P/lib/swift" \
   "./$P/lib/swift/libswiftCore.dylib" "./$P/lib/swift/libswiftSwiftOnoneSupport.dylib" \
-  "./$P/share" "./$P/share/doc" "./$P/share/doc/LICENSE.txt" "./$P/mavergreen.plist" | sort)"
+  "./$P/share" "./$P/share/doc" "./$P/share/doc/LICENSE.txt" "./$P/share/doc/NOTICE" "./$P/mavergreen.plist" | sort)"
 
 echo "-- package.sh stages the updater under the identity shipyard's registry derives for swift-runtime"
 U="Library/Application Support/Mavergreen/swift-runtime-updater.app"

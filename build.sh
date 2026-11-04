@@ -249,7 +249,7 @@ ninja -C "$ROOT/stdlib-build" swiftCore-macosx-$ARCH swiftSwiftOnoneSupport-maco
 
 echo "==> 6. stage the payload (usr/local/mavergreen/swift-runtime/, for package.sh's pkgbuild --root)"
 OUT="${SWIFT_RUNTIME_OUT:-$SWIFT_BUILD/payload/runtime}"
-sh "$HERE/scripts/stage-runtime.sh" "$ROOT/stdlib-build/lib/swift/macosx/$ARCH" "$OUT" "$HERE/LICENSE"
+sh "$HERE/scripts/stage-runtime.sh" "$ROOT/stdlib-build/lib/swift/macosx/$ARCH" "$OUT" "$HERE/LICENSE" "$HERE/NOTICE"
 CORE="$OUT/usr/local/mavergreen/swift-runtime/lib/swift/libswiftCore.dylib"
 
 echo "==> 7. self pre-flight (must show minOS 10.9 and NO os_unfair_lock)"
