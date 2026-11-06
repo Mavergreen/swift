@@ -6,7 +6,9 @@
 #   ___recaulk_resolve), by symbol, never the rest. On a fixture shaped like Recaulk's (fwd-N.o forwarders,
 #   their bodies, the resolver, an unasked-for API), it must pick exactly the closure, list every global it
 #   defines for -unexported_symbols_list, write the same bytes whatever the members' order in the input,
-#   and refuse a name no member defines or a member that defines an API nobody asked for.
+#   and refuse a name no member defines or a member that defines an API nobody asked for. A caller may
+#   name incidental globals (clang's block helpers) in RECAULK_ALSO_HIDE: they are accepted and hidden,
+#   and nothing else is.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -25,7 +27,11 @@ o fwd-resolve 'void *__recaulk_resolve(const char *n) { return (void *)n; }'
 o fwd-2 'extern void *__recaulk_resolve(const char *); int api_two(void) { return __recaulk_resolve("y") != 0; }'
 o greedy 'extern int __recaulk_impl_api_one(void); int api_three(void) { return __recaulk_impl_api_one(); }
 int api_four(void) { return 4; }'
-( cd "$T" && ar rcs in.a fwd-1.o body-one.o fwd-resolve.o fwd-2.o greedy.o && ar rcs rev.a greedy.o fwd-2.o fwd-resolve.o body-one.o fwd-1.o ) \
+o fwd-blk 'int api_blk(void) { return 5; }
+void __copy_helper_block_8_32b(void) {} void __mpls_best_fchdir(void) {}'
+o fwd-sig 'int api_sig(void) { return 6; }
+int os_signpost_enabled(void) { return 1; }'
+( cd "$T" && ar rcs in.a fwd-1.o body-one.o fwd-resolve.o fwd-2.o greedy.o fwd-blk.o fwd-sig.o && ar rcs rev.a greedy.o fwd-2.o fwd-resolve.o body-one.o fwd-1.o ) \
   || fail "cannot build the fixture archives"
 
 echo "-- one API: its forwarder, its body and the resolver, nothing else"
@@ -48,4 +54,15 @@ grep -q 'no member defines _nonesuch' "$T/err" || fail "did not name _nonesuch: 
 if recaulk_subset "$T/in.a" "$T/x.a" "$T/x.unx" _api_three 2> "$T/err"; then fail "accepted greedy.o's _api_four"; fi
 grep -q 'greedy.o also defines _api_four' "$T/err" || fail "did not name _api_four: $(cat "$T/err")"
 rc=0; recaulk_subset "$T/in.a" "$T/x.a" "$T/x.unx" 2>/dev/null || rc=$?; [ "$rc" -eq 2 ] || fail "no symbols: exit $rc, not 2"
+echo "-- incidental globals: refused unless the caller names them, and then hidden"
+INC='^___(copy|destroy)_helper_block_|^___mpls_'
+if recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk 2> "$T/err"; then fail "accepted fwd-blk.o's block helper without RECAULK_ALSO_HIDE"; fi
+grep -q '___copy_helper_block_8_32b' "$T/err" || fail "did not name ___copy_helper_block_8_32b: $(cat "$T/err")"
+RECAULK_ALSO_HIDE="$INC" recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk || fail "refused incidental globals with RECAULK_ALSO_HIDE"
+for g in ___copy_helper_block_8_32b ___mpls_best_fchdir _api_blk; do
+  grep -qx "$g" "$T/b.unx" || fail "$g missing from the unexported list: $(tr '\n' ' ' < "$T/b.unx")"
+done
+if RECAULK_ALSO_HIDE="$INC" recaulk_subset "$T/in.a" "$T/s.a" "$T/s.unx" _api_sig 2> "$T/err"; then fail "RECAULK_ALSO_HIDE let an unasked _os_signpost_enabled through"; fi
+grep -q 'also defines _os_signpost_enabled' "$T/err" || fail "did not name _os_signpost_enabled: $(cat "$T/err")"
+RECAULK_ALSO_HIDE= recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk 2>/dev/null && fail "an empty RECAULK_ALSO_HIDE accepted incidental globals"
 echo "PASS"

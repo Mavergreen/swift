@@ -371,7 +371,7 @@ recaulk_subset() {
   "${NM:-nm}" -A "$_rs_in" > "$_rs_t/nm" || { echo "recaulk_subset: ${NM:-nm} could not read $_rs_in" >&2; rm -rf "$_rs_t"; return 1; }
   # Each line is "<archive>:<member>: [value] <type> <name>": the member is the first word's second-last
   # colon-separated field.
-  awk -v want="$*" -v members="$_rs_t/members" -v globals="$_rs_t/globals" '
+  awk -v want="$*" -v also="${RECAULK_ALSO_HIDE:-}" -v members="$_rs_t/members" -v globals="$_rs_t/globals" '
     { np = split($1, p, ":"); m = p[np - 1]; ty = $(NF - 1); n = $NF
       if (ty == "U") { und[m] = und[m] " " n } else if (ty ~ /^[A-Z]$/) { def[n] = m; glob[m] = glob[m] " " n } }
     END {
@@ -388,7 +388,7 @@ recaulk_subset() {
         print m > members
         ng = split(glob[m], g, " ")
         for (k = 1; k <= ng; k++) {
-          ok = (g[k] ~ /^___recaulk_/); for (i = 1; i <= nw; i++) if (g[k] == w[i]) ok = 1
+          ok = (g[k] ~ /^___recaulk_/) || (also != "" && g[k] ~ also); for (i = 1; i <= nw; i++) if (g[k] == w[i]) ok = 1
           if (!ok) { print "recaulk_subset: " m " also defines " g[k] ", which is not asked for" > "/dev/stderr"; bad = 1 }
           print g[k] > globals
         }
