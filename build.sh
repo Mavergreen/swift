@@ -179,7 +179,7 @@ echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order
 #       5.3, above 10.9) for potentially unavailable and called itself: Double("1.1") overflowed the
 #       stack and Float(String) looped, in Core and in every -O client that inlined the body. It now
 #       delegates through a local function carrying the same @available, where the concrete init
-#       resolves. Behavior is upstream's on 11.0+; the compiler's own "infinite recursion" warning is gone.
+#       resolves. Behavior is upstream's on every OS, since `#available` is folded away under that flag; the compiler's own "infinite recursion" warning is gone.
 # Patches are --no-prefix format; patch_source applies them with -p0. A new patch needs its number here and a marker grep
 # below: a patch file this list lacks fails the build rather than being skipped, and
 # tests/runtime-patch-list-test.sh holds the list, the files and the marker greps together.

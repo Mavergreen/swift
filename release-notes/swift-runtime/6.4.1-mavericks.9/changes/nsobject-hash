@@ -1,0 +1,1 @@
+On 10.9 a Swift subclass of NSObject overrides hash as a method, override func hash(), because the 10.9 SDK declares it that way.

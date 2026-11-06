@@ -1,0 +1,1 @@
+Double("1.1") no longer crashes and Float(String) no longer hangs on 10.9; parsing a number from a string now works as upstream's does.

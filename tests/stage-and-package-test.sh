@@ -18,9 +18,15 @@ P=usr/local/mavergreen/swift-runtime
 
 mkdir -p "$T/built"
 printf 'int f(void){return 0;}\n' > "$T/f.c"
-for lib in libswiftCore libswiftSwiftOnoneSupport libswiftDarwin libswiftObjectiveC; do
+for lib in libswiftCore libswiftSwiftOnoneSupport; do
   cc -dynamiclib -arch x86_64 -mmacosx-version-min=10.9 -install_name "@rpath/$lib.dylib" \
     -o "$T/built/$lib.dylib" "$T/f.c"
+done
+# The overlays record the 10.9 SDK, as the real build's do: INGREDIENTS.md exempts only Core and OnoneSupport, so
+# conformance below fails if an overlay ever needs an sdk-pin deviation.
+for lib in libswiftDarwin libswiftObjectiveC; do
+  cc -dynamiclib -arch x86_64 -mmacosx-version-min=10.9 -Wl,-platform_version,macos,10.9,10.9 \
+    -install_name "@rpath/$lib.dylib" -o "$T/built/$lib.dylib" "$T/f.c"
 done
 
 echo "-- staging refuses a build missing any of the four dylibs, naming it"

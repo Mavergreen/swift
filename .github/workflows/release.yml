@@ -524,7 +524,7 @@ jobs:
         with: { name: swift-cross, path: dist }
 
       # One generator call writes the one file the appcasts below and the Release body all read --
-      # title, optional committed prose (release-notes/$VER.md, verbatim), What changed, Build
+      # title, the checked sentences under release-notes/swift-runtime/$VER/, What changed, Build
       # ingredients (only when a pin moved), and the footer. A gap it cannot fill honestly (no visible
       # tags, an unreadable ingredient pin) stops the run here rather than shipping a shorter body.
       # --min-os 10.9.5 describes the runtime and native pkgs. The cross feed signs these same notes, as
@@ -535,7 +535,7 @@ jobs:
         run: |
           VER="${{ needs.version.outputs.version }}"
           sh "$SHIPYARD_SCRIPTS/release-notes.sh" --tag "$VER" --version "$VER" \
-            --product Swift --min-os 10.9.5 --out dist/RELEASE_NOTES.md
+            --product Swift --short swift-runtime --min-os 10.9.5 --out dist/RELEASE_NOTES.md
 
       - name: Sign the three .pkgs + generate their Sparkle appcasts
         if: needs.version.outputs.publish == 'true'
