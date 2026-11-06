@@ -1,0 +1,1 @@
+Code that imports ObjectiveC may need changes to rebuild: Objective-C's boolean type now imports as Bool, not Int8, and NSObject's == and Hashable go through isEqual: and hash.

@@ -112,9 +112,11 @@ A reused build root keeps CMake's cached probe results across a rebuild. `build.
 `clang.cfg` beside it or the builtins archive changed (a toolchain update, say). After changing any other
 compiler or linker setting, remove that directory first, so `build.sh` reconfigures from scratch. The
 self-test binaries load the runtime just built, not the installed one (`DYLD_PRINT_LIBRARIES=1` shows
-it). `--gate` runs each 500 times, then 10 more under Guard Malloc. `SELFTEST_SUPPORT` adds upstream's own
-Darwin and ObjectiveC tests (`tests/upstream/*.list`), which `build.sh` stages with the test-support
-libraries they load from the bundle's `lib/`; `--gate` runs each `SELFTEST_UPSTREAM_RUNS` times, then once
+it). `--gate` runs each 500 times, then 10 more under Guard Malloc. `SELFTEST_SUPPORT` adds the upstream
+tests `tests/upstream/*.list` includes, which `build.sh` stages with the test-support libraries they load
+from the bundle's `lib/`. Of `objectivec.list`, two are included and neither exercises the ObjectiveC
+overlay (its excluded tests say why), so the overlay's acceptance is `tests/objc_overlay_test.swift` beside
+our other ObjC tests; `--gate` runs each `SELFTEST_UPSTREAM_RUNS` times, then once
 under Guard Malloc. The staged modules are binary: build the bundle with the toolchain that ran `build.sh`.
 
 ### The toolchain: self-hosting

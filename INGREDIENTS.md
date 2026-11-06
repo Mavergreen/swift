@@ -177,12 +177,13 @@ run the real-10.9 gate. It does: `vm-test`, a required check, installs each run'
 merges like any other, as the family's default has it.
 
 The gate is sized, so that upstream's tests can grow. `run-selftest.sh --gate` runs our own 16 binaries
-500x plus 10x under Guard Malloc and upstream's 14 (`SELFTEST_UPSTREAM_RUNS`, default 20, plus 1 under Guard
-Malloc), after a `--loads` run. Measured on the real box (ultimate-hat): 195 s for all 30, about 160 s for ours
-and 35 s for upstream's (14 x 21 runs, 0.12 s a run on average, PrintFloat dominating at 0.9 s). In CI's VM the
+500x plus 10x under Guard Malloc and upstream's 16, its 8 included tests at -O and -Onone
+(`SELFTEST_UPSTREAM_RUNS`, default 20, plus 1 under Guard Malloc), 32 in all, after a `--loads` run. Measured
+on the real box (ultimate-hat) when upstream's were 14: 195 s for all 30, about 160 s for ours and 35 s for
+upstream's (14 x 21 runs, 0.12 s a run on average, PrintFloat dominating at 0.9 s). In CI's VM the
 same ten original binaries took 52 s (run 40272925587), where the box needs about 125 s for them, a ratio of
 0.42, so a VM gate is about 80 s today; the arithmetic below
-keeps the box's time as the ceiling, not the VM's. Release 2 adds about 120 binaries: 134 x 21 x 0.12 s is
+keeps the box's time as the ceiling, not the VM's. Release 2 adds about 120 binaries: 136 x 21 x 0.12 s is
 about 340 s on the box, so about 500 s with ours, and 17 min if the VM were 2x slower than the box. Compiling
 them in the VM is the larger cost: the whole job took 10 min with 20 compiles, so at a pessimistic 15 s each
 150 binaries cost about 40 min. Install, compiles, gate and smoke total about 70 min at that worst, so

@@ -1,11 +1,11 @@
 // objc_interop_test.swift — objc-interop class realization on 10.9: an NSObject subclass, messaged
-// through real Objective-C dispatch. Builds with or without the ObjectiveC overlay: without it
-// (the bare Clang module) NSObject's init is failable and BOOL is Int8; with it (this repo's 10.9
-// toolchain since libswiftObjectiveC) init is not failable and BOOL is Bool; the 10.9 SDK's -hash is a
-// method, a newer one's a property. So the instance is held optional and each form is taken as it comes;
-// swift.org's toolchain, with its overlay, takes the same lines unchanged. The nil guard is dead
-// code with the overlay, kept so the one source means the same on both. The ObjectiveC overlay's own
-// surface is objc_overlay_test.swift.
+// through real Objective-C dispatch. Builds with or without the ObjectiveC overlay: BOOL is Int8 without
+// it (the bare Clang module) and Bool with it (this repo's toolchains since libswiftObjectiveC). The 10.9
+// SDK has no nullability, so against it NSObject's init is failable either way (MyObj() is MyObj?), and
+// its -hash is a method; a newer SDK's init is not failable and its hash is a property. So the instance
+// is held optional and each form is taken as it comes; swift.org's toolchain, with a newer SDK, takes the
+// same lines unchanged, its nil guard dead code, kept so the one source means the same on both. The
+// ObjectiveC overlay's own surface is objc_overlay_test.swift.
 import ObjectiveC
 
 var acc: UInt64 = 0
@@ -19,7 +19,7 @@ func value(_ f: () -> Int) -> Int { f() }
 func value(_ v: Int) -> Int { v }
 
 class MyObj: NSObject { func tag() -> Int { 0xBEEF } }
-let made: MyObj? = MyObj()        // optional without the overlay, promoted with it
+let made: MyObj? = MyObj()        // optional against the 10.9 SDK, promoted against a newer one
 guard let o = made else { print("objc_interop_test: MyObj() returned nil"); exit(1) }
 mix(o.tag())
 mix(String(describing: type(of: o)))
