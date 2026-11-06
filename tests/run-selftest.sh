@@ -1,14 +1,23 @@
 #!/bin/sh
 # platform: macOS-only -- runs the installed runtime's Mach-O tests, and Guard Malloc is libgmalloc.dylib
-#   usage: run-selftest.sh [--gate]
+#   usage: run-selftest.sh [--gate|--loads]
 #          Validates the Swift runtime INSTALLED on this Mac (OS X 10.9) by running every bin/* test,
 #          which were built with an rpath of $SWIFT_RUNTIME_PREFIX/lib/swift (make-selftest.sh).
 #            (default)  each test once
 #            --gate     the acceptance bar: SELFTEST_RUNS consecutive clean exits (default 500),
 #                       then 10 runs under Guard Malloc + MallocScribble + MallocGuardEdges
+#            --loads    each test once with DYLD_PRINT_LIBRARIES=1: every libswift*.dylib that the
+#                       runtime ships (the names in $SWIFT_RUNTIME_PREFIX/lib/swift) must load from
+#                       there, every other libswift* (test support) from this bundle's lib/. The one
+#                       mode that sets a DYLD variable, and only on the test's own command.
+#          Every run is killed after SELFTEST_TIMEOUT seconds (default 60) and reported as a timeout:
+#          a hang must fail the gate, not stall it. That needs perl (10.9 has /usr/bin/perl); without
+#          one this refuses to run, rather than run without a timeout.
 #          SWIFT_RUNTIME_PREFIX  default /usr/local/mavergreen/swift-runtime; must match the rpath the
 #                                tests were built with
 #          SELFTEST_GMALLOC      default /usr/lib/libgmalloc.dylib
+#          SELFTEST_TIMEOUT      seconds per run, default 60
+#          SELFTEST_PERL         the perl to time runs with; default /usr/bin/perl, else perl on PATH
 #          Exit 0 all pass, 1 any failure or any DYLD_* variable set, 2 any other argument, 77 no
 #          runtime installed (the family SKIP code: a CI runner never has one) or no bin/ here (the
 #          repo's own tests/, which is not a bundle).
@@ -16,14 +25,15 @@ set -eu
 cd "$(dirname "$0")"
 # Anything else once ran quick mode: a mistyped -gate printed ALL PASS as if it had gated.
 case "$#:${1:-}" in
-  0:|1:--gate) ;;
-  *) echo "usage: run-selftest.sh [--gate]" >&2; exit 2 ;;
+  0:|1:--gate|1:--loads) ;;
+  *) echo "usage: run-selftest.sh [--gate|--loads]" >&2; exit 2 ;;
 esac
 
 PREFIX="${SWIFT_RUNTIME_PREFIX:-/usr/local/mavergreen/swift-runtime}"
 CORE="$PREFIX/lib/swift/libswiftCore.dylib"
 GMALLOC="${SELFTEST_GMALLOC:-/usr/lib/libgmalloc.dylib}"
 RUNS="${SELFTEST_RUNS:-500}"
+TIMEOUT="${SELFTEST_TIMEOUT:-60}"
 GMALLOC_RUNS=10
 
 [ -f "$CORE" ] || {
@@ -44,23 +54,64 @@ case "$RUNS" in
   ''|*[!0-9]*|0) echo "SELFTEST_RUNS must be a positive integer (got '$RUNS')" >&2; exit 1 ;;
 esac
 
+case "$TIMEOUT" in
+  ''|*[!0-9]*|0) echo "SELFTEST_TIMEOUT must be a positive integer (got '$TIMEOUT')" >&2; exit 1 ;;
+esac
+if [ -n "${SELFTEST_PERL:-}" ]; then PERL="$SELFTEST_PERL"
+elif [ -x /usr/bin/perl ]; then PERL=/usr/bin/perl
+else PERL="$(command -v perl || :)"; fi
+[ -n "$PERL" ] && [ -x "$PERL" ] || { echo "no perl (${SELFTEST_PERL:-/usr/bin/perl}): cannot time-limit the runs, so not running them" >&2; exit 1; }
+
+# limited ARGS... : runs ARGS under the timeout; exit 142 (SIGALRM) means it ran out. Leading NAME=value
+# words (DYLD_* only) go into the child's environment from inside perl: a modern macOS's SIP strips them
+# from a platform perl's own environment, so `VAR=x perl ...` would never reach the test; on 10.9 it
+# makes no difference.
+limited() {
+  "$PERL" -e 'alarm shift; while ($ARGV[0] =~ /^(DYLD_\w+)=(.*)$/s) { $ENV{$1} = $2; shift } exec @ARGV or exit 127' "$TIMEOUT" "$@"
+}
+# reason LABEL RC : the failure text for run LABEL that exited RC
+reason() { if [ "$2" = 142 ]; then echo "$1 timed out after $TIMEOUT s"; else echo "$1 exited non-zero"; fi; }
+
 MODE="${1:-quick}"
 pass=0; fail=0; failed=""
+if [ "$MODE" = "--loads" ]; then
+  # What the runtime pkg ships is read off the prefix itself, so a later layer needs no edit here.
+  # dyld prints the path as it opened it (maybe through a symlink, maybe bin/../lib), so compare physical dirs.
+  RTDIR="$PREFIX/lib/swift"; RTDIR_P="$(cd -P "$RTDIR" && pwd)"; SUPDIR="$(pwd -P)/lib"
+  shipped="$(cd "$RTDIR" && ls -1 libswift*.dylib 2>/dev/null || :)"
+fi
 for t in bin/*; do
   [ -f "$t" ] && [ -x "$t" ] || continue
   name="$(basename "$t")"; ok=1; why=""
-  if [ "$MODE" = "--gate" ]; then
+  if [ "$MODE" = "--loads" ]; then
+    # DYLD_PRINT_LIBRARIES goes to stderr (10.9's dyld; modern ones too).
+    rc=0; err="$(limited DYLD_PRINT_LIBRARIES=1 "./$t" 2>&1 >/dev/null)" || rc=$?
+    [ "$rc" = 0 ] || { ok=0; why="$(reason "run 1 of 1" "$rc") with DYLD_PRINT_LIBRARIES=1"; }
+    for p in $(printf '%s\n' "$err" | sed -n 's/^[^/]*\(\/[^ ]*libswift[^ ]*\.dylib\).*$/\1/p' | sort -u); do
+      [ "$ok" = 1 ] || break
+      lib="$(basename "$p")"; dir="$(dirname "$p")"
+      # (physical, so bin/../lib and a symlinked prefix compare as the places they are)
+      dir="$(cd -P "$dir" 2>/dev/null && pwd || echo "$dir")"
+      if printf '%s\n' "$shipped" | grep -qx -- "$lib"; then
+        [ "$dir" = "$RTDIR_P" ] || { ok=0; why="$lib loaded from $p, not from $RTDIR"; }
+      else
+        [ "$dir" = "$SUPDIR" ] || { ok=0; why="$lib loaded from $p, not from the bundle's $SUPDIR"; }
+      fi
+    done
+    label="loads"
+  elif [ "$MODE" = "--gate" ]; then
     n=0
     while [ "$n" -lt "$RUNS" ]; do
-      "./$t" >/dev/null 2>&1 || { ok=0; why="run $((n + 1)) of $RUNS exited non-zero"; break; }
+      rc=0; limited "./$t" >/dev/null 2>&1 || rc=$?
+      [ "$rc" = 0 ] || { ok=0; why="$(reason "run $((n + 1)) of $RUNS" "$rc")"; break; }
       n=$((n + 1))
     done
     g=0
     while [ "$ok" = 1 ] && [ "$g" -lt "$GMALLOC_RUNS" ]; do
       # libgmalloc announces itself on stderr ("GuardMalloc[pid]: ...") on 10.9 and on modern macOS
       # alike; its absence means the run was not guarded, which must not read as a pass.
-      err="$(DYLD_INSERT_LIBRARIES="$GMALLOC" MallocScribble=1 MallocGuardEdges=1 "./$t" 2>&1 >/dev/null)" \
-        || { ok=0; why="Guard Malloc run $((g + 1)) of $GMALLOC_RUNS exited non-zero"; break; }
+      rc=0; err="$(MallocScribble=1 MallocGuardEdges=1 limited DYLD_INSERT_LIBRARIES="$GMALLOC" "./$t" 2>&1 >/dev/null)" || rc=$?
+      [ "$rc" = 0 ] || { ok=0; why="$(reason "Guard Malloc run $((g + 1)) of $GMALLOC_RUNS" "$rc")"; break; }
       case "$err" in
         *'GuardMalloc['*) ;;
         *) ok=0; why="Guard Malloc did not load ($GMALLOC)"; break ;;
@@ -69,7 +120,8 @@ for t in bin/*; do
     done
     label="${RUNS}x + ${GMALLOC_RUNS}x Guard Malloc"
   else
-    "./$t" >/dev/null 2>&1 || { ok=0; why="exited non-zero"; }
+    rc=0; limited "./$t" >/dev/null 2>&1 || rc=$?
+    [ "$rc" = 0 ] || { ok=0; why="$(reason "run 1 of 1" "$rc")"; }
     label="run"
   fi
   if [ "$ok" = 1 ]; then

@@ -8,8 +8,7 @@
 #                             -no-stdlib-rpath and one rpath, $SWIFT_RUNTIME_PREFIX/lib/swift
 #                             (default /usr/local/mavergreen/swift-runtime). Run after build.sh.
 #            SWIFTC=<swiftc>  exactly `$SWIFTC -O|-Onone <file> -o <out>`: this repo's own toolchain,
-#                             on 10.9, whose defaults supply target, SDK and rpath. Skips every test
-#                             whose first line is `// requires: overlays`. With SWIFT_RUNTIME_PREFIX
+#                             on 10.9, whose defaults supply target, SDK and rpath. With SWIFT_RUNTIME_PREFIX
 #                             also set (a staged, uninstalled runtime), each compile adds
 #                             `-Xlinker -headerpad_max_install_names`, and an install_name_tool then
 #                             replaces the wrapper's rpath with $SWIFT_RUNTIME_PREFIX/lib/swift:
@@ -63,9 +62,6 @@ B="$DIST/$NAME"; rm -rf "$B"; mkdir -p "$B/bin"
 for src in "${SELFTEST_SRC:-$REPO/tests}"/*.swift; do
   [ -f "$src" ] || continue
   n="$(basename "$src" .swift)"
-  if [ -n "${SWIFTC:-}" ] && [ "$(head -1 "$src")" = "// requires: overlays" ]; then
-    echo "skipped (needs the overlays): $n" >&2; continue
-  fi
   compile O "$src" "$B/bin/$n"; echo "built: $n" >&2
   compile Onone "$src" "$B/bin/$n-Onone"; echo "built: $n-Onone" >&2
 done

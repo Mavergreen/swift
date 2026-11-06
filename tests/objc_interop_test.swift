@@ -1,9 +1,11 @@
 // objc_interop_test.swift — objc-interop class realization on 10.9: an NSObject subclass, messaged
-// through real Objective-C dispatch. Builds with or without the ObjectiveC overlay: this repo's own 10.9
-// toolchain (which has none yet) imports the bare Clang module, where NSObject's init is failable and BOOL
-// is Int8 and its SDK's -hash a method, so the instance is held optional and both are taken as they come;
-// swift.org's, with its overlay,
-// takes the same lines unchanged.
+// through real Objective-C dispatch. Builds with or without the ObjectiveC overlay: without it
+// (the bare Clang module) NSObject's init is failable and BOOL is Int8; with it (this repo's 10.9
+// toolchain since libswiftObjectiveC) init is not failable and BOOL is Bool; the 10.9 SDK's -hash is a
+// method, a newer one's a property. So the instance is held optional and each form is taken as it comes;
+// swift.org's toolchain, with its overlay, takes the same lines unchanged. The nil guard is dead
+// code with the overlay, kept so the one source means the same on both. The ObjectiveC overlay's own
+// surface is objc_overlay_test.swift.
 import ObjectiveC
 
 var acc: UInt64 = 0
