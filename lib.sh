@@ -360,7 +360,12 @@ runtime_patches_unlisted() {
 # members define a global that is neither a <symbol> nor ___recaulk_-prefixed: libswiftCore takes the
 # APIs it names and nothing more, since the whole archive would bind weak imports whose presence the
 # runtime reads as "the OS has this" (os_signpost_enabled turns tracing on over a NULL os_log_create on
-# 10.9). ${NM:-nm} reads the archive (-A), ${AR:-ar} extracts and writes it.
+# 10.9). RECAULK_ALSO_HIDE, an ERE, names the incidental globals a picked member may also define (clang's
+# ___copy_helper_block_*, macports-legacy-support's ___mpls_*, which Recaulk's dispatch_modern and openat
+# members leave global): a global that matches is accepted, and still hidden through <out.unexported> like
+# the rest; nothing else is accepted, so an unasked OS API still fails. Unset or empty accepts none. awk
+# matches the ERE anywhere in the name, so callers anchor it (^...); and awk -v interprets backslash escapes
+# in the value, so callers must not rely on \.-style escapes (use [.] instead). ${NM:-nm} reads the archive (-A), ${AR:-ar} extracts and writes it.
 recaulk_subset() {
   _rs_in="$1"; _rs_out="$2"; _rs_unx="$3"; shift 3
   [ $# -gt 0 ] || { echo "recaulk_subset: no symbols named" >&2; return 2; }

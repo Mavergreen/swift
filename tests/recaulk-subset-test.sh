@@ -56,13 +56,13 @@ grep -q 'greedy.o also defines _api_four' "$T/err" || fail "did not name _api_fo
 rc=0; recaulk_subset "$T/in.a" "$T/x.a" "$T/x.unx" 2>/dev/null || rc=$?; [ "$rc" -eq 2 ] || fail "no symbols: exit $rc, not 2"
 echo "-- incidental globals: refused unless the caller names them, and then hidden"
 INC='^___(copy|destroy)_helper_block_|^___mpls_'
-if recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk 2> "$T/err"; then fail "accepted fwd-blk.o's block helper without RECAULK_ALSO_HIDE"; fi
+if ( unset RECAULK_ALSO_HIDE; recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk ) 2> "$T/err"; then fail "accepted fwd-blk.o's block helper without RECAULK_ALSO_HIDE"; fi
 grep -q '___copy_helper_block_8_32b' "$T/err" || fail "did not name ___copy_helper_block_8_32b: $(cat "$T/err")"
-RECAULK_ALSO_HIDE="$INC" recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk || fail "refused incidental globals with RECAULK_ALSO_HIDE"
+( RECAULK_ALSO_HIDE="$INC"; export RECAULK_ALSO_HIDE; recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk ) || fail "refused incidental globals with RECAULK_ALSO_HIDE"
 for g in ___copy_helper_block_8_32b ___mpls_best_fchdir _api_blk; do
   grep -qx "$g" "$T/b.unx" || fail "$g missing from the unexported list: $(tr '\n' ' ' < "$T/b.unx")"
 done
-if RECAULK_ALSO_HIDE="$INC" recaulk_subset "$T/in.a" "$T/s.a" "$T/s.unx" _api_sig 2> "$T/err"; then fail "RECAULK_ALSO_HIDE let an unasked _os_signpost_enabled through"; fi
+if ( RECAULK_ALSO_HIDE="$INC"; export RECAULK_ALSO_HIDE; recaulk_subset "$T/in.a" "$T/s.a" "$T/s.unx" _api_sig ) 2> "$T/err"; then fail "RECAULK_ALSO_HIDE let an unasked _os_signpost_enabled through"; fi
 grep -q 'also defines _os_signpost_enabled' "$T/err" || fail "did not name _os_signpost_enabled: $(cat "$T/err")"
-RECAULK_ALSO_HIDE= recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk 2>/dev/null && fail "an empty RECAULK_ALSO_HIDE accepted incidental globals"
+if ( RECAULK_ALSO_HIDE=; export RECAULK_ALSO_HIDE; recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk ) 2>/dev/null; then fail "an empty RECAULK_ALSO_HIDE accepted incidental globals"; fi
 echo "PASS"
