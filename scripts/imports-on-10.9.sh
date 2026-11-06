@@ -47,7 +47,9 @@ collect() {
   : > "$W/seen/$_c_key"
   [ -f "$SDK$1" ] || return 0
   # An alias prints as `I _memcpy (indirect for __platform_memmove)`: libsystem_c's memcpy is one.
-  "${NM:-nm}" -arch x86_64 -gU "$SDK$1" | awk '$1 == "I" { print $2; next } { print $NF }' >> "$2" || return 1
+  # (nm's output is captured first: in a pipe, only awk's status would be seen.)
+  _c_nm="$("${NM:-nm}" -arch x86_64 -gU "$SDK$1")" || return 1
+  printf '%s\n' "$_c_nm" | awk '$1 == "I" { print $2; next } { print $NF }' >> "$2" || return 1
   "${OTOOL:-otool}" -arch x86_64 -l "$SDK$1" > "$W/lc" || return 1
   awk '$1 == "cmd" { r = ($2 == "LC_REEXPORT_DYLIB") } r && $1 == "name" { print $2 }' "$W/lc" > "$W/re.$_c_key"
   while read -r _c_re; do collect "$_c_re" "$2" || return 1; done < "$W/re.$_c_key"
@@ -72,13 +74,19 @@ for D in "$@"; do
   [ -n "$IMPORTS" ] || { echo "FAIL: read no imports from $D" >&2; exit 1; }
   # `(from libobjc)` names a library by its short name (the file name up to its first dot); the install
   # names a dylib records say where that library lives.
-  "${OTOOL:-otool}" -L "$D" | sed 1d | sed 's/^[[:space:]]*//; s/ (compat.*//' | while read -r p; do
+  # Captured first, for the same reason: a failed otool must not read as "links nothing".
+  LINKS="$("${OTOOL:-otool}" -L "$D")" || { echo "FAIL: could not list $D's libraries" >&2; exit 1; }
+  printf '%s\n' "$LINKS" | sed 1d | sed 's/^[[:space:]]*//; s/ (compat.*//' | while read -r p; do
     s="${p##*/}"; printf '%s %s\n' "${s%%.*}" "$p"
-  done > "$W/deps" || { echo "FAIL: could not list $D's libraries" >&2; exit 1; }
+  done > "$W/deps"
+  [ -s "$W/deps" ] || { echo "FAIL: $D links no libraries, yet imports symbols" >&2; exit 1; }
   N=0; ALLOWED=0
   while read -r SYM REST; do
     LIB="${REST##*\(from }"; LIB="${LIB%\)}"
     LP="$(awk -v l="$LIB" '$1 == l { print $2; exit }' "$W/deps")"
+    if [ -z "$LP" ]; then
+      echo "$BASE: $SYM ($LIB, library not among the dylib's own)"; echo 1 >> "$W/failed"; continue
+    fi
     case "$LP" in /usr/lib/*|/System/Library/Frameworks/*) ;; *) continue ;; esac
     N=$((N + 1))
     EXP="$(exports_of "$LP")" || exit 1
@@ -86,7 +94,7 @@ for D in "$@"; do
     ! grep -Fxq -- "$SYM" "$EXP" || continue
     case "$REST" in
       '[weak-import] '*)
-        if grep -Eq "^$BASE $SYM -- " "$ALLOW"; then ALLOWED=$((ALLOWED + 1)); continue; fi
+        if awk -v b="$BASE" -v s="$SYM" '$1 == b && $2 == s && $3 == "--" { f = 1 } END { exit !f }' "$ALLOW"; then ALLOWED=$((ALLOWED + 1)); continue; fi
         echo "$BASE: $SYM ($LIB, weak)" ;;
       *) echo "$BASE: $SYM ($LIB, strong)" ;;
     esac
@@ -94,6 +102,7 @@ for D in "$@"; do
   done <<EOT
 $IMPORTS
 EOT
+  [ "$N" -gt 0 ] || { echo "FAIL: $D imports nothing from /usr/lib or /System/Library/Frameworks -- a misread, not a clean dylib" >&2; exit 1; }
   if [ -e "$W/failed" ]; then STATUS=1; else echo "imports-on-10.9: $BASE OK ($N OS imports: all in the 10.9 SDK, $ALLOWED weak and absent by allowlist)"; fi
   rm -f "$W/failed"
 done

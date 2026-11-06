@@ -76,6 +76,27 @@ if run "$T/nocite.txt" "$T/weak.dylib" > /dev/null; then fail "accepted an allow
 if run "$T/none.txt" "$T/empty.dylib" > /dev/null; then fail "passed a dylib nm cannot read"; fi
 if run "$T/none.txt" "$T/nothere.dylib" > /dev/null; then fail "passed a dylib that is not there"; fi
 if sh "$CHECK" "$T/nosdk" "$T/none.txt" "$T/ok.dylib" > /dev/null 2>&1; then fail "passed with no SDK"; fi
+echo "-- a reader that fails, or reads nothing, never passes as a dylib with nothing to check"
+printf '%s\n' '#!/bin/sh' 'case "$*" in *-L*) exit 1 ;; esac' 'exec otool "$@"' > "$T/otool-no-L"
+printf '%s\n' '#!/bin/sh' 'case "$*" in *-gU*) exit 1 ;; esac' 'exec nm "$@"' > "$T/nm-no-exports"
+printf '%s\n' '#!/bin/sh' 'case "$*" in *-L*) otool "$@" | grep -v libSystem; echo "	/usr/lib/libother.dylib (compatibility version 1.0.0, current version 1.0.0)" ;; *) exec otool "$@" ;; esac' > "$T/otool-other-lib"
+printf '%s\n' '#!/bin/sh' 'case "$*" in *-L*) otool "$@" | sed 2,\$d ;; *) exec otool "$@" ;; esac' > "$T/otool-links-nothing"
+chmod +x "$T"/otool-* "$T/nm-no-exports"
+if OTOOL="$T/otool-no-L" sh "$CHECK" "$SDK" "$T/none.txt" "$T/ok.dylib" > /dev/null 2>&1; then fail "passed when otool -L failed"; fi
+if OTOOL="$T/otool-links-nothing" sh "$CHECK" "$SDK" "$T/none.txt" "$T/ok.dylib" > /dev/null 2>&1; then fail "passed a dylib otool -L showed linking nothing"; fi
+if NM="$T/nm-no-exports" sh "$CHECK" "$SDK" "$T/none.txt" "$T/ok.dylib" > /dev/null 2>&1; then fail "passed when nm could not read the stubs"; fi
+out="$(OTOOL="$T/otool-other-lib" sh "$CHECK" "$SDK" "$T/none.txt" "$T/ok.dylib" 2>&1)" && fail "passed imports from a library the dylib does not list"
+printf '%s\n' "$out" | grep -q '_malloc (libSystem, library not among' || fail "did not name the unknown library: $out"
+# Only @rpath imports: nothing for this check to look at, which a misread would look like too.
+printf '%s\n' 'int fakevar = 1;' > "$T/fv.c"
+$CC -dynamiclib -install_name @rpath/libfv.dylib "$T/fv.c" -o "$T/libfv.dylib" || fail "cannot build the @rpath library"
+printf '%s\n' 'extern int fakevar;' 'int f(void) { return fakevar; }' > "$T/rp.c"
+$CC -dynamiclib "$T/rp.c" "$T/libfv.dylib" -o "$T/rp.dylib" || fail "cannot build the @rpath-only fixture"
+if run "$T/none.txt" "$T/rp.dylib" > /dev/null; then fail "passed a dylib with no OS imports"; fi
+# The allowlist is matched literally: a dot in a symbol is not any character.
+printf '%s\n' 'weak.dylib _clock.ettime -- fake.h:12' > "$T/regex.txt"
+if run "$T/regex.txt" "$T/weak.dylib" > /dev/null; then fail "an allowlist symbol was matched as a pattern"; fi
+
 echo "-- the shipped allowlist cites a guard on every line"
 run "$REPO/scripts/resources/weak-absent-on-10.9.txt" "$T/ok.dylib" > /dev/null || fail "the shipped allowlist is not well formed: $(run "$REPO/scripts/resources/weak-absent-on-10.9.txt" "$T/ok.dylib")"
 echo PASS
