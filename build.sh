@@ -167,10 +167,14 @@ echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order
 #  0009 no libc++ autolink — Metadata.cpp's `.linker_option "-lc++"` (for a statically linked
 #       libswiftCore, never built here) would resolve to the SDK's libc++, i.e. 10.9's own, and load a
 #       second libc++ beside libcxx22's, which the link names by path.
+#  0010 Foundation-free StdlibUnittest — test support only, never in a pkg (step 5b builds it for the
+#       self-test bundle): under -D MAVERICKS_NO_FOUNDATION it imports no Foundation, which no 10.9 pkg
+#       ships (its weak Optional<Foundation.Locale> aborted every test there), and reads
+#       SystemVersion.plist with POSIX calls. Core's and OnoneSupport's bytes are unchanged by it.
 # Patches are --no-prefix format; patch_source applies them with -p0. A new patch needs its number here and a marker grep
 # below: a patch file this list lacks fails the build rather than being skipped, and
 # tests/runtime-patch-list-test.sh holds the list, the files and the marker greps together.
-RUNTIME_PATCHES="0004 0005 0007 0008 0009"
+RUNTIME_PATCHES="0004 0005 0007 0008 0009 0010"
 PATCHES_DIR="$HERE/patches/runtime"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $RUNTIME_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED"
@@ -185,6 +189,7 @@ grep -q 'class_getInstanceSize((Class)const_cast' swift/stdlib/public/runtime/Me
 grep -q 'ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101404' swift/include/swift/Runtime/Config.h || { echo "patch 0007 (is-swift mask) not applied"; exit 1; }
 grep -q 'was: hasFeature(Macros)' swift/stdlib/public/core/StringBridge.swift || { echo "patch 0008 (DebugDescription) not applied"; exit 1; }
 grep -q 'Mavericks: no libc++ autolink' swift/stdlib/public/runtime/Metadata.cpp || { echo "patch 0009 (no libc++ autolink) not applied"; exit 1; }
+grep -q 'Mavericks: Foundation-free StdlibUnittest' swift/stdlib/private/StdlibUnittest/StdlibUnittest.swift || { echo "patch 0010 (Foundation-free StdlibUnittest) not applied"; exit 1; }
 # de-instrumented: no debug logging must ship
 ! grep -rq 'getenv("MAV_' swift/stdlib/public/runtime/ || { echo "MAV debug logging leaked into patches"; exit 1; }
 
@@ -290,6 +295,64 @@ build_overlay Darwin swiftDarwin --link "$RECAULK_DARWIN_A" --unexported "$RECAU
   "$OVS/Darwin/tgmath.swift" "$OVS/Darwin/POSIXError.swift" "$OVS/Darwin/MachError.swift"
 # ObjectiveC imports Darwin, found in --out, where Darwin was just written.
 build_overlay ObjectiveC swiftObjectiveC --I "$OVS/ObjectiveC/shims" -- "$OVS/ObjectiveC/ObjectiveC.swift"
+
+# spec: "Upstream tests" -- upstream's own Darwin and ObjectiveC tests run on the 10.9 gate, and most import
+#       StdlibUnittest: it, and the three modules it imports, are built here with build-module.sh, as their
+#       6.4.1 CMakeLists.txt lists their sources and flags, against the Darwin and ObjectiveC just built. Test
+#       support, never shipped: they go to their own dir, $SUP, not lib/swift/macosx, so no pkg's staging
+#       (stage-runtime.sh, stage-toolchain.sh) and no toolchain_digest sees them; step 6 stages them for the
+#       self-test bundle and step 7 holds the runtime's payload to none of them. StdlibUnittest is patch
+#       0010's, -D MAVERICKS_NO_FOUNDATION. Release 1 ships no _Concurrency, so it is built without
+#       -D SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY, which compiles out its async entry points (runAllTestsAsync,
+#       the async `code`): Release 2 passes it. Not built: stdlib/linker-support's
+#       magic-symbols-for-install-name.c, which only names the OS's own earlier install names of a library.
+#       Their C and C++ (Subprocess.c; InspectValue, InterceptTraps and OpaqueIdentityFunctions.cpp) are
+#       compiled by the host clang against the 10.9 SDK, with the runtime's threading package (pthreads) and
+#       libcxx22's headers, and handed to the link; they call nothing of a C++ library (step 7 holds them to
+#       that), so no libc++ is linked.
+SUP="$ROOT/stdlib-build/selftest-support"; SUW="$ROOT/selftest-support"; PRIV="$ROOT/swift/stdlib/private"
+rm -rf "$SUP" "$SUW"; mkdir -p "$SUW/src" "$SUW/obj"
+"${PY:-python3}" "$ROOT/swift/utils/gyb" --line-directive '' -o "$SUW/src/AtomicInt.swift" "$PRIV/SwiftPrivate/AtomicInt.swift.gyb" \
+  || { echo "FAIL: gyb failed on $PRIV/SwiftPrivate/AtomicInt.swift.gyb"; exit 1; }
+# support_object clang|clang++ <source> [<flag>...] -- $SUW/obj/<source's name>.o
+support_object() {
+  _so_cc="$1"; _so_s="$2"; shift 2
+  # shellcheck disable=SC2086  # space-free words
+  "$TC/bin/$_so_cc" -c -target "$ARCH-apple-macosx$DEPLOYMENT" -isysroot "$SDK_OVERLAYS" $PM_C -O2 -g0 -fPIC -fvisibility=hidden \
+    -DNDEBUG -DSWIFT_THREADING_PTHREADS -DSWIFT_LIBRARY_EVOLUTION=1 -I"$ROOT/stdlib-build/include" -I"$ROOT/swift/include" \
+    -I"$ROOT/swift/stdlib/include" -I"$ROOT/swift/stdlib/public/SwiftShims" "$@" -o "$SUW/obj/${_so_s##*/}.o" "$_so_s" \
+    || { echo "FAIL: could not compile $_so_s"; exit 1; }
+}
+support_object clang "$PRIV/SwiftPrivateLibcExtras/Subprocess.c"
+for f in InspectValue InterceptTraps OpaqueIdentityFunctions; do
+  # shellcheck disable=SC2086  # space-free words
+  support_object clang++ "$PRIV/StdlibUnittest/$f.cpp" -std=c++17 -fno-exceptions -fno-rtti $CXX_LIBCXX \
+    -DSWIFT_INLINE_NAMESPACE=__runtime -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1
+done
+# One line per module, in the order they import each other: build-module.sh <module> [its options --] <sources>...
+build_support() {
+  _bs_m="$1"; shift
+  SWIFT_WORK="$ROOT" SWIFTC="$TC/bin/swiftc" LLD="$LLD" sh "$HERE/scripts/build-module.sh" \
+    --name "$_bs_m" --link-name "swift$_bs_m" --sdk "$SDK_OVERLAYS" --resource-dir "$RES" \
+    --availability "$ROOT/swift/utils/availability-macros.def" --work "$SUW/work/$_bs_m" --out "$SUP" "$@" \
+    || { echo "FAIL: could not build the test-support module $_bs_m"; exit 1; }
+}
+P="$PRIV/SwiftPrivate"
+build_support SwiftPrivate --flag -parse-stdlib --flag -Xfrontend --flag -disable-access-control -- \
+  "$P/SwiftPrivate.swift" "$P/IO.swift" "$P/ShardedAtomicCounter.swift" "$SUW/src/AtomicInt.swift"
+P="$PRIV/SwiftPrivateLibcExtras"
+build_support SwiftPrivateLibcExtras --flag -D --flag SWIFT_STDLIB_HAS_COMMANDLINE --link "$SUW/obj/Subprocess.c.o" -- \
+  "$P/SwiftPrivateLibcExtras.swift" "$P/Subprocess.swift"
+P="$PRIV/SwiftPrivateThreadExtras"
+build_support SwiftPrivateThreadExtras -- "$P/SwiftPrivateThreadExtras.swift" "$P/ThreadBarriers.swift"
+P="$PRIV/StdlibUnittest"
+build_support StdlibUnittest --flag -enable-experimental-feature --flag Lifetimes --flag -D --flag MAVERICKS_NO_FOUNDATION \
+  --link "$SUW/obj/InspectValue.cpp.o" --link "$SUW/obj/InterceptTraps.cpp.o" --link "$SUW/obj/OpaqueIdentityFunctions.cpp.o" -- \
+  "$P/StdlibUnittest.swift" "$P/CheckStrideable.swift" "$P/InspectValue.swift" "$P/LifetimeTracked.swift" "$P/MinimalTypes.swift" \
+  "$P/OpaqueIdentityFunctions.swift" "$P/RaceTest.swift" "$P/Statistics.swift" "$P/StdlibCoreExtras.swift" \
+  "$P/StringConvertible.swift" "$P/StringTestHelpers.swift" "$P/TestHelpers.swift" "$P/TypeIndexed.swift"
+SUPPORT_DYLIBS="$SUP/$ARCH/libswiftSwiftPrivate.dylib $SUP/$ARCH/libswiftSwiftPrivateLibcExtras.dylib $SUP/$ARCH/libswiftSwiftPrivateThreadExtras.dylib $SUP/$ARCH/libswiftStdlibUnittest.dylib"
+echo "    test support (never in a pkg): $SUP: SwiftPrivate, SwiftPrivateLibcExtras, SwiftPrivateThreadExtras, StdlibUnittest"
 
 echo "==> 6. stage the payload (usr/local/mavergreen/swift-runtime/, for package.sh's pkgbuild --root)"
 OUT="${SWIFT_RUNTIME_OUT:-$SWIFT_BUILD/payload/runtime}"
@@ -399,4 +462,20 @@ for lib in $SHIPPED_DYLIBS; do
   ABI="$("${NM:-nm}" -gU "$lib" | awk '{print $NF}' | grep -E '^___cxa_|^___gxx_personality|^__Unwind_' || :)"
   [ -z "$ABI" ] || { printf '%s\n' "$ABI"; echo "FAIL: $lib defines C++ ABI symbols of its own (listed above)"; exit 1; }
 done
-echo "OK: minOS $DEPLOYMENT; no os_unfair_lock; Recaulk's $RECAULK_RUNTIME_SYMBOLS (libswiftCore) and $RECAULK_DARWIN_SYMBOLS (libswiftDarwin) defined and hidden; no debug strings; no build paths; checked $(for lib in $SHIPPED_DYLIBS; do printf '%s ' "${lib##*/}"; done); staged in $OUT"
+# The test-support dylibs (step 5b) never ship: none is in the runtime's payload, by name or by bytes. They
+# run on the 10.9 box, so their imports are held to 10.9's, and they call no C++ library (none is linked).
+STAGED="$(dirname "$CORE")"
+for lib in $SUPPORT_DYLIBS; do
+  [ -f "$lib" ] || { echo "FAIL: no $lib to check"; exit 1; }
+  [ ! -e "$STAGED/${lib##*/}" ] || { echo "FAIL: the runtime's payload holds the test-support ${lib##*/}"; exit 1; }
+  for s in "$STAGED"/*.dylib; do cmp -s "$lib" "$s" && { echo "FAIL: the runtime's payload holds the test-support ${lib##*/} as $s"; exit 1; }; done
+  if "${OTOOL:-otool}" -L "$lib" | grep -q 'libc++'; then "${OTOOL:-otool}" -L "$lib"; echo "FAIL: $lib links a libc++ (listed above)"; exit 1; fi
+  CXXU="$("${NM:-nm}" -u "$lib" | grep -E '__Z(N|NK)?St|__Znw|__Zdl|___cxa_|___gxx_personality' || :)"
+  [ -z "$CXXU" ] || { printf '%s\n' "$CXXU"; echo "FAIL: $lib calls into a C++ library, and none is linked (listed above)"; exit 1; }
+done
+# shellcheck disable=SC2086  # space-free paths
+IMPORTS_SUP="$(DYLDINFO="$DYLDINFO" NM="${NM:-nm}" OTOOL="${OTOOL:-otool}" sh "$HERE/scripts/imports-on-10.9.sh" "$SDK109" \
+  "$HERE/scripts/resources/weak-absent-on-10.9.txt" $SUPPORT_DYLIBS)" \
+  || { printf '%s\n' "$IMPORTS_SUP"; echo "FAIL: a test-support library imports what OS X 10.9 lacks (listed above)"; exit 1; }
+printf '%s\n' "$IMPORTS_SUP"
+echo "OK: minOS $DEPLOYMENT; no os_unfair_lock; Recaulk's $RECAULK_RUNTIME_SYMBOLS (libswiftCore) and $RECAULK_DARWIN_SYMBOLS (libswiftDarwin) defined and hidden; no debug strings; no build paths; checked $(for lib in $SHIPPED_DYLIBS; do printf '%s ' "${lib##*/}"; done); staged in $OUT; no test support in it"

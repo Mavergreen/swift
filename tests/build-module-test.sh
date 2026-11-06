@@ -7,7 +7,7 @@
 #   two-file module Tiny must come out as @rpath/libswiftTiny.dylib, compatibility version 1.0.0, minOS
 #   10.9, with its .swiftmodule; the stdlib's -define-availability list must be read from the .def it is
 #   given, with each StdlibDeploymentTarget clamped to 10.9 as the stdlib's CMake clamps it; a missing
-#   source must fail naming the file; and two build roots must give the same bytes (the prefix maps).
+#   source must fail naming the file; --flag must hand a word to the compile; and two build roots must give the same bytes (the prefix maps).
 #   SKIPs (77) without SWIFT_HOST_TOOLCHAIN, a shipyard, or a host that can run that toolchain. Reads with
 #   OTOOL, NM and STRINGS, else otool, nm and strings, unless those are the Command Line Tools' stubs (OS X
 #   10.9 without them): then mavericks-clang-22's llvm-otool, llvm-nm and llvm-strings (CLANG22_PREFIX).
@@ -85,6 +85,15 @@ if grep -q 'disable-availability-checking' "$RSP" "$T/log1"; then fail "availabi
 echo "-- a missing source fails, naming it"
 if build "$T/r1" "$T/r1/work/src/Absent.swift" > "$T/log2" 2>&1; then fail "built with a missing source"; fi
 grep -q 'Absent.swift' "$T/log2" || fail "did not name the missing file: $(cat "$T/log2")"
+
+echo "-- --flag hands one word to the compile (the test-support modules' own flags)"
+printf '%s\n' '#if !TINY_FLAG' '#error("TINY_FLAG unset")' '#endif' > "$T/r1/work/src/Flagged.swift"
+if build "$T/r1" "$T/r1/work/src/Flagged.swift" > "$T/log4" 2>&1; then fail "built Flagged.swift without its -D"; fi
+grep -q 'TINY_FLAG unset' "$T/log4" || fail "Flagged.swift failed for another reason: $(cat "$T/log4")"
+MAVERICKS_BUILD_ROOT="$T/r1" SWIFT_WORK="$T/r1/work" sh "$BM" --name Tiny --link-name swiftTiny --sdk "$SDK" \
+  --resource-dir "$HTC/lib/swift" --availability "$T/r1/work/avail.def" --work "$T/r1/work/tmp" --out "$T/r1/work/out" \
+  --flag -D --flag TINY_FLAG -- "$T/r1/work/src/Tiny.swift" "$T/r1/work/src/Helper.swift" "$T/r1/work/src/Flagged.swift" \
+  > "$T/log4" 2>&1 || { cat "$T/log4"; fail "--flag -D --flag TINY_FLAG did not reach the compile"; }
 
 echo "-- two build roots, the same bytes"
 src "$T/r1"; build "$T/r1" > "$T/log1" 2>&1 || { cat "$T/log1"; fail "rebuild in r1 failed"; }

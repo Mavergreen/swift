@@ -2,7 +2,7 @@
 # platform: macOS-only -- runs a Mavergreen host toolchain's Swift driver and ld64.lld (a modern Mac or OS X 10.9)
 #   usage: build-module.sh --name <Module> --link-name <swiftX> --sdk <sdk> --resource-dir <stdlib lib/swift>
 #            --availability <availability-macros.def> --work <dir> --out <dir>
-#            [--I <dir>]... [--link <file>]... [--unexported <list>] -- <source.swift>...
+#            [--I <dir>]... [--link <file>]... [--unexported <list>] [--flag <word>]... -- <source.swift>...
 #          Compiles one Swift module beside the stdlib, as the stdlib's CMake compiles its own libraries,
 #          for x86_64-apple-macosx$DEPLOYMENT (pins.env): <out>/<Module>.swiftmodule/x86_64-apple-macos.swiftmodule
 #          and <out>/x86_64/lib<swiftX>.dylib, whose install name is @rpath/lib<swiftX>.dylib and whose
@@ -12,7 +12,8 @@
 #          Apple .swiftinterface: the 10.9 SDK has none) and links its libswiftCore; <sdk> is the SDK the
 #          clang importer reads. --I adds an import path (a clang module map's directory, say); --link
 #          names a file the link takes (an archive); --unexported, the -unexported_symbols_list that hides
-#          its globals. <out> itself is an import path and <out>/x86_64 a library path, so a module built
+#          its globals; --flag, one more word for the compile (a module's own flags, as its
+#          CMakeLists.txt's SWIFT_COMPILE_FLAGS: the test-support modules' -parse-stdlib, -D, ...). <out> itself is an import path and <out>/x86_64 a library path, so a module built
 #          into the same <out> earlier (Darwin, for ObjectiveC) is found. <work> holds the module cache and
 #          the availability list, afresh on every run.
 #          The flags are the stdlib's (its build.ninja: library evolution, -library-level api, no implicit
@@ -29,7 +30,7 @@
 set -eu
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 usage() { sed -n '3,5p' "$0" | sed 's/^#   *//' >&2; exit 2; }
-NAME=""; LINKNAME=""; SDK=""; RES=""; AVAIL=""; WORK=""; OUT=""; INCS=""; LINKS=""; UNX=""
+NAME=""; LINKNAME=""; SDK=""; RES=""; AVAIL=""; WORK=""; OUT=""; INCS=""; LINKS=""; UNX=""; FLAGS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --name) NAME="$2"; shift 2 ;;
@@ -42,6 +43,7 @@ while [ $# -gt 0 ]; do
     --I) INCS="$INCS -I $2"; shift 2 ;;
     --link) LINKS="$LINKS -Xlinker $2"; shift 2 ;;
     --unexported) UNX="$2"; shift 2 ;;
+    --flag) FLAGS="$FLAGS $2"; shift 2 ;;
     --) shift; break ;;
     *) echo "build-module.sh: unknown argument '$1'" >&2; usage ;;
   esac
@@ -104,7 +106,7 @@ awk -v dt="$DEPLOYMENT" '
 # apart from its module) does not. No .swiftsourceinfo, which the stdlib's modules do not ship either.
 UNXFLAGS=""; [ -z "$UNX" ] || UNXFLAGS="-Xlinker -unexported_symbols_list -Xlinker $UNX"
 # shellcheck disable=SC2086  # every word is space-free: the build root (lib.sh refuses whitespace), the
-#                              SDK cache, the toolchain prefix
+#                              SDK cache, the toolchain prefix, and each --flag (one word apiece)
 "$SWIFTC" -sdk "$SDK" -target "$ARCH-apple-macosx$DEPLOYMENT" -resource-dir "$RES" \
   -I "$OUT" $INCS -L "$OUT/$ARCH" -L "$RES/macosx/$ARCH" -L "$RES/macosx" \
   -module-cache-path "$WORK/module-cache" -tools-directory "$WORK/tools" -ld-path="$LLD" \
@@ -114,7 +116,7 @@ UNXFLAGS=""; [ -z "$UNX" ] || UNXFLAGS="-Xlinker -unexported_symbols_list -Xlink
   -Xfrontend -target-min-inlining-version -Xfrontend min -Xfrontend -disable-objc-attr-requires-foundation-module \
   -Xfrontend -require-explicit-availability=ignore \
   -D SWIFT_ENABLE_REFLECTION -D SWIFT_STDLIB_HAS_ENVIRON -Xcc -DSWIFT_STDLIB_HAS_ENVIRON \
-  $PM "@$WORK/availability-macros.rsp" \
+  $PM "@$WORK/availability-macros.rsp" $FLAGS \
   -emit-library -module-name "$NAME" -module-link-name "$LINKNAME" \
   -emit-module-path "$OUT/$NAME.swiftmodule/$ARCH-apple-macos.swiftmodule" -avoid-emit-module-source-info \
   -Xlinker -S -Xlinker -install_name -Xlinker "@rpath/lib$LINKNAME.dylib" -Xlinker -compatibility_version -Xlinker 1 \

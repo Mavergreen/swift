@@ -1,0 +1,100 @@
+diff --git stdlib/private/StdlibUnittest/StdlibCoreExtras.swift stdlib/private/StdlibUnittest/StdlibCoreExtras.swift
+--- stdlib/private/StdlibUnittest/StdlibCoreExtras.swift
++++ stdlib/private/StdlibUnittest/StdlibCoreExtras.swift
+@@ -26,7 +26,7 @@
+ internal import CRT
+ #endif
+ 
+-#if _runtime(_ObjC)
++#if _runtime(_ObjC) && !MAVERICKS_NO_FOUNDATION
+ internal import Foundation
+ #endif
+ 
+@@ -43,7 +43,7 @@
+   if substring.isEmpty {
+     return string.startIndex
+   }
+-#if _runtime(_ObjC)
++#if _runtime(_ObjC) && !MAVERICKS_NO_FOUNDATION
+   return string.range(of: substring)?.lowerBound
+ #else
+   // FIXME(performance): This is a very non-optimal algorithm, with a worst
+@@ -85,7 +85,7 @@
+ public func createTemporaryFile(
+   _ fileNamePrefix: String, _ fileNameSuffix: String, _ contents: String
+ ) -> String {
+-#if _runtime(_ObjC)
++#if _runtime(_ObjC) && !MAVERICKS_NO_FOUNDATION
+   let tempDir: NSString = NSTemporaryDirectory() as NSString
+   var fileName = tempDir.appendingPathComponent(
+     fileNamePrefix + "XXXXXX" + fileNameSuffix)
+diff --git stdlib/private/StdlibUnittest/StdlibUnittest.swift stdlib/private/StdlibUnittest/StdlibUnittest.swift
+--- stdlib/private/StdlibUnittest/StdlibUnittest.swift
++++ stdlib/private/StdlibUnittest/StdlibUnittest.swift
+@@ -16,7 +16,7 @@
+ import SwiftPrivateLibcExtras
+ 
+ #if canImport(Darwin)
+-#if _runtime(_ObjC)
++#if _runtime(_ObjC) && !MAVERICKS_NO_FOUNDATION
+ internal import Foundation
+ #endif
+ internal import Darwin
+@@ -2223,14 +2223,55 @@
+ }
+ 
+ #if canImport(Darwin)
+-#if _runtime(_ObjC)
++#if _runtime(_ObjC) && !MAVERICKS_NO_FOUNDATION
+ func _getSystemVersionPlistProperty(_ propertyName: String) -> String? {
+   return NSDictionary(contentsOfFile: "/System/Library/CoreServices/SystemVersion.plist")?[propertyName] as? String
+ }
++#elseif MAVERICKS_NO_FOUNDATION
++// Mavericks: Foundation-free StdlibUnittest (MAVERICKS_NO_FOUNDATION). No
++// Foundation ships for OS X 10.9, and the harness's weak reference to
++// Optional<Foundation.Locale> fails to resolve there, aborting every test.
++// This reads the same SystemVersion.plist the Foundation path reads, with
++// POSIX calls, scanning its XML for <key>NAME</key> ... <string>VALUE</string>;
++// the sysctl fallback below reads kern.osproductversion, which is macOS
++// 10.13.4 and later, and reports nothing on 10.9.
++func _getSystemVersionPlistProperty(_ propertyName: String) -> String? {
++  let fd = open("/System/Library/CoreServices/SystemVersion.plist", O_RDONLY)
++  if fd < 0 { return nil }
++  defer { _ = close(fd) }
++  var bytes = [UInt8]()
++  var chunk = [UInt8](repeating: 0, count: 8192)
++  while true {
++    let n = chunk.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
++    if n <= 0 { break }
++    bytes.append(contentsOf: chunk[0..<n])
++  }
++  // Byte-level substring search (avoids Foundation's String.range(of:)).
++  func find(_ needle: [UInt8], from start: Int) -> Int? {
++    if needle.isEmpty || bytes.count < needle.count { return nil }
++    var i = start
++    let last = bytes.count - needle.count
++    while i <= last {
++      var j = 0
++      while j < needle.count && bytes[i + j] == needle[j] { j += 1 }
++      if j == needle.count { return i }
++      i += 1
++    }
++    return nil
++  }
++  let keyTag = Array("<key>\(propertyName)</key>".utf8)
++  let sOpen = Array("<string>".utf8), sClose = Array("</string>".utf8)
++  guard let k = find(keyTag, from: 0),
++        let vs = find(sOpen, from: k + keyTag.count),
++        let ve = find(sClose, from: vs + sOpen.count) else { return nil }
++  return String(decoding: bytes[(vs + sOpen.count)..<ve], as: UTF8.self)
++}
+ #else
+ func _getSystemVersionPlistProperty(_ propertyName: String) -> String? {
+   var count = 0
+-  sysctlbyname("kern.osproductversion", nil, &count, nil, 0)
++  guard sysctlbyname("kern.osproductversion", nil, &count, nil, 0) == 0, count > 0 else {
++    return nil
++  }
+   return withUnsafeTemporaryAllocation(of: CChar.self, capacity: count) {
+     sysctlbyname("kern.osproductversion", $0.baseAddress, &count, nil, 0)
+     return String(cString: $0.baseAddress!)
