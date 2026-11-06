@@ -1,0 +1,25 @@
+# The weak imports OS X 10.9 does not define, which scripts/imports-on-10.9.sh lets a staged dylib keep:
+# each binds to NULL there, and the line after the symbol names the file:line, in the Swift 6.4.1 source
+# (or the llvm-project 6.4.1 pins), of the check that reads it before any call. A strong import is never
+# listed; a symbol is added only with the guard that makes it safe, found by reading the code.
+#   <dylib> <symbol> -- <file>:<line>
+
+# ObjC runtime hooks and load-image registration: the runtime tests each before it calls.
+libswiftCore.dylib __objc_realizeClassFromSwift -- stdlib/public/runtime/Metadata.cpp:4526
+libswiftCore.dylib _objc_setHook_getClass -- stdlib/public/runtime/MetadataLookup.cpp:3297
+libswiftCore.dylib _objc_setHook_getImageName -- stdlib/public/runtime/ObjCRuntimeGetImageNameFromClass.mm:361
+libswiftCore.dylib _objc_setHook_lazyClassNamer -- stdlib/public/runtime/Metadata.cpp:3862
+# objc_addLoadImageFunc is called only inside the macOS 10.15 availability check.
+libswiftCore.dylib _objc_addLoadImageFunc -- stdlib/public/runtime/ImageInspectionMachO.cpp:241
+
+# __builtin_available lowers to compiler-rt's check, which reads this and falls back to the system
+# version plist when it is NULL.
+libswiftCore.dylib __availability_version_check -- compiler-rt/lib/builtins/os_version_check.c:102
+libswiftCore.dylib __dyld_is_objc_constant -- stdlib/public/stubs/FoundationHelpers.mm:124
+
+# Tracing: setupLogs leaves TracingEnabled false unless os_signpost_enabled is present, and every
+# signpost and log call is behind ENSURE_LOG's check of TracingEnabled.
+libswiftCore.dylib _os_signpost_enabled -- include/swift/Runtime/TracingCommon.h:37
+libswiftCore.dylib _os_signpost_id_generate -- stdlib/public/runtime/Tracing.h:56
+libswiftCore.dylib __os_signpost_emit_with_name_impl -- stdlib/public/runtime/Tracing.h:56
+libswiftCore.dylib __os_log_create -- stdlib/public/runtime/Tracing.cpp:33

@@ -284,6 +284,15 @@ for s in objc_realizeClassFromSwift os_signpost_enabled os_signpost_emit_with_na
   printf '%s\n' "$IMPORTS_OUT" | grep "$s" | grep -q '\[weak-import\]' \
     || { echo "FAIL: $s is not a weak import of the OS's (a Recaulk definition bound it?)"; exit 1; }
 done
+# spec: INGREDIENTS.md "Recaulk" -- an import the OS lacks fails in dyld on a real 10.9 box, not at link
+#       time against the 11.3 SDK. Every symbol the staged dylibs import from /usr/lib or a framework is
+#       checked against the 10.9 SDK's own stubs (lib.sh's sdk109_stubs); a weak one the stubs lack must
+#       have a guard cited in the allowlist. Captured first: the output is the list of what failed.
+SDK109="$(sdk109_stubs)" || { echo "FAIL: could not fetch the 10.9 SDK's stubs"; exit 1; }
+IMPORTS_109="$(DYLDINFO="$DYLDINFO" NM="${NM:-nm}" OTOOL="${OTOOL:-otool}" sh "$HERE/scripts/imports-on-10.9.sh" "$SDK109" \
+  "$HERE/scripts/resources/weak-absent-on-10.9.txt" "$CORE" "$(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib")" \
+  || { printf '%s\n' "$IMPORTS_109"; echo "FAIL: an OS import is missing from OS X 10.9 (listed above)"; exit 1; }
+printf '%s\n' "$IMPORTS_109"
 # The strings checks below capture strings' output first, as above: a dylib strings could not read
 # would otherwise read as "no MAV_, no paths".
 # release build must carry no debug-logging leftovers.
