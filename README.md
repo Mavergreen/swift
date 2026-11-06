@@ -5,9 +5,12 @@ Swift runtime and toolchain for Mac OS X 10.9 Mavericks.
 ## Runtime
 
 Included: strings, collections, closures, generics, protocols, classes, ARC, `if #available`, and the
-`Darwin` and `ObjectiveC` modules.
+`Darwin` and `ObjectiveC` runtime libraries.
 
 Not yet included: Foundation, AppKit, Macros, Concurrency.
+
+The runtime package carries only the libraries, which run programs already built. To compile a program
+that does `import Darwin` or `import ObjectiveC`, install a toolchain package: the modules ship there.
 
 `import Darwin` gives the C library as Swift sees it: `errno`, `getenv`, `exit`, the math functions,
 `stat`, `open` and the rest of the C headers in the 10.9 SDK, with Swift's `Int32`-and-pointer overloads
@@ -17,7 +20,7 @@ without Foundation. Both are Swift 6.2's and 5.4's own sources, built against th
 
 The 10.9 SDK differs from later ones where a Swift class overrides `NSObject`: `hash` is a method there,
 so write `override func hash() -> Int`, not `override var hash: Int`. It also has no nullability, so
-`NSObject()` is an implicitly unwrapped optional to the importer.
+`NSObject()` has the type `NSObject?` (checked with the cross toolchain against the 10.9 SDK).
 
 A program built with `-O` on 6.4.1-mavericks.8 or earlier carries a float-parsing bug (`Double("1.1")`
 crashed, `Float(String)` hung) inlined into the program itself; recompile it with this release.

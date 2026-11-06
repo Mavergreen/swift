@@ -86,6 +86,22 @@ longer weak-imports the APIs whose presence the runtime reads from the OS. The a
 the stdlib build's stamped inputs, so a Recaulk bump starts that build afresh. Recaulk's notice is in
 `NOTICE`.
 
+libswiftDarwin takes a subset of the same archive the same way, for `openat` (macOS 10.10): the overlay
+calls it, so on 10.9 it would be a strong import that fails to load. `build.sh` links `recaulk_subset`'s
+pick into libswiftDarwin and hides every global it defines, so the dylib exports what the overlay sources
+define and nothing of Recaulk's. The members that define `openat` also define macports-legacy-support's
+`___mpls_*` globals, and Recaulk's dispatch members clang's `___copy_helper_block_*` and
+`___destroy_helper_block_*`; `recaulk_subset` refuses a member that defines any other API unless
+`RECAULK_ALSO_HIDE` (build.sh's `RECAULK_INCIDENTAL`) names those incidental globals, and they are hidden
+too. That is a workaround until Recaulk makes them private itself. Step 7 checks libswiftDarwin as it does
+libswiftCore: `openat` defined in it, exported by nothing, and no longer an import.
+
+Step 7 also holds every dylib it ships, and the test-support libraries, to what OS X 10.9 has
+(`scripts/imports-on-10.9.sh`): each symbol imported from `/usr/lib` or a framework must be exported by
+that library's stub in the 10.9 SDK, or be weak and listed in `scripts/resources/weak-absent-on-10.9.txt`
+beside the guard that reads it first. A strong import that 10.9 lacks otherwise links against the 11.3 SDK
+without complaint and fails in dyld on a real 10.9 box.
+
 ## Two seeds, one result
 
 CI seeds from the swift.org compiler alone: it compiles the cross toolchain's Swift half (`build-cross`),

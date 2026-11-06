@@ -11,7 +11,8 @@ published, `release-notes/swift-runtime/<full-version>/` holds:
 
 `release-notes/swift-runtime/notice` (optional) opens every release's footer. Each sentence is checked
 by shipyard's `check-release-sentence.sh`; run it on a file before committing it. The `<version>.md` files
-beside these are the prose of releases already published, kept as they shipped. Do not add your own `##`
+beside these are the prose of releases already published, kept as they shipped. `release-notes/swift-toolchain/*.md` is legacy (6.3.3-era prose of a
+separate toolchain repo's releases) and no longer read. Do not add your own `##`
 title anywhere: the generator emits the title itself.
 
 A repackage (an ingredient bump, no new Swift version) normally has no file here at all: that is a
