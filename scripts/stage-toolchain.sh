@@ -1,6 +1,6 @@
 #!/bin/sh
 # platform: host-agnostic
-#   usage: [STAGE_HOST=x86_64|arm64] stage-toolchain.sh [--frontend <dir>] [--stdlib <dir>] [--builtins <file>] <out-dir>
+#   usage: [STAGE_HOST=x86_64|arm64] stage-toolchain.sh [--overlays-optional] [--frontend <dir>] [--stdlib <dir>] [--builtins <file>] <out-dir>
 #          Lays out a toolchain .pkg's payload under <out-dir>/usr/local/mavergreen/<product> from this
 #          build: build-toolchain.sh --host $STAGE_HOST's lld, clang and clang's headers, and its compiler
 #          and helper outputs (--frontend: the swift build dir holding bin/swift-frontend and
@@ -13,13 +13,16 @@
 #          swift-toolchain; arm64 the cross toolchain, swift-toolchain-cross. Everything but what each
 #          host's build makes itself (the three binaries, clang's headers, the helper outputs) is the same
 #          bytes in both. <out-dir> persists between builds, so its usr/ is removed first;
-#          <out-dir>/Library belongs to package-toolchain.sh and is left alone.
+#          <out-dir>/Library belongs to package-toolchain.sh and is left alone. A stdlib without both
+#          overlays is refused unless --overlays-optional (self-host.sh's pre toolchain only) says to
+#          stage it without them.
 #          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, STAGE_HOST.
 set -eu
-usage() { echo "usage: [STAGE_HOST=x86_64|arm64] stage-toolchain.sh [--frontend <dir>] [--stdlib <dir>] [--builtins <file>] <out-dir>" >&2; exit 2; }
-FRONTEND=""; STDLIB=""; BUILTINS=""
+usage() { echo "usage: [STAGE_HOST=x86_64|arm64] stage-toolchain.sh [--overlays-optional] [--frontend <dir>] [--stdlib <dir>] [--builtins <file>] <out-dir>" >&2; exit 2; }
+FRONTEND=""; STDLIB=""; BUILTINS=""; OVERLAYS_OPTIONAL=""
 while [ $# -gt 1 ]; do
   case "$1" in
+    --overlays-optional) OVERLAYS_OPTIONAL=1; shift ;;
     --frontend) FRONTEND="$2"; shift 2 ;;
     --stdlib) STDLIB="$2"; shift 2 ;;
     --builtins) BUILTINS="$2"; shift 2 ;;
@@ -50,10 +53,19 @@ done
 LAYOUT="$(stdlib_layout "$STDLIB")" || { echo "stage-toolchain: $STDLIB is no stdlib -- run build.sh, or name one with --stdlib" >&2; exit 1; }
 if [ "$LAYOUT" = build ]; then DYLIBS="$STDLIB/macosx/x86_64"; else DYLIBS="$STDLIB/macosx"; fi
 # The Darwin and ObjectiveC overlays (step 5b of build.sh): a module and a dylib each, in the same two places.
-OVERLAYS="Darwin ObjectiveC"
-for o in $OVERLAYS; do
-  [ -f "$STDLIB/macosx/$o.swiftmodule/x86_64-apple-macos.swiftmodule" ] && [ -f "$DYLIBS/libswift$o.dylib" ] \
-    || { echo "stage-toolchain: $STDLIB has no $o.swiftmodule and libswift$o.dylib -- run build.sh" >&2; exit 1; }
+# --overlays-optional stages those it finds and skips the rest: self-host.sh's pre toolchain, whose stdlib
+# (a seed's from before the overlays, 6.4.1-mavericks.8 say) only makes the stage's compiler run, since
+# build.sh compiles the overlays against the stdlib it builds. A toolchain that ships or is compared never
+# passes it.
+OVERLAYS=""
+for o in Darwin ObjectiveC; do
+  if [ -f "$STDLIB/macosx/$o.swiftmodule/x86_64-apple-macos.swiftmodule" ] && [ -f "$DYLIBS/libswift$o.dylib" ]; then
+    OVERLAYS="$OVERLAYS $o"
+  elif [ -n "$OVERLAYS_OPTIONAL" ]; then
+    echo "stage-toolchain: $STDLIB has no $o overlay; --overlays-optional stages it without" >&2
+  else
+    echo "stage-toolchain: $STDLIB has no $o.swiftmodule and libswift$o.dylib -- run build.sh" >&2; exit 1
+  fi
 done
 
 P="$OUT/usr/local/mavergreen/$TH_PRODUCT"

@@ -93,8 +93,11 @@ for N in 1 2 3; do
   D="$O/s$N"; rm -rf "$D"; mkdir -p "$D"
   timed "stage $N: swift-frontend, its Swift half compiled by $prev" \
     env SWIFT_HOST_TOOLCHAIN="$prev" sh "$HERE/build-toolchain.sh"
+  # --overlays-optional: the previous stdlib only makes this compiler run (build.sh builds the overlays
+  # against its own), and a seed from before the overlays (6.4.1-mavericks.8) has none. The stage's
+  # toolchain, which is compared and shipped, takes no such option.
   timed "stage $N: its compiler beside the previous stdlib" \
-    sh "$HERE/scripts/stage-toolchain.sh" --frontend "$W/swift-x86" --stdlib "$prev/lib/swift" --builtins "$B" "$D/pre"
+    sh "$HERE/scripts/stage-toolchain.sh" --overlays-optional --frontend "$W/swift-x86" --stdlib "$prev/lib/swift" --builtins "$B" "$D/pre"
   # No pkg installed a stage, so its release is declared: this checkout's Swift.
   timed "stage $N: its stdlib and runtime (build.sh)" \
     env SWIFT_HOST_TOOLCHAIN="$D/pre/$P" SWIFT_HOST_TOOLCHAIN_VERSION="$SWIFT_VERSION-selfhost.s$N" \

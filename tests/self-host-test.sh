@@ -3,7 +3,9 @@
 # usage: sh tests/self-host-test.sh
 #   self-host.sh must run, in order: build-llvm.sh and build-builtins.sh once, then for each of three
 #   stages build-toolchain.sh with the previous stage's toolchain as its host (the seed's for stage 1), a
-#   pre toolchain staged from that compiler and the previous stage's stdlib, build.sh with that pre
+#   pre toolchain staged from that compiler and the previous stage's stdlib (--overlays-optional: a seed
+#   from before the Darwin and ObjectiveC overlays has none, and only the stages' own toolchains, which are
+#   compared, must hold them), build.sh with that pre
 #   toolchain under a declared release of this checkout's Swift, and the stage's toolchain staged from
 #   the stdlib it built; then it must pass only when stage 2 and stage 3 are the same files, and, with
 #   --compare, only when stage 2 is the named prefix too. It must refuse cross mode, a seed that is no
@@ -72,7 +74,7 @@ F
 # or the seed's (a pre toolchain staged with the seed's lib/swift).
 { echo '#!/bin/sh'; record stage-toolchain.sh
   cat <<'F'
-while [ $# -gt 1 ]; do case "$1" in --frontend) fe="$2" ;; --stdlib) sl="$2" ;; --builtins) bi="$2" ;; esac; shift 2; done
+while [ $# -gt 1 ]; do case "$1" in --overlays-optional) shift; continue ;; --frontend) fe="$2" ;; --stdlib) sl="$2" ;; --builtins) bi="$2" ;; esac; shift 2; done
 p="$1/usr/local/mavergreen/swift-toolchain"; mkdir -p "$p/bin" "$p/lib/swift/macosx/Swift.swiftmodule" "$p/lib/clang/21/lib/darwin"
 cp "$fe/bin/swift-frontend" "$p/bin/"; printf '#!/bin/sh\n' > "$p/bin/swiftc"; chmod +x "$p/bin/swiftc"
 s=stdlib; [ ! -f "$sl/macosx/libswiftCore.dylib" ] || s="$(cat "$sl/macosx/libswiftCore.dylib")"
@@ -113,15 +115,15 @@ cat > "$T/want" <<EOF
 build-llvm.sh [] SWIFT_HOST_TOOLCHAIN=<T>/seed SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
 build-builtins.sh [] SWIFT_HOST_TOOLCHAIN=<T>/seed SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
 build-toolchain.sh [] SWIFT_HOST_TOOLCHAIN=<T>/seed SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
-stage-toolchain.sh [--frontend $SW/swift-x86 --stdlib <T>/seed/lib/swift --builtins $SW/builtins-x86/lib/darwin/libclang_rt.osx.a $O/s1/pre] SWIFT_HOST_TOOLCHAIN=<T>/seed SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
+stage-toolchain.sh [--overlays-optional --frontend $SW/swift-x86 --stdlib <T>/seed/lib/swift --builtins $SW/builtins-x86/lib/darwin/libclang_rt.osx.a $O/s1/pre] SWIFT_HOST_TOOLCHAIN=<T>/seed SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
 build.sh [] SWIFT_HOST_TOOLCHAIN=$O/s1/pre/$P SWIFT_HOST_TOOLCHAIN_VERSION=$SWIFT_VERSION-selfhost.s1 SWIFT_RUNTIME_OUT=$O/s1/runtime
 stage-toolchain.sh [--frontend $SW/swift-x86 --stdlib $SW/stdlib-build/lib/swift --builtins $SW/builtins-x86/lib/darwin/libclang_rt.osx.a $O/s1/toolchain] SWIFT_HOST_TOOLCHAIN=<T>/seed SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
 build-toolchain.sh [] SWIFT_HOST_TOOLCHAIN=$O/s1/toolchain/$P SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
-stage-toolchain.sh [--frontend $SW/swift-x86 --stdlib $O/s1/toolchain/$P/lib/swift --builtins $SW/builtins-x86/lib/darwin/libclang_rt.osx.a $O/s2/pre] SWIFT_HOST_TOOLCHAIN=<T>/seed SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
+stage-toolchain.sh [--overlays-optional --frontend $SW/swift-x86 --stdlib $O/s1/toolchain/$P/lib/swift --builtins $SW/builtins-x86/lib/darwin/libclang_rt.osx.a $O/s2/pre] SWIFT_HOST_TOOLCHAIN=<T>/seed SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
 build.sh [] SWIFT_HOST_TOOLCHAIN=$O/s2/pre/$P SWIFT_HOST_TOOLCHAIN_VERSION=$SWIFT_VERSION-selfhost.s2 SWIFT_RUNTIME_OUT=$O/s2/runtime
 stage-toolchain.sh [--frontend $SW/swift-x86 --stdlib $SW/stdlib-build/lib/swift --builtins $SW/builtins-x86/lib/darwin/libclang_rt.osx.a $O/s2/toolchain] SWIFT_HOST_TOOLCHAIN=<T>/seed SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
 build-toolchain.sh [] SWIFT_HOST_TOOLCHAIN=$O/s2/toolchain/$P SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
-stage-toolchain.sh [--frontend $SW/swift-x86 --stdlib $O/s2/toolchain/$P/lib/swift --builtins $SW/builtins-x86/lib/darwin/libclang_rt.osx.a $O/s3/pre] SWIFT_HOST_TOOLCHAIN=<T>/seed SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
+stage-toolchain.sh [--overlays-optional --frontend $SW/swift-x86 --stdlib $O/s2/toolchain/$P/lib/swift --builtins $SW/builtins-x86/lib/darwin/libclang_rt.osx.a $O/s3/pre] SWIFT_HOST_TOOLCHAIN=<T>/seed SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
 build.sh [] SWIFT_HOST_TOOLCHAIN=$O/s3/pre/$P SWIFT_HOST_TOOLCHAIN_VERSION=$SWIFT_VERSION-selfhost.s3 SWIFT_RUNTIME_OUT=$O/s3/runtime
 stage-toolchain.sh [--frontend $SW/swift-x86 --stdlib $SW/stdlib-build/lib/swift --builtins $SW/builtins-x86/lib/darwin/libclang_rt.osx.a $O/s3/toolchain] SWIFT_HOST_TOOLCHAIN=<T>/seed SWIFT_HOST_TOOLCHAIN_VERSION= SWIFT_RUNTIME_OUT=
 EOF

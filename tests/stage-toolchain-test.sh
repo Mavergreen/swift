@@ -114,6 +114,23 @@ cmp -s "$T/other.a" "$T/out2/$P/lib/clang/21/lib/darwin/libclang_rt.osx.a" || fa
 [ "$(cat "$T/out2/$P/bin/swift-frontend")" = "other bin/swift-frontend" ] || fail "--frontend did not name the staged frontend"
 [ "$(cat "$T/out2/$P/share/swift/diagnostics/en.db")" = "other share/swift/diagnostics/en.db" ] || fail "--frontend did not name the helper outputs"
 
+echo "-- --overlays-optional (self-host.sh's pre toolchain): a seed's stdlib without overlays stages, without them"
+# A release before the overlays (6.4.1-mavericks.8) seeds self-host.sh: its stdlib only makes the stage's
+# compiler run, and build.sh compiles the overlays against the stdlib it builds, never the seed's.
+cp -R "$T/out/$P/lib/swift" "$T/seedlib"
+rm -r "$T/seedlib/macosx/Darwin.swiftmodule" "$T/seedlib/macosx/ObjectiveC.swiftmodule" \
+  "$T/seedlib/macosx/libswiftDarwin.dylib" "$T/seedlib/macosx/libswiftObjectiveC.dylib"
+if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --stdlib "$T/seedlib" "$T/out-seed" 2> "$T/err"; then
+  fail "staged a stdlib without overlays, without --overlays-optional"
+fi
+SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --overlays-optional --stdlib "$T/seedlib" "$T/out-seed" > "$T/seed.log" 2>&1 \
+  || fail "--overlays-optional refused a stdlib without overlays: $(cat "$T/seed.log")"
+[ -f "$T/out-seed/$P/lib/swift/macosx/libswiftCore.dylib" ] || fail "--overlays-optional staged no libswiftCore"
+[ -z "$(cd "$T/out-seed/$P" && find . -name '*Darwin*' -o -name '*ObjectiveC*')" ] || fail "--overlays-optional staged an overlay it was not given"
+SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --overlays-optional --frontend "$T/fe" --stdlib "$T/out/$P/lib/swift" --builtins "$T/other.a" "$T/out-opt" \
+  || fail "--overlays-optional refused a stdlib with overlays"
+[ "$(cd "$T/out-opt" && find usr -type f | sort)" = "$want" ] || fail "--overlays-optional over a stdlib with overlays staged another payload"
+
 echo "-- refuses a --stdlib that is no stdlib, and an unknown option, before writing anything"
 mkdir -p "$T/notstdlib/macosx"
 if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --stdlib "$T/notstdlib" "$T/out3" 2> "$T/err"; then fail "staged from a dir that is no stdlib"; fi
