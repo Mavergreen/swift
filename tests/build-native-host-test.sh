@@ -136,7 +136,8 @@ echo "fetch_pinned_source \$*" >> "$T/log"
 rm -rf "\$4"; mkdir -p "\$4/stdlib/public/stubs" "\$4/stdlib/public/runtime" "\$4/stdlib/public/core" "\$4/include/swift/Runtime" \
   "\$4/stdlib/private/StdlibUnittest"
 for f in CMakeLists.txt stdlib/public/stubs/Availability.mm stdlib/public/runtime/SwiftObject.mm stdlib/public/runtime/Metadata.cpp \
-         include/swift/Runtime/Config.h stdlib/public/core/StringBridge.swift stdlib/private/StdlibUnittest/StdlibUnittest.swift; do : > "\$4/\$f"; done
+         include/swift/Runtime/Config.h stdlib/public/core/StringBridge.swift stdlib/private/StdlibUnittest/StdlibUnittest.swift \
+         stdlib/public/core/FloatingPointParsing.swift.gyb; do : > "\$4/\$f"; done
 echo "\${FAKE_SWIFT_SOURCE:-\$1 \$2 \$3}" > "\$4/.mavergreen-source"   # FAKE_SWIFT_SOURCE: another commit's tarball
 F
 # patch: a dry run applies; a real one writes the marker build.sh greps for that patch.
@@ -154,6 +155,7 @@ case "$(basename "$p")" in
   0008-*) echo 'was: hasFeature(Macros)' >> stdlib/public/core/StringBridge.swift ;;
   0009-*) echo 'Mavericks: no libc++ autolink' >> stdlib/public/runtime/Metadata.cpp ;;
   0010-*) echo 'Mavericks: Foundation-free StdlibUnittest' >> stdlib/private/StdlibUnittest/StdlibUnittest.swift ;;
+  0011-*) echo 'Mavericks: through a function that carries the same availability' >> stdlib/public/core/FloatingPointParsing.swift.gyb ;;
 esac
 F
 # The stdlib configure records its arguments and leaves a cache; the build (ninja) stops the run.
@@ -176,7 +178,7 @@ build_native() {  # build.sh's native mode past step 1, everything faked; ninja 
 build_native
 grep -qxF "fetch_pinned_source https://github.com/swiftlang/swift.git $SWIFT_SHA $SWIFT_TARBALL_SHA256 swift" "$T/log" \
   || fail "did not fetch the swift tarball by its pin: $(cat "$T/out")"
-[ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0004 0005 0007 0008 0009 0010 " ] \
+[ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0004 0005 0007 0008 0009 0010 0011 " ] \
   || fail "patched in another order: $(grep '^patch' "$T/log" | tr '\n' ' ')"
 for a in "-DCMAKE_AR=$C22/bin/llvm-ar" "-DCMAKE_RANLIB=$C22/bin/llvm-ranlib" "-DSWIFT_LIPO=$C22/bin/llvm-lipo" -DSWIFT_ENABLE_LIBXML2=OFF \
          -DCMAKE_TAPI=/usr/bin/false "-DCMAKE_STRIP=$C22/bin/llvm-strip" -DLD64_EXECUTABLE=/usr/bin/false -DCMAKE_Swift_COMPILER=NOTFOUND \

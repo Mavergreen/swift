@@ -1,0 +1,23 @@
+diff --git stdlib/public/core/FloatingPointParsing.swift.gyb stdlib/public/core/FloatingPointParsing.swift.gyb
+--- stdlib/public/core/FloatingPointParsing.swift.gyb
++++ stdlib/public/core/FloatingPointParsing.swift.gyb
+@@ -186,7 +186,18 @@
+     if #available(macOS 11.0, iOS 14.0, watchOS 7.0, tvOS 14.0, *) {
+       // On SwiftStdlib 5.3 and later, we can just delegate to the
+       // init(_:Substring) initializer:
+-      self.init(Substring(text))
++      // Mavericks: through a function that carries the same availability.
++      // Under -disable-availability-checking, `#available` refines nothing,
++      // so here `self.init(Substring(text))` found init(_:Substring)
++      // potentially unavailable at a 10.9 deployment target and called this
++      // generic init instead: unbounded recursion. The attribute makes the
++      // concrete init available where the call is resolved.
++      @available(macOS 11.0, iOS 14.0, watchOS 7.0, tvOS 14.0, *)
++      func _mavericksParse(_ text: Substring) -> ${Self}? {
++        return ${Self}(text)
++      }
++      guard let value = _mavericksParse(Substring(text)) else { return nil }
++      self = value
+       return
+     } else {
+       // When running on SwiftStdlib <5.3, we can't just delegate to

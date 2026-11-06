@@ -173,10 +173,17 @@ echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order
 #       self-test bundle): under -D MAVERICKS_NO_FOUNDATION it imports no Foundation, which no 10.9 pkg
 #       ships (its weak Optional<Foundation.Locale> aborted every test there), and reads
 #       SystemVersion.plist with POSIX calls. Core's and OnoneSupport's bytes are unchanged by it.
+#  0011 float parsing delegation — step 4 compiles the stdlib under -disable-availability-checking,
+#       where `#available` folds to true but refines nothing for overload resolution, so
+#       FloatingPointParsing's generic init?<S: StringProtocol> took init?(_: Substring) (SwiftStdlib
+#       5.3, above 10.9) for potentially unavailable and called itself: Double("1.1") overflowed the
+#       stack and Float(String) looped, in Core and in every -O client that inlined the body. It now
+#       delegates through a local function carrying the same @available, where the concrete init
+#       resolves. Behavior is upstream's on 11.0+; the compiler's own "infinite recursion" warning is gone.
 # Patches are --no-prefix format; patch_source applies them with -p0. A new patch needs its number here and a marker grep
 # below: a patch file this list lacks fails the build rather than being skipped, and
 # tests/runtime-patch-list-test.sh holds the list, the files and the marker greps together.
-RUNTIME_PATCHES="0004 0005 0007 0008 0009 0010"
+RUNTIME_PATCHES="0004 0005 0007 0008 0009 0010 0011"
 PATCHES_DIR="$HERE/patches/runtime"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $RUNTIME_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED"
@@ -192,6 +199,7 @@ grep -q 'ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 101404' swift/include/swi
 grep -q 'was: hasFeature(Macros)' swift/stdlib/public/core/StringBridge.swift || { echo "patch 0008 (DebugDescription) not applied"; exit 1; }
 grep -q 'Mavericks: no libc++ autolink' swift/stdlib/public/runtime/Metadata.cpp || { echo "patch 0009 (no libc++ autolink) not applied"; exit 1; }
 grep -q 'Mavericks: Foundation-free StdlibUnittest' swift/stdlib/private/StdlibUnittest/StdlibUnittest.swift || { echo "patch 0010 (Foundation-free StdlibUnittest) not applied"; exit 1; }
+grep -q 'Mavericks: through a function that carries the same availability' swift/stdlib/public/core/FloatingPointParsing.swift.gyb || { echo "patch 0011 (float parsing delegation) not applied"; exit 1; }
 # de-instrumented: no debug logging must ship
 ! grep -rq 'getenv("MAV_' swift/stdlib/public/runtime/ || { echo "MAV debug logging leaked into patches"; exit 1; }
 
