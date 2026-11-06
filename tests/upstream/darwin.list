@@ -1,0 +1,50 @@
+# tests/upstream/darwin.list -- upstream Swift's own tests for the darwin layer, as the 10.9 gate runs them.
+# Every candidate scripts/upstream-tests.py's survey finds in the pinned tree (a test with a RUN: line that
+# the darwin classifier picks) appears once: `include <path>`, built by make-selftest.sh with its
+# compile-line and run by run-selftest.sh --gate, or `exclude <path> -- <reason>`, a reason a reviewer
+# can check against the test (it imports Foundation, which no 10.9 pkg ships; it needs a library this
+# release does not ship; its RUN: line is one compile-line refuses, quoted as it says; upstream disables
+# it; or it failed on 10.9, with the failure). build.sh's step 5b checks this list against the tree, so a
+# Swift bump that adds a test, or changes one's RUN: lines, stops the build until the list is reviewed.
+exclude test/Concurrency/Runtime/actor_assert_precondition_executor_checkIsolated_dispatch_dispatchMain_swift_6_mode.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/actor_assert_precondition_executor_checkIsolated_main_customExecutorOnMain_swift6_mode.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/actor_counters_freestanding.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/actor_recursive_deinit.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/async.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/async_task_executor_default_actor_funcs.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/async_task_executor_nsobject.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/async_task_executor_unstructured_task_ownership.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/async_task_locals_copy_to_sync.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/async_task_locals_isolated_deinit_freestanding.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/async_task_withUnsafeCurrentTask.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/cancellation_handler.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/data_race_detection_crash.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/data_race_detection_legacy_warning.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/exclusivity.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/exclusivity_custom_executors.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/executor_deinit3.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/startImmediately.swift -- needs _Concurrency, which this release does not ship
+exclude test/stdlib/DarwinAPI.swift -- imports Foundation, which no 10.9 pkg ships
+exclude test/stdlib/ErrorBridged.swift -- imports Foundation, which no 10.9 pkg ships
+exclude test/stdlib/FloatConstants.swift -- RUN uses %target-typecheck-verify-swift
+include test/stdlib/FloatingPoint.swift.gyb
+exclude test/stdlib/FloatingPointDiagnostics.swift -- RUN uses %target-typecheck-verify-swift
+exclude test/stdlib/FloatingPointIR.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/stdlib/FloatingPointIR_FP80.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/stdlib/MathConstants.swift -- RUN uses %target-typecheck-verify-swift
+exclude test/stdlib/POSIX.swift -- RUN hands the test arguments (%t)
+include test/stdlib/PrintFloat.swift.gyb
+include test/stdlib/PrintFloat16.swift
+exclude test/stdlib/PrintFloatLocale.swift.gyb -- RUN uses %gyb
+include test/stdlib/Runtime.swift.gyb
+include test/stdlib/ThreadLocalStorage.swift
+exclude test/stdlib/VarArgs.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/stdlib/dlopen_race.swift -- RUN compiles more than the test file (%S/Inputs/dlopen_race_dylib.swift)
+exclude test/stdlib/mmap.swift -- RUN hands the test arguments (%t)
+exclude test/stdlib/tgmath.swift.gyb -- upstream disables it (REQUIRES: rdar94452524)
+include test/stdlib/tgmath_optimized.swift
+exclude validation-test/stdlib/ArraysObjc.swift.gyb -- imports Foundation, which no 10.9 pkg ships
+exclude validation-test/stdlib/Glibc.swift -- not for macOS (UNSUPPORTED: OS=macosx)
+exclude validation-test/stdlib/POSIXErrorCode.swift -- RUN hands the test arguments (-strict-concurrency=complete)
+exclude validation-test/stdlib/String.swift -- imports Foundation, which no 10.9 pkg ships
+include validation-test/stdlib/StringSlicesConcurrentAppend.swift
