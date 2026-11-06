@@ -44,6 +44,16 @@ for f in llvm-x86/bin/lld builtins-x86/lib/darwin/libclang_rt.osx.a; do
   mv "$T/away" "$W/$f"
 done
 
+echo "-- refuses a stdlib missing an overlay's module or dylib, naming it, before writing anything"
+for f in stdlib-build/lib/swift/macosx/Darwin.swiftmodule stdlib-build/lib/swift/macosx/ObjectiveC.swiftmodule \
+         stdlib-build/lib/swift/macosx/x86_64/libswiftDarwin.dylib stdlib-build/lib/swift/macosx/x86_64/libswiftObjectiveC.dylib; do
+  mv "$W/$f" "$T/away"
+  if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out-missing" 2> "$T/err"; then fail "staged without $f"; fi
+  grep -q "${f##*/}" "$T/err" || fail "did not name the missing ${f##*/}: $(cat "$T/err")"
+  [ ! -e "$T/out-missing" ] || fail "wrote a payload before refusing the missing ${f##*/}"
+  mv "$T/away" "$W/$f"
+done
+
 echo "-- refuses, naming them, when a reused build root holds more than one clang resource dir"
 mkdir -p "$W/llvm-x86/lib/clang/22/include"
 if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out" 2> "$T/err"; then
@@ -62,8 +72,11 @@ got="$(cd "$T/out" && find usr Library -type f | sort)"
 want="$(printf '%s\n' "$P/bin/clang" "$P/bin/clang.cfg" "$P/bin/clang++.cfg" "$P/bin/ld64.lld" "$P/bin/swift-frontend" "$P/bin/swiftc" \
   "$P/lib/clang/21/include/stdint.h" "$P/lib/clang/21/lib/darwin/libclang_rt.osx.a" \
   "$P/lib/swift/macosx/SwiftOnoneSupport.swiftmodule/x86_64-apple-macos.swiftmodule" \
+  "$P/lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule" \
+  "$P/lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule" \
   "$P/lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule" "$P/lib/swift/macosx/layouts-x86_64.yaml" \
-  "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib" \
+  "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftDarwin.dylib" \
+  "$P/lib/swift/macosx/libswiftObjectiveC.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib" \
   "$P/lib/swift/shims/module.modulemap" "$P/libexec/mavergreen-swift/fetch_sdk.sh" "$P/libexec/mavergreen-swift/ld" \
   "$P/libexec/mavergreen-swift/mavericks_fetch.sh" "$P/libexec/mavergreen-swift/sdk-pins.sh" \
   "$P/share/doc/LICENSE-LLVM.txt" "$P/share/doc/LICENSE.txt" "$P/share/doc/NOTICE" \

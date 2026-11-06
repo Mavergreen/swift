@@ -471,15 +471,18 @@ compiler_patches() {
 # toolchain builds, the shims and the builtins archive. The two toolchain pkgs must carry them byte for
 # byte: in CI build-cross builds them once and stages them in the cross toolchain, and build stages the
 # cross pkg's copy in the native one, so a difference is a staging fault; each job digests what it
-# staged, and collect compares the two. Fails, naming it, when an anchor (the two dylibs, Swift's
-# swiftmodule, the shims' module.modulemap, the builtins archive) is missing, or a tree holds a link, a
+# staged, and collect compares the two. Fails, naming it, when an anchor (the four dylibs, Swift's, Darwin's
+# and ObjectiveC's swiftmodule, the shims' module.modulemap, the builtins archive) is missing, or a tree holds a link, a
 # path with a space, or a file that cannot be hashed: two jobs that each printed nothing, or less than
 # the whole trees, must never compare equal.
 toolchain_digest() {
   _td_inc="$(clang_resource_include "$1")" || return 1
   _td_cl="lib/clang/$(basename "$(dirname "$_td_inc")")/lib"
   for _td_f in lib/swift/macosx/libswiftCore.dylib lib/swift/macosx/libswiftSwiftOnoneSupport.dylib \
-               lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule lib/swift/shims/module.modulemap \
+               lib/swift/macosx/libswiftDarwin.dylib lib/swift/macosx/libswiftObjectiveC.dylib \
+               lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule \
+               lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule \
+               lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule lib/swift/shims/module.modulemap \
                "$_td_cl/darwin/libclang_rt.osx.a"; do
     [ -f "$1/$_td_f" ] || { echo "toolchain_digest: no $1/$_td_f" >&2; return 1; }
   done
@@ -508,7 +511,7 @@ toolchain_digest_whole() {
   case "$1" in
     ' '*|*' '|*'  '*) echo "toolchain_digest: the line holds an empty entry" >&2; return 1 ;;
   esac
-  _tw_core=""; _tw_onone=""; _tw_mod=""; _tw_map=""; _tw_rt=""
+  _tw_core=""; _tw_onone=""; _tw_mod=""; _tw_map=""; _tw_rt=""; _tw_dar=""; _tw_objc=""; _tw_dmod=""; _tw_omod=""
   while IFS= read -r _tw_e; do
     _tw_h="${_tw_e#*=}"
     case "$_tw_e" in lib/?*=*) _tw_ok=1 ;; *) _tw_ok="" ;; esac
@@ -519,6 +522,10 @@ toolchain_digest_whole() {
       lib/swift/macosx/libswiftCore.dylib) _tw_core=1 ;;
       lib/swift/macosx/libswiftSwiftOnoneSupport.dylib) _tw_onone=1 ;;
       lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_mod=1 ;;
+      lib/swift/macosx/libswiftDarwin.dylib) _tw_dar=1 ;;
+      lib/swift/macosx/libswiftObjectiveC.dylib) _tw_objc=1 ;;
+      lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_dmod=1 ;;
+      lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_omod=1 ;;
       lib/swift/shims/module.modulemap) _tw_map=1 ;;
       lib/clang/*/lib/darwin/libclang_rt.osx.a) _tw_rt=1 ;;
     esac
@@ -529,6 +536,10 @@ EOF
   [ -n "$_tw_core" ] || _tw_miss="$_tw_miss lib/swift/macosx/libswiftCore.dylib"
   [ -n "$_tw_onone" ] || _tw_miss="$_tw_miss lib/swift/macosx/libswiftSwiftOnoneSupport.dylib"
   [ -n "$_tw_mod" ] || _tw_miss="$_tw_miss lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule"
+  [ -n "$_tw_dar" ] || _tw_miss="$_tw_miss lib/swift/macosx/libswiftDarwin.dylib"
+  [ -n "$_tw_objc" ] || _tw_miss="$_tw_miss lib/swift/macosx/libswiftObjectiveC.dylib"
+  [ -n "$_tw_dmod" ] || _tw_miss="$_tw_miss lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule"
+  [ -n "$_tw_omod" ] || _tw_miss="$_tw_miss lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule"
   [ -n "$_tw_map" ] || _tw_miss="$_tw_miss lib/swift/shims/module.modulemap"
   [ -n "$_tw_rt" ] || _tw_miss="$_tw_miss lib/clang/<v>/lib/darwin/libclang_rt.osx.a"
   [ -z "$_tw_miss" ] || { echo "toolchain_digest: the line has no entry for:$_tw_miss" >&2; return 1; }

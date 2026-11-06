@@ -18,18 +18,21 @@ P=usr/local/mavergreen/swift-runtime
 
 mkdir -p "$T/built"
 printf 'int f(void){return 0;}\n' > "$T/f.c"
-for lib in libswiftCore libswiftSwiftOnoneSupport; do
+for lib in libswiftCore libswiftSwiftOnoneSupport libswiftDarwin libswiftObjectiveC; do
   cc -dynamiclib -arch x86_64 -mmacosx-version-min=10.9 -install_name "@rpath/$lib.dylib" \
     -o "$T/built/$lib.dylib" "$T/f.c"
 done
 
-echo "-- staging refuses a build with no libswiftSwiftOnoneSupport.dylib"
-mkdir -p "$T/partial"; cp "$T/built/libswiftCore.dylib" "$T/partial/"
-if sh scripts/stage-runtime.sh "$T/partial" "$T/out-partial" LICENSE NOTICE 2> "$T/partial.err"; then
-  fail "stage-runtime.sh succeeded without libswiftSwiftOnoneSupport.dylib"
-fi
-grep -q 'has no libswiftSwiftOnoneSupport.dylib' "$T/partial.err" \
-  || fail "stage-runtime.sh failed, but not for the missing dylib: $(cat "$T/partial.err")"
+echo "-- staging refuses a build missing any of the four dylibs, naming it"
+for gone in libswiftSwiftOnoneSupport libswiftDarwin libswiftObjectiveC; do
+  rm -rf "$T/partial"; mkdir -p "$T/partial"; cp "$T"/built/*.dylib "$T/partial/"; rm "$T/partial/$gone.dylib"
+  if sh scripts/stage-runtime.sh "$T/partial" "$T/out-partial" LICENSE NOTICE 2> "$T/partial.err"; then
+    fail "stage-runtime.sh succeeded without $gone.dylib"
+  fi
+  grep -q "has no $gone.dylib" "$T/partial.err" \
+    || fail "stage-runtime.sh failed, but not for the missing $gone.dylib: $(cat "$T/partial.err")"
+  [ ! -e "$T/out-partial" ] || fail "stage-runtime.sh wrote $T/out-partial before refusing"
+done
 
 echo "-- staging refuses a missing notice file"
 if sh scripts/stage-runtime.sh "$T/built" "$T/out-nonotice" LICENSE "$T/no-such-NOTICE" 2> "$T/nonotice.err"; then
@@ -74,7 +77,8 @@ mkdir -p "$T/out/usr/lib/swift" "$T/out/usr/local/share/doc/mavericks-swift-runt
 sh scripts/stage-runtime.sh "$T/built" "$T/out" LICENSE NOTICE
 got="$(cd "$T/out" && find usr LICENSE.txt Library 2>/dev/null | sort)"
 want="$(printf '%s\n' Library Library/keep usr usr/local usr/local/mavergreen "$P" "$P/lib" \
-  "$P/lib/swift" "$P/lib/swift/libswiftCore.dylib" "$P/lib/swift/libswiftSwiftOnoneSupport.dylib" \
+  "$P/lib/swift" "$P/lib/swift/libswiftCore.dylib" "$P/lib/swift/libswiftDarwin.dylib" \
+  "$P/lib/swift/libswiftObjectiveC.dylib" "$P/lib/swift/libswiftSwiftOnoneSupport.dylib" \
   "$P/share" "$P/share/doc" "$P/share/doc/LICENSE.txt" "$P/share/doc/NOTICE" | sort)"
 [ "$got" = "$want" ] || fail "staged tree is
 $got
@@ -103,7 +107,8 @@ expand_pkg() {
 payload_of() { lsbom -s "$comp/Bom" | grep -v '/\._' | sort; }
 outside_of() { _i=0; while _v="$(/usr/libexec/PlistBuddy -c "Print :outside:$_i" "$1" 2>/dev/null)"; do echo "$_v"; _i=$((_i + 1)); done; }
 want_payload="$(printf '%s\n' . ./usr ./usr/local ./usr/local/mavergreen "./$P" "./$P/lib" "./$P/lib/swift" \
-  "./$P/lib/swift/libswiftCore.dylib" "./$P/lib/swift/libswiftSwiftOnoneSupport.dylib" \
+  "./$P/lib/swift/libswiftCore.dylib" "./$P/lib/swift/libswiftDarwin.dylib" \
+  "./$P/lib/swift/libswiftObjectiveC.dylib" "./$P/lib/swift/libswiftSwiftOnoneSupport.dylib" \
   "./$P/share" "./$P/share/doc" "./$P/share/doc/LICENSE.txt" "./$P/share/doc/NOTICE" "./$P/mavergreen.plist" | sort)"
 
 echo "-- package.sh stages the updater under the identity shipyard's registry derives for swift-runtime"

@@ -4,8 +4,8 @@
 #          Lays out a toolchain .pkg's payload under <out-dir>/usr/local/mavergreen/<product> from this
 #          build: build-toolchain.sh --host $STAGE_HOST's lld, clang and clang's headers, and its compiler
 #          and helper outputs (--frontend: the swift build dir holding bin/swift-frontend and
-#          share/swift, default $SWIFT_WORK/<host's swift dir>); the stdlib (--stdlib: a stdlib build's
-#          lib/swift, default build.sh's $SWIFT_WORK/stdlib-build/lib/swift, or a staged toolchain's
+#          share/swift, default $SWIFT_WORK/<host's swift dir>); the stdlib, and the Darwin and ObjectiveC
+#          overlays' modules and dylibs beside it (--stdlib: a stdlib build's lib/swift, default build.sh's $SWIFT_WORK/stdlib-build/lib/swift, or a staged toolchain's
 #          lib/swift: CI's build job takes the cross toolchain pkg's, self-host.sh a stage's); compiler-rt's
 #          builtins (--builtins, default build-builtins.sh's archive), where that clang looks for them;
 #          the swiftc and ld wrappers; shipyard's SDK fetcher and the two scripts it sources; clang's
@@ -49,6 +49,12 @@ done
 # A stdlib build keeps its dylibs in macosx/x86_64/, a staged toolchain in macosx/ (lib.sh).
 LAYOUT="$(stdlib_layout "$STDLIB")" || { echo "stage-toolchain: $STDLIB is no stdlib -- run build.sh, or name one with --stdlib" >&2; exit 1; }
 if [ "$LAYOUT" = build ]; then DYLIBS="$STDLIB/macosx/x86_64"; else DYLIBS="$STDLIB/macosx"; fi
+# The Darwin and ObjectiveC overlays (step 5b of build.sh): a module and a dylib each, in the same two places.
+OVERLAYS="Darwin ObjectiveC"
+for o in $OVERLAYS; do
+  [ -f "$STDLIB/macosx/$o.swiftmodule/x86_64-apple-macos.swiftmodule" ] && [ -f "$DYLIBS/libswift$o.dylib" ] \
+    || { echo "stage-toolchain: $STDLIB has no $o.swiftmodule and libswift$o.dylib -- run build.sh" >&2; exit 1; }
+done
 
 P="$OUT/usr/local/mavergreen/$TH_PRODUCT"
 rm -rf "$OUT/usr"
@@ -68,6 +74,10 @@ chmod 755 "$P/bin/swiftc" "$P/libexec/mavergreen-swift/ld"
 cp "$SHIPYARD/fetch_sdk.sh" "$SHIPYARD/mavericks_fetch.sh" "$SHIPYARD/sdk-pins.sh" "$P/libexec/mavergreen-swift/"
 cp -R "$STDLIB/macosx/Swift.swiftmodule" "$STDLIB/macosx/SwiftOnoneSupport.swiftmodule" "$P/lib/swift/macosx/"
 cp "$STDLIB/macosx/layouts-x86_64.yaml" "$DYLIBS/libswiftCore.dylib" "$DYLIBS/libswiftSwiftOnoneSupport.dylib" "$P/lib/swift/macosx/"
+for o in $OVERLAYS; do
+  cp -R "$STDLIB/macosx/$o.swiftmodule" "$P/lib/swift/macosx/"
+  cp "$DYLIBS/libswift$o.dylib" "$P/lib/swift/macosx/"
+done
 cp -R "$STDLIB/shims" "$P/lib/swift/shims"
 # clang finds its resource headers at <bin>/../lib/clang/<v>; Swift at lib/swift/clang, as in swift.org toolchains.
 cp -R "$CLANG_INC" "$P/lib/clang/$CLANG_V/include"

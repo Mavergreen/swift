@@ -238,7 +238,7 @@ jobs:
           STAGE_HOST=arm64 sh scripts/stage-toolchain.sh "$SWIFT_BUILD/payload/toolchain-cross"
           du -sh "$SWIFT_BUILD/payload/toolchain-cross"; df -h "$RUNNER_TEMP" | tail -1
 
-      # Two batches: the three tools are arm64 (the family's arm64 pin, minOS 11.0 and SDK 11.3), the two
+      # Two batches: the three tools are arm64 (the family's arm64 pin, minOS 11.0 and SDK 11.3), the four
       # stdlib dylibs x86_64 (the 10.9 target, by their declared sdk-pin deviation).
       - name: Compat guard over the cross toolchain payload (must pass)
         run: |
@@ -246,13 +246,15 @@ jobs:
           find "$P" -type f \( -perm -111 -o -name '*.dylib' \) \
             -exec sh -c 'file "$1" | grep -q Mach-O && echo "$1"' _ {} \; | sort > "$RUNNER_TEMP/cross-machos"
           cat "$RUNNER_TEMP/cross-machos"
-          # Exactly these five, so nothing new in the payload goes unguarded.
+          # Exactly these seven, so nothing new in the payload goes unguarded.
           printf '%s\n' "$P/bin/clang" "$P/bin/ld64.lld" "$P/bin/swift-frontend" \
-            "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib" | sort > "$RUNNER_TEMP/cross-want"
+            "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib" \
+            "$P/lib/swift/macosx/libswiftDarwin.dylib" "$P/lib/swift/macosx/libswiftObjectiveC.dylib" | sort > "$RUNNER_TEMP/cross-want"
           cmp -s "$RUNNER_TEMP/cross-machos" "$RUNNER_TEMP/cross-want" \
-            || { echo "::error::the cross payload's Mach-O files are not swift-frontend, ld64.lld, clang and the 2 stdlib dylibs"; diff "$RUNNER_TEMP/cross-want" "$RUNNER_TEMP/cross-machos"; exit 1; }
+            || { echo "::error::the cross payload's Mach-O files are not swift-frontend, ld64.lld, clang and the 4 stdlib dylibs"; diff "$RUNNER_TEMP/cross-want" "$RUNNER_TEMP/cross-machos"; exit 1; }
           MAVERICKS_ALLOW_ARCHS=arm64 ./scripts/guard.sh "$P/bin/swift-frontend" "$P/bin/ld64.lld" "$P/bin/clang"
-          ./scripts/guard.sh "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib"
+          ./scripts/guard.sh "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib" \
+            "$P/lib/swift/macosx/libswiftDarwin.dylib" "$P/lib/swift/macosx/libswiftObjectiveC.dylib"
           # The builtins archive is not executable, so the list above misses it; guard it by name.
           ./scripts/guard.sh "$P"/lib/clang/*/lib/darwin/libclang_rt.osx.a
 
@@ -441,9 +443,9 @@ jobs:
             -exec sh -c 'file "$1" | grep -q Mach-O && echo "$1"' _ {} \; > "$RUNNER_TEMP/toolchain-machos"
           cat "$RUNNER_TEMP/toolchain-machos"
           # BSD xargs runs nothing on empty input, so an empty list would pass unguarded: expect
-          # swift-frontend, ld64.lld, clang and the two stdlib dylibs, exactly.
+          # swift-frontend, ld64.lld, clang and the four stdlib dylibs, exactly.
           n="$(wc -l < "$RUNNER_TEMP/toolchain-machos" | tr -d ' ')"
-          [ "$n" -eq 5 ] || { echo "::error::the toolchain payload holds $n Mach-O files, not 5 (swift-frontend, ld64.lld, clang, 2 stdlib dylibs)"; exit 1; }
+          [ "$n" -eq 7 ] || { echo "::error::the toolchain payload holds $n Mach-O files, not 7 (swift-frontend, ld64.lld, clang, 4 stdlib dylibs)"; exit 1; }
           xargs ./scripts/guard.sh < "$RUNNER_TEMP/toolchain-machos"
           # The builtins archive is not executable, so the list above misses it; guard it by name.
           ./scripts/guard.sh "$SWIFT_BUILD"/payload/toolchain/usr/local/mavergreen/swift-toolchain/lib/clang/*/lib/darwin/libclang_rt.osx.a
