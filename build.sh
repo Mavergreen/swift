@@ -1,7 +1,10 @@
 #!/bin/sh
 # platform: macOS-only -- a modern Mac (cross: pkgutil and ditto expand the swift.org compiler) or OS X 10.9 (native)
 # build.sh — from-source build of the Swift runtime (libswiftCore + libswiftSwiftOnoneSupport) for
-# OS X 10.9 / x86_64, staged as the runtime .pkg's payload. No Apple prebuilt runtime bytes ship.
+# OS X 10.9 / x86_64, staged as the runtime .pkg's payload, and beside it, in the stdlib build's tree, the
+# Darwin and ObjectiveC overlays (libswiftDarwin, libswiftObjectiveC and their modules: swift-6.2's
+# Platform and swift-5.4's ObjectiveC sources, pinned tarballs, compiled against the 10.9 SDK by
+# scripts/build-module.sh with the stdlib's flags). No Apple prebuilt runtime bytes ship.
 #
 # One recipe, two modes (MAVERICKS_MODE, else shipyard's mavericks_mode.sh), the same bytes from both.
 # The host Swift compiler and clang are a Mavergreen toolchain's, run bare through a shim dir, with the
@@ -135,8 +138,10 @@ echo "    Recaulk $RECAULK_VERSION: $RECAULK_RUNTIME_SYMBOLS, $(grep -c . "$RECA
 clang_resource_shim "$CLANG_INC" "$BUILTINS" "$ROOT/clang-resource" || { echo "FAIL: could not lay out $ROOT/clang-resource"; exit 1; }
 echo "    host compiler $TC; SDK $SDK_RUNTIME; linker $LLD; builtins $BUILTINS"
 
-echo "==> 2. pinned swift source (GitHub's tarball of SWIFT_SHA, verified by SWIFT_TARBALL_SHA256, extracted afresh)"
+echo "==> 2. pinned swift sources (GitHub's tarballs of SWIFT_SHA, and of SWIFT62_SHA and SWIFT54_SHA for the overlays, each verified by its TARBALL_SHA256, extracted afresh)"
 fetch_source swift "$SWIFT_REPO_URL" "$SWIFT_SHA" "$SWIFT_TARBALL_SHA256" SWIFT_TARBALL_SHA256 || exit 1
+fetch_source swift-6.2 "$SWIFT_REPO_URL" "$SWIFT62_SHA" "$SWIFT62_TARBALL_SHA256" SWIFT62_TARBALL_SHA256 || exit 1
+fetch_source swift-5.4 "$SWIFT_REPO_URL" "$SWIFT54_SHA" "$SWIFT54_TARBALL_SHA256" SWIFT54_TARBALL_SHA256 || exit 1
 
 echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order)"
 #  0004 realization-aware getROData — objc4-532 realizes classes eagerly at image
@@ -194,8 +199,8 @@ LINK="-fuse-ld=lld --ld-path=$LLD"
 # archiver are the bytes it was configured with, and swift the source it compiled: ninja cannot see them
 # change (a toolchain update, say, or a pin moved to an older commit, whose tarball's files all carry that
 # commit's date), and would keep the objects the previous ones built; and a configured tree keeps its
-# first CMAKE_AR.
-STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS" "$X/llvm-ar" "$LIBCXX" "$CXXINC/__config" "$RECAULK_A" && source_stamp swift)" || { echo "FAIL: could not stamp the host inputs and the swift source"; exit 1; }
+# first CMAKE_AR. The overlays' trees are stamped too: step 5b writes into this tree.
+STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS" "$X/llvm-ar" "$LIBCXX" "$CXXINC/__config" "$RECAULK_A" && source_stamp swift swift-6.2 swift-5.4)" || { echo "FAIL: could not stamp the host inputs and the swift sources"; exit 1; }
 reuse_build_dir "$ROOT/stdlib-build" "$STAMP" || exit 1
 # LLVM_BUILD_* are build-tree-only variables that an install tree does not define, but
 # SwiftSharedCMakeConfig.cmake preconditions on them. LLVM_BUILD_MAIN_SRC_DIR only needs to be
@@ -247,68 +252,121 @@ if [ -n "$PY" ]; then echo "    gyb runs $PY: $("$PY" --version 2>&1 || :)"; els
 echo "==> 5. build libswiftCore (+ SwiftOnoneSupport)"
 ninja -C "$ROOT/stdlib-build" swiftCore-macosx-$ARCH swiftSwiftOnoneSupport-macosx-$ARCH
 
+echo "==> 5b. the Darwin and ObjectiveC overlays, beside libswiftCore (against the 10.9 SDK)"
+# spec: "The overlays" -- written into the stdlib build's tree beside Core (lib/swift/macosx/<M>.swiftmodule,
+#       macosx/x86_64/lib<swiftM>.dylib), so every later stage reads one tree. Compiled by the host
+#       compiler that built Core, against the stdlib just built (its Swift module and libswiftCore) and the
+#       10.9 SDK, as our swiftc asks for it (fetch_sdk.sh's SDKSettings.json): the overlays import the SDK's
+#       C modules, and the 11.3 SDK's would declare APIs 10.9 lacks. Afresh every run, in seconds.
+RES="$ROOT/stdlib-build/lib/swift"
+OVS="$ROOT/overlays/src"; OVW="$ROOT/overlays/work"
+SDK_OVERLAYS="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$SHIPYARD/fetch_sdk.sh")" || { echo "FAIL: could not fetch the 10.9 SDK"; exit 1; }
+# spec: INGREDIENTS.md "Recaulk" -- libswiftDarwin compiles LibcOverlayShims.h's _swift_stdlib_openat, which
+#       calls openat (macOS 10.10), so a strong import that fails to load on 10.9: Recaulk's, linked and
+#       hidden, as libswiftCore takes its own. The member that defines openat (and the one that brings
+#       getattrlist and friends, all in 10.9) also defines macports-legacy-support's ___mpls_* globals, and
+#       Recaulk's dispatch members clang's block helpers: RECAULK_INCIDENTAL accepts those, still hidden.
+RECAULK_INCIDENTAL='^___(copy|destroy)_helper_block_|^___mpls_'
+RECAULK_DARWIN_SYMBOLS="_openat"
+RECAULK_DARWIN_A="$ROOT/recaulk-darwin.a"; RECAULK_DARWIN_UNX="$ROOT/recaulk-darwin.unexported"
+# shellcheck disable=SC2086  # space-free symbol names
+( NM="$X/llvm-nm"; AR="$X/llvm-ar"; RECAULK_ALSO_HIDE="$RECAULK_INCIDENTAL"
+  recaulk_subset "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_DARWIN_A" "$RECAULK_DARWIN_UNX" $RECAULK_DARWIN_SYMBOLS ) \
+  || { echo "FAIL: could not take $RECAULK_DARWIN_SYMBOLS from $RECAULK_PREFIX/lib/librecaulk.a"; exit 1; }
+echo "    Recaulk $RECAULK_VERSION for Darwin: $RECAULK_DARWIN_SYMBOLS, $(grep -c . "$RECAULK_DARWIN_UNX") globals, all unexported"
+PYTHON="${PY:-python3}" sh "$HERE/scripts/overlay-sources.sh" "$ROOT/swift-6.2" "$ROOT/swift-5.4" "$ROOT/swift/utils/gyb" "$OVS" \
+  || { echo "FAIL: could not lay out the overlays' sources"; exit 1; }
+# One line per module: build-module.sh <module> <link-name> [its options --] <sources>...
+build_overlay() {
+  _bo_m="$1"; _bo_l="$2"; shift 2
+  SWIFT_WORK="$ROOT" SWIFTC="$TC/bin/swiftc" LLD="$LLD" sh "$HERE/scripts/build-module.sh" \
+    --name "$_bo_m" --link-name "$_bo_l" --sdk "$SDK_OVERLAYS" --resource-dir "$RES" \
+    --availability "$ROOT/swift/utils/availability-macros.def" --work "$OVW/$_bo_m" --out "$RES/macosx" "$@" \
+    || { echo "FAIL: could not build the $_bo_m overlay"; exit 1; }
+  echo "    $_bo_m: $RES/macosx/$_bo_m.swiftmodule, $RES/macosx/$ARCH/lib$_bo_l.dylib"
+}
+build_overlay Darwin swiftDarwin --link "$RECAULK_DARWIN_A" --unexported "$RECAULK_DARWIN_UNX" -- \
+  "$OVS/Darwin/Darwin.swift" "$OVS/Darwin/Platform.swift" "$OVS/Darwin/TiocConstants.swift" \
+  "$OVS/Darwin/tgmath.swift" "$OVS/Darwin/POSIXError.swift" "$OVS/Darwin/MachError.swift"
+# ObjectiveC imports Darwin, found in --out, where Darwin was just written.
+build_overlay ObjectiveC swiftObjectiveC --I "$OVS/ObjectiveC/shims" -- "$OVS/ObjectiveC/ObjectiveC.swift"
+
 echo "==> 6. stage the payload (usr/local/mavergreen/swift-runtime/, for package.sh's pkgbuild --root)"
 OUT="${SWIFT_RUNTIME_OUT:-$SWIFT_BUILD/payload/runtime}"
 sh "$HERE/scripts/stage-runtime.sh" "$ROOT/stdlib-build/lib/swift/macosx/$ARCH" "$OUT" "$HERE/LICENSE" "$HERE/NOTICE"
 CORE="$OUT/usr/local/mavergreen/swift-runtime/lib/swift/libswiftCore.dylib"
 
 echo "==> 7. self pre-flight (must show minOS 10.9 and NO os_unfair_lock)"
+# Every dylib that ships: the staged runtime's two, and the overlays, read from the stdlib build's tree
+# where step 5b wrote them (space-free paths: lib.sh refuses a root with whitespace).
+SHIPPED_DYLIBS="$CORE $(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib $RES/macosx/$ARCH/libswiftDarwin.dylib $RES/macosx/$ARCH/libswiftObjectiveC.dylib"
+DARWIN="$RES/macosx/$ARCH/libswiftDarwin.dylib"
+for lib in $SHIPPED_DYLIBS; do [ -f "$lib" ] || { echo "FAIL: no $lib to check"; exit 1; }; done
 # platform: dyld_info reads an x86_64 Mach-O natively on an arm64 host. `arch -x86_64 dyld_info`
 #           needs Rosetta AND an x86_64 slice in dyld_info, and Command Line Tools 27 ships it arm64-only.
 #           OS X 10.9 has none: macho_minos and macho_imports (lib.sh) fall back to otool and nm.
 # Captured before any grep: piped straight into grep, a reader that could not run read as "no
 # os_unfair_lock" and this step printed OK having checked nothing.
-MINOS="$(DYLDINFO="$DYLDINFO" macho_minos "$CORE")"
 IMPORTS_OUT="$(DYLDINFO="$DYLDINFO" macho_imports "$CORE")" || { echo "FAIL: could not read $CORE's imports"; exit 1; }
-echo "minOS $MINOS; $(printf '%s\n' "$IMPORTS_OUT" | grep -c .) imports (read with ${DYLDINFO:-${OTOOL:-otool} and ${NM:-nm}})"
-[ "$MINOS" = "$DEPLOYMENT" ] || { echo "FAIL: built runtime is minOS '$MINOS', not $DEPLOYMENT"; exit 1; }
+echo "$(printf '%s\n' "$IMPORTS_OUT" | grep -c .) imports in $(basename "$CORE") (read with ${DYLDINFO:-${OTOOL:-otool} and ${NM:-nm}})"
 [ -n "$IMPORTS_OUT" ] || { echo "FAIL: read no imports from $CORE"; exit 1; }
 if printf '%s\n' "$IMPORTS_OUT" | grep -q 'os_unfair_lock'; then
   echo "FAIL: os_unfair_lock still imported"; exit 1
 fi
 # spec: INGREDIENTS.md "Recaulk" -- each API Recaulk supplies is defined in the image and hidden, never
-#       imported; the weak imports whose presence the runtime reads as the OS's answer stay the OS's
-#       (a whole-archive link would bind them, and os_signpost_enabled would turn tracing on over NULLs).
-CORE_EXPORTS="$("${NM:-nm}" -gU "$CORE" | awk '{ print $NF }')" || { echo "FAIL: could not read $CORE's exports"; exit 1; }
-CORE_SYMS="$("${NM:-nm}" "$CORE")" || { echo "FAIL: could not read $CORE's symbols"; exit 1; }
-[ -n "$CORE_EXPORTS" ] || { echo "FAIL: read no exports from $CORE"; exit 1; }
-for s in $RECAULK_RUNTIME_SYMBOLS; do
-  if printf '%s\n' "$IMPORTS_OUT" | grep -q "${s#_}"; then echo "FAIL: $s is imported, not Recaulk's"; exit 1; fi
-  printf '%s\n' "$CORE_SYMS" | grep -Eq " [Tt] $s\$" || { echo "FAIL: $CORE does not define $s"; exit 1; }
-  if printf '%s\n' "$CORE_EXPORTS" | grep -qx "$s"; then echo "FAIL: $CORE exports Recaulk's $s"; exit 1; fi
-done
-if printf '%s\n' "$CORE_EXPORTS" | grep -q '^___recaulk_'; then
-  printf '%s\n' "$CORE_EXPORTS" | grep '^___recaulk_'; echo "FAIL: $CORE exports Recaulk's internals (listed above)"; exit 1
-fi
+#       imported; and no other global its members define is exported (the unexported list hides them all).
+# recaulk_hidden <dylib> <unexported-list> <symbol>...
+recaulk_hidden() {
+  _rh_lib="$1"; _rh_unx="$2"; shift 2
+  _rh_imp="$(DYLDINFO="$DYLDINFO" macho_imports "$_rh_lib")" || { echo "FAIL: could not read $_rh_lib's imports"; exit 1; }
+  _rh_exp="$("${NM:-nm}" -gU "$_rh_lib" | awk '{ print $NF }')" || { echo "FAIL: could not read $_rh_lib's exports"; exit 1; }
+  _rh_syms="$("${NM:-nm}" "$_rh_lib")" || { echo "FAIL: could not read $_rh_lib's symbols"; exit 1; }
+  [ -n "$_rh_exp" ] || { echo "FAIL: read no exports from $_rh_lib"; exit 1; }
+  for _rh_s in "$@"; do
+    if printf '%s\n' "$_rh_imp" | grep -q "${_rh_s#_}"; then echo "FAIL: $_rh_s is imported by $_rh_lib, not Recaulk's"; exit 1; fi
+    printf '%s\n' "$_rh_syms" | grep -Eq " [Tt] $_rh_s\$" || { echo "FAIL: $_rh_lib does not define $_rh_s"; exit 1; }
+  done
+  _rh_leak="$(printf '%s\n' "$_rh_exp" | grep -Fx -f "$_rh_unx" || :)"
+  [ -z "$_rh_leak" ] || { printf '%s\n' "$_rh_leak"; echo "FAIL: $_rh_lib exports Recaulk's globals (listed above)"; exit 1; }
+  if printf '%s\n' "$_rh_exp" | grep -q '^___recaulk_'; then
+    printf '%s\n' "$_rh_exp" | grep '^___recaulk_'; echo "FAIL: $_rh_lib exports Recaulk's internals (listed above)"; exit 1
+  fi
+}
+# shellcheck disable=SC2086  # space-free symbol names
+recaulk_hidden "$CORE" "$RECAULK_UNX" $RECAULK_RUNTIME_SYMBOLS
+recaulk_hidden "$DARWIN" "$RECAULK_DARWIN_UNX" $RECAULK_DARWIN_SYMBOLS
+#       The weak imports whose presence the runtime reads as the OS's answer stay the OS's (a
+#       whole-archive link would bind them, and os_signpost_enabled would turn tracing on over NULLs).
 for s in objc_realizeClassFromSwift os_signpost_enabled os_signpost_emit_with_name_impl availability_version_check; do
   printf '%s\n' "$IMPORTS_OUT" | grep "$s" | grep -q '\[weak-import\]' \
     || { echo "FAIL: $s is not a weak import of the OS's (a Recaulk definition bound it?)"; exit 1; }
 done
 # spec: INGREDIENTS.md "Recaulk" -- an import the OS lacks fails in dyld on a real 10.9 box, not at link
-#       time against the 11.3 SDK. Every symbol the staged dylibs import from /usr/lib or a framework is
+#       time against the 11.3 SDK. Every symbol the shipped dylibs import from /usr/lib or a framework is
 #       checked against the 10.9 SDK's own stubs (lib.sh's sdk109_stubs); a weak one the stubs lack must
 #       have a guard cited in the allowlist. Captured first: the output is the list of what failed.
 SDK109="$(sdk109_stubs)" || { echo "FAIL: could not fetch the 10.9 SDK's stubs"; exit 1; }
+# shellcheck disable=SC2086  # space-free paths
 IMPORTS_109="$(DYLDINFO="$DYLDINFO" NM="${NM:-nm}" OTOOL="${OTOOL:-otool}" sh "$HERE/scripts/imports-on-10.9.sh" "$SDK109" \
-  "$HERE/scripts/resources/weak-absent-on-10.9.txt" "$CORE" "$(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib")" \
+  "$HERE/scripts/resources/weak-absent-on-10.9.txt" $SHIPPED_DYLIBS)" \
   || { printf '%s\n' "$IMPORTS_109"; echo "FAIL: an OS import is missing from OS X 10.9 (listed above)"; exit 1; }
 printf '%s\n' "$IMPORTS_109"
 # The strings checks below capture strings' output first, as above: a dylib strings could not read
 # would otherwise read as "no MAV_, no paths".
-# release build must carry no debug-logging leftovers.
-[ -f "$CORE" ] || { echo "FAIL: no $CORE to check"; exit 1; }
-CORE_S="$("$STRINGS" "$CORE")" || { echo "FAIL: could not read $CORE's strings ($STRINGS)"; exit 1; }
-if printf '%s\n' "$CORE_S" | grep -q 'MAV_'; then
-  echo "FAIL: debug (MAV_) strings present in shipped dylib"; exit 1
-fi
 # No path of this machine's work tree survives (the prefix maps above), in any spelling; nor any other
 # absolute path (a foreign machine's, through a linked archive, say) beyond the mapped root and the OS's.
 # An absolute path here is a / then a name of two or more characters then a /: strings -a also finds
 # code bytes that start with / (such as "/h/h/", "/fff."), and a bare ^/ would fail on those.
 RP="$(CDPATH='' cd -P -- "$ROOT" && pwd -P)"; LP="$(CDPATH='' cd -L -- "$ROOT" && pwd -L)"
-for lib in "$CORE" "$(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib"; do
-  [ -f "$lib" ] || { echo "FAIL: no $lib to check"; exit 1; }
+for lib in $SHIPPED_DYLIBS; do
+  MINOS="$(DYLDINFO="$DYLDINFO" macho_minos "$lib")"
+  [ "$MINOS" = "$DEPLOYMENT" ] || { echo "FAIL: $lib is minOS '$MINOS', not $DEPLOYMENT"; exit 1; }
   S="$("$STRINGS" -a "$lib")" || { echo "FAIL: could not read $lib's strings ($STRINGS)"; exit 1; }
+  [ -n "$S" ] || { echo "FAIL: read no strings from $lib ($STRINGS)"; exit 1; }
+  # release build must carry no debug-logging leftovers.
+  if printf '%s\n' "$S" | grep -q 'MAV_'; then
+    echo "FAIL: debug (MAV_) strings present in $lib"; exit 1
+  fi
   if printf '%s\n' "$S" | grep -F -e "$ROOT" -e "$RP" -e "$LP"; then
     echo "FAIL: $lib carries the build root's path (listed above)"; exit 1
   fi
@@ -318,14 +376,24 @@ for lib in "$CORE" "$(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib"; do
     printf '%s\n' "$FOREIGN"; echo "FAIL: $lib carries an absolute path outside /mavergreen-build, /usr/lib, /System and libcxx22's libc++ (listed above)"; exit 1
   fi
   # spec: INGREDIENTS.md "One C++ runtime" -- one libc++, the family's,
-  #       and one libc++abi, the OS's (libcxx22 re-exports it)
+  #       and one libc++abi, the OS's (libcxx22 re-exports it). The runtime's two have C++ and link
+  #       libcxx22's; the overlays have none, and the rule there is only "never the OS's libc++".
   DEPS="$("${OTOOL:-otool}" -L "$lib" | sed 1d | sed 's/^[[:space:]]*//; s/ (compatibility.*//')" || { echo "FAIL: could not list $lib's libraries"; exit 1; }
-  printf '%s\n' "$DEPS" | grep -qx '/usr/local/mavergreen/libcxx22/lib/libc++\.1\.dylib' \
-    || { printf '%s\n' "$DEPS"; echo "FAIL: $lib does not link libcxx22's libc++ (listed above)"; exit 1; }
+  printf '%s\n' "$DEPS" | grep -qx '/usr/lib/libSystem\.B\.dylib' \
+    || { printf '%s\n' "$DEPS"; echo "FAIL: ${OTOOL:-otool} read no libSystem from $lib, so it read nothing $lib links (listed above)"; exit 1; }
+  case "${lib##*/}" in
+    libswiftCore.dylib|libswiftSwiftOnoneSupport.dylib)
+      printf '%s\n' "$DEPS" | grep -qx '/usr/local/mavergreen/libcxx22/lib/libc++\.1\.dylib' \
+        || { printf '%s\n' "$DEPS"; echo "FAIL: $lib does not link libcxx22's libc++ (listed above)"; exit 1; } ;;
+    *)
+      # Global Constraints: every new library is @rpath/<name>, as the Swift libraries reach each other.
+      ID="$("${OTOOL:-otool}" -D "$lib" | sed 1d)"
+      [ "$ID" = "@rpath/${lib##*/}" ] || { echo "FAIL: $lib's install name is '$ID', not @rpath/${lib##*/}"; exit 1; } ;;
+  esac
   if printf '%s\n' "$DEPS" | grep -qx '/usr/lib/libc++\.1\.dylib'; then
-    printf '%s\n' "$DEPS"; echo "FAIL: $lib links the OS's libc++ beside libcxx22's (listed above)"; exit 1
+    printf '%s\n' "$DEPS"; echo "FAIL: $lib links the OS's libc++ (listed above)"; exit 1
   fi
   ABI="$("${NM:-nm}" -gU "$lib" | awk '{print $NF}' | grep -E '^___cxa_|^___gxx_personality|^__Unwind_' || :)"
   [ -z "$ABI" ] || { printf '%s\n' "$ABI"; echo "FAIL: $lib defines C++ ABI symbols of its own (listed above)"; exit 1; }
 done
-echo "OK: no os_unfair_lock; Recaulk's $RECAULK_RUNTIME_SYMBOLS defined and hidden; no debug strings; no build paths; staged in $OUT"
+echo "OK: minOS $DEPLOYMENT; no os_unfair_lock; Recaulk's $RECAULK_RUNTIME_SYMBOLS (libswiftCore) and $RECAULK_DARWIN_SYMBOLS (libswiftDarwin) defined and hidden; no debug strings; no build paths; checked $(for lib in $SHIPPED_DYLIBS; do printf '%s ' "${lib##*/}"; done); staged in $OUT"
