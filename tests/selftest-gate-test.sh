@@ -38,6 +38,9 @@ cc -o "$T/sleeper" "$T/sleeper.c"
 printf '%s\n' '#include <stdio.h>' '#include <stdlib.h>' '#include <unistd.h>' \
   'int main(void){pid_t p=fork(); if(p==0){sleep(30); return 0;} FILE *f=fopen(getenv("SELFTEST_PIDFILE"),"w"); fprintf(f,"%d\n",(int)p); fclose(f); sleep(5); return 0;}' > "$T/forker.c"
 cc -o "$T/forker" "$T/forker.c"
+# crasher: the same child, but it itself exits non-zero at once (a crash), leaving the child behind.
+sed 's/sleep(5); return 0;/return 3;/' "$T/forker.c" > "$T/crasher.c"
+cc -o "$T/crasher" "$T/crasher.c"
 # counter: appends its own name to $SELFTEST_COUNT on each run, so a case can count runs and their order.
 printf '%s\n' '#include <stdio.h>' '#include <stdlib.h>' \
   'int main(int c, char **v){FILE *f=fopen(getenv("SELFTEST_COUNT"),"a"); if(!f) return 2; fprintf(f,"%s\n",v[0]); fclose(f); return 0;}' > "$T/counter.c"
@@ -146,6 +149,14 @@ out="$(SELFTEST_PIDFILE="$T/pid" SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_TIMEO
 case "$out" in *'run 1 of 1 timed out after 1 s'*) ;; *) fail "forker: not a timeout: $out" ;; esac
 kid="$(cat "$T/pid")"; [ -n "$kid" ] || fail "forker wrote no pid"
 if kill -0 "$kid" 2>/dev/null; then kill -9 "$kid"; fail "the timed-out run's child $kid outlived it"; fi
+
+echo "-- a run that exits on its own takes its children with it too (a crash leaves none behind)"
+rm -f "$T/pid"; b="$(bundle crasher)"; rc=0
+out="$(SELFTEST_PIDFILE="$T/pid" SWIFT_RUNTIME_PREFIX="$T/prefix" sh "$b/run-selftest.sh" 2>&1)" || rc=$?
+[ "$rc" = 1 ] || fail "crasher: rc=$rc: $out"
+case "$out" in *'exited non-zero'*) ;; *) fail "crasher: exit not reported as before: $out" ;; esac
+kid="$(cat "$T/pid")"; [ -n "$kid" ] || fail "crasher wrote no pid"
+if kill -0 "$kid" 2>/dev/null; then kill -9 "$kid"; fail "the crashed run's child $kid outlived it"; fi
 
 echo "-- a SELFTEST_TIMEOUT that is not a positive integer is refused"
 for v in abc 0 -5; do

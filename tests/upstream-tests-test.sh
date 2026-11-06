@@ -53,6 +53,21 @@ t validation-test/stdlib/Both.swift '// RUN: %target-run-simple-swift' '// REQUI
   '// REQUIRES: objc_interop' 'import Darwin'
 t validation-test/stdlib/Neither.swift '// RUN: %target-run-simple-swift' 'import Swift'
 
+# (compile-line only: these import Swift, so they are no survey candidates)
+t test/stdlib/FlagExt.swift '// RUN: %target-run-simple-swift(-enable-experimental-feature Extern -Ounchecked)' 'import Swift'
+t test/stdlib/FlagExp.swift '// RUN: %target-run-simple-swift(-enable-experimental-feature Lifetimes)' 'import Swift'
+t test/stdlib/FlagLlvm.swift '// RUN: %target-run-simple-swift(-Xllvm -sil-print-all)' 'import Swift'
+t test/stdlib/FlagD.swift '// RUN: %target-run-simple-swift(-DFOO)' 'import Swift'
+t test/stdlib/StrictArg.swift '// RUN: %target-run-simple-swift -strict-concurrency=complete' 'import Swift'
+t test/stdlib/CondOk.swift '// RUN: %target-run-simple-swift' '// REQUIRES: executable_test' \
+  '// REQUIRES: VENDOR=apple || OS=linux-gnu' '// UNSUPPORTED: freestanding' '// UNSUPPORTED: CPU=arm64 && OS=macosx' 'import Swift'
+t test/stdlib/ReqLinux.swift '// RUN: %target-run-simple-swift' '// REQUIRES: OS=linux-gnu' 'import Swift'
+t test/stdlib/ReqUnknown.swift '// RUN: %target-run-simple-swift' '// REQUIRES: some_feature_we_lack' 'import Swift'
+t test/stdlib/UnsMac.swift '// RUN: %target-run-simple-swift' '// UNSUPPORTED: OS=macosx' 'import Swift'
+t test/stdlib/UnsNeg.swift '// RUN: %target-run-simple-swift' '// UNSUPPORTED: !freestanding' 'import Swift'
+t test/stdlib/UnsBack.swift '// RUN: %target-run-simple-swift' '// UNSUPPORTED: back_deployment_runtime' 'import Swift'
+t test/stdlib/ReqBad.swift '// RUN: %target-run-simple-swift' '// REQUIRES: (executable_test' 'import Swift'
+
 echo "-- survey: each layer's candidates, sorted; nothing without a RUN: line, nothing in Inputs/"
 ut survey "$R" darwin > "$T/d" || fail "survey darwin failed"
 ut survey "$R" objectivec > "$T/o" || fail "survey objectivec failed"
@@ -139,6 +154,15 @@ cl test/stdlib/Gybbed.swift.gyb '-parse-stdlib
 -module-name
 main'
 cl test/stdlib/GybBuilt.swift.gyb ''
+cl test/stdlib/FlagExt.swift '-enable-experimental-feature
+Extern
+-Ounchecked
+-module-name
+main'
+cl test/stdlib/StrictArg.swift '-module-name
+main'
+cl test/stdlib/CondOk.swift '-module-name
+main'
 cl test/stdlib/Continued.swift '-parse-as-library
 -module-name
 main'
@@ -155,4 +179,13 @@ refuse test/stdlib/Stdin.swift 'RUN redirects the test'
 refuse test/stdlib/Twice.swift 'more than one executable step'
 refuse test/stdlib/Verify.swift 'RUN uses %target-typecheck-verify-swift'
 refuse test/stdlib/NoRun.swift 'no RUN: line'
+refuse test/stdlib/FlagExp.swift 'RUN uses -enable-experimental-feature Lifetimes'
+refuse test/stdlib/FlagLlvm.swift 'RUN uses the flag -Xllvm'
+refuse test/stdlib/FlagD.swift 'RUN uses the flag -DFOO'
+refuse test/stdlib/ReqLinux.swift 'REQUIRES: OS=linux-gnu does not hold on 10.9'
+refuse test/stdlib/ReqUnknown.swift 'REQUIRES: some_feature_we_lack does not hold on 10.9'
+refuse test/stdlib/UnsMac.swift 'UNSUPPORTED: OS=macosx holds on 10.9'
+refuse test/stdlib/UnsNeg.swift 'holds on 10.9'
+refuse test/stdlib/UnsBack.swift 'UNSUPPORTED: back_deployment_runtime holds on 10.9'
+refuse test/stdlib/ReqBad.swift 'does not parse'
 echo "PASS"

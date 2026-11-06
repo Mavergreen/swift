@@ -364,8 +364,9 @@ build_support StdlibUnittest --flag -enable-experimental-feature --flag Lifetime
 SUPPORT_DYLIBS="$SUP/$ARCH/libswiftSwiftPrivate.dylib $SUP/$ARCH/libswiftSwiftPrivateLibcExtras.dylib $SUP/$ARCH/libswiftSwiftPrivateThreadExtras.dylib $SUP/$ARCH/libswiftStdlibUnittest.dylib"
 echo "    test support (never in a pkg): $SUP: SwiftPrivate, SwiftPrivateLibcExtras, SwiftPrivateThreadExtras, StdlibUnittest"
 # spec: "Upstream tests" -- tests/upstream/<layer>.list names every upstream test the layer's classifier
-#       picks from this tree, include or exclude with a reason: a Swift bump that adds one, or changes one's
-#       RUN: lines, stops here until the list is reviewed (scripts/upstream-tests.py check).
+#       picks from this tree, include or exclude with a reason: a Swift bump that adds one, or gives an included
+#       one a RUN: form, compiler flag or REQUIRES:/UNSUPPORTED: the script does not know, stops here until the
+#       list is reviewed (scripts/upstream-tests.py check; a changed source does not stop it).
 for l in "$HERE"/tests/upstream/*.list; do
   UL="$("${PY:-python3}" -I "$HERE/scripts/upstream-tests.py" check "$ROOT/swift" "$(basename "$l" .list)" "$l" 2>&1)" \
     || { printf '%s\n' "$UL"; echo "FAIL: $l does not cover $ROOT/swift's $(basename "$l" .list) tests (above) -- review the new or changed ones"; exit 1; }

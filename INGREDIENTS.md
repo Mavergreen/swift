@@ -172,6 +172,17 @@ them in the VM is the larger cost: the whole job took 10 min with 20 compiles, s
 150 binaries cost about 40 min. Install, compiles, gate and smoke total about 70 min at that worst, so
 `vm-test`'s `timeout-minutes` is 120 (it was 90), under GitHub's 360. 20 runs stay: the cost scales with the count, and 20 plus 1 under Guard Malloc is a short, deterministic-test budget (a 17 min worst case leaves room).
 
+Owed: upstream tests the gate excludes because 10.9 or this release lacks something, each owed
+until its blocker goes (the reasons are in `tests/upstream/*.list`):
+- `test/stdlib/PrintFloat16.swift`: its regex literal needs `_StringProcessing`, which this release does not ship.
+- `validation-test/stdlib/ObjectiveC.swift`: `override var hash` overrides nothing, as the 10.9 SDK declares
+  -hash as a method, not a property.
+- `validation-test/stdlib/ObjectiveC_without_Foundation.swift`: the 10.9 SDK has no nullability, so
+  `NSObject()` is `NSObject!` and `var anNSObject` is not `CVarArg`.
+- `test/stdlib/FloatingPoint.swift.gyb`: 10.9's libm, where `fma` returns the wrong sign (`Double.addingProduct`
+  at -Onone) and `truncl(-0)` returns +0 (`Float80.round`).
+- POSIX.swift and mmap.swift hand the test a temp directory (`%t`), which the gate does not supply.
+
 ## Why LLVM is pinned by release tag, and checked against the Swift pin
 
 LLVM build support cut for one Swift release and used for another builds fine and is wrong. It used

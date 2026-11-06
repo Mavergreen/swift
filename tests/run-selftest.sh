@@ -76,8 +76,9 @@ else PERL="$(command -v perl || :)"; fi
 # as sh reports it. Leading NAME=value words (DYLD_* only) go into the child's environment from inside
 # perl: a modern macOS's SIP strips them from a platform perl's own environment, so `VAR=x perl ...`
 # would never reach the test; on 10.9 it makes no difference. The test runs in a process group of its
-# own, and a timeout kills the whole group: StdlibUnittest runs each test case in a child process, which
-# a kill of the test alone would leave spinning, orphaned, through the rest of the gate.
+# own, and the end of the run, however it ends, kills the whole group: StdlibUnittest runs each test case in a
+# child process, which a kill of the test alone, or a crash of it, would leave spinning, orphaned, through the
+# rest of the gate.
 limited() {
   "$PERL" -e '
     my $t = shift; while ($ARGV[0] =~ /^(DYLD_\w+)=(.*)$/s) { $ENV{$1} = $2; shift }
@@ -85,7 +86,9 @@ limited() {
     if ($pid == 0) { setpgrp(0, 0); exec @ARGV or exit 127 }
     setpgrp($pid, $pid);   # (both sides, so the group exists whichever runs first)
     local $SIG{ALRM} = sub { kill "KILL", -$pid; waitpid $pid, 0; exit 142 };
-    alarm $t; waitpid $pid, 0; alarm 0;
+    alarm $t; waitpid $pid, 0; my $st = $?; alarm 0;
+    kill "KILL", -$pid;   # whatever the test left in the group (a crash orphans StdlibUnittest children)
+    $? = $st;
     exit(($? & 127) ? 128 + ($? & 127) : $? >> 8)' "$TIMEOUT" "$@"
 }
 # reason LABEL RC : the failure text for run LABEL that exited RC
