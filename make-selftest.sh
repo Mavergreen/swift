@@ -1,12 +1,19 @@
 #!/bin/sh
-# platform: macOS-only -- xcrun finds the SDK for the default compiler; SWIFTC= mode runs on OS X 10.9 itself
+# platform: macOS-only -- the default compiler runs on a modern Mac; SWIFTC= mode runs on OS X 10.9 itself
 #   usage: make-selftest.sh
 #          Compiles every tests/*.swift at -O and -Onone into a self-test bundle for a 10.9 box --
 #          bin/<name> and bin/<name>-Onone, plus run-selftest.sh -- and prints the tarball's path last.
 #          Two compilers:
 #            default          the swift.org toolchain build.sh expanded, for x86_64-apple-macosx10.9,
 #                             -no-stdlib-rpath and one rpath, $SWIFT_RUNTIME_PREFIX/lib/swift
-#                             (default /usr/local/mavergreen/swift-runtime). Run after build.sh.
+#                             (default /usr/local/mavergreen/swift-runtime). Run after build.sh. As
+#                             build-module.sh compiles the overlays: against the 10.9 SDK (shipyard's
+#                             fetch_sdk.sh, with SDKSettings.json), whose ObjC declarations the tests are
+#                             written to (-hash is a method there, a property in a modern SDK), with
+#                             -resource-dir the stdlib build's lib/swift, so the Swift, Darwin and
+#                             ObjectiveC modules imported, and the dylibs linked, are this build's, never
+#                             an SDK's; -runtime-compatibility-version none, as that tree has no
+#                             compatibility archives (nor does the runtime need them).
 #            SWIFTC=<swiftc>  exactly `$SWIFTC -O|-Onone <file> -o <out>`: this repo's own toolchain,
 #                             on 10.9, whose defaults supply target, SDK and rpath. With SWIFT_RUNTIME_PREFIX
 #                             also set (a staged, uninstalled runtime), each compile adds
@@ -58,11 +65,15 @@ if [ -n "${SWIFTC:-}" ]; then
 else
   TC="${TC:-${SWIFT_WORK:-$SWIFT_BUILD/work}/toolchain/usr}"
   [ -x "$TC/bin/swiftc" ] || { echo "make-selftest: no swiftc at $TC/bin/swiftc -- run build.sh first" >&2; exit 1; }
-  SDK="$(xcrun --show-sdk-path)"
+  . "$REPO/msc.sh"   # -> $SHIPYARD (fetch_sdk.sh)
+  SDK="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$SHIPYARD/fetch_sdk.sh")" || { echo "make-selftest: could not fetch the 10.9 SDK" >&2; exit 1; }
+  RES="${SWIFT_WORK:-$SWIFT_BUILD/work}/stdlib-build/lib/swift"
+  [ -f "$RES/macosx/x86_64/libswiftCore.dylib" ] || { echo "make-selftest: no stdlib build at $RES -- run build.sh first" >&2; exit 1; }
   RUNTIME_LIB="${SWIFT_RUNTIME_PREFIX:-/usr/local/mavergreen/swift-runtime}/lib/swift"
   compile() {
     _c_o="$1" _c_s="$2" _c_out="$3"; shift 3
-    "$TC/bin/swiftc" -sdk "$SDK" -target x86_64-apple-macosx10.9 "-$_c_o" -no-stdlib-rpath \
+    "$TC/bin/swiftc" -sdk "$SDK" -resource-dir "$RES" -L "$RES/macosx/x86_64" -runtime-compatibility-version none \
+      -target x86_64-apple-macosx10.9 "-$_c_o" -no-stdlib-rpath \
       -Xlinker -rpath -Xlinker "$RUNTIME_LIB" "$_c_s" -o "$_c_out" "$@" >&2
   }
 fi
