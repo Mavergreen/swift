@@ -5,7 +5,8 @@
 #   every patch in patches/runtime and patches/overlays by its number, the Darwin and ObjectiveC overlays'
 #   sources, and each of Recaulk's members build.sh links statically. Two of those (libswiftDarwin's
 #   openat) are MacPorts legacy-support's sources, which keep their own licences: atcalls.c's APSL 2.0
-#   asks for its notices, its licence text and where its source is; pthread_chdir.c's for its notice.
+#   asks for its notices, its licence text and where its source is; pthread_chdir.c's header is no grant, so NOTICE carries legacy-support's LICENSE (MIT for the
+#   MacPorts community's files) as its grant.
 #   A patch or a member added without its NOTICE entry once shipped unnamed.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -34,6 +35,9 @@ grep -q "^APPLE PUBLIC SOURCE LICENSE$" "$N" && grep -q "^Version 2.0 - August 6
   || fail "NOTICE does not carry the APSL 2.0's text"
 grep -q "src/pthread_chdir.c" "$N" || fail "NOTICE does not name MacPorts' pthread_chdir.c"
 grep -q "Copyright (c) 2025 Frederick H. G. Wright II <fw@fwright.net>" "$N" || fail "NOTICE lacks pthread_chdir.c's copyright"
+grep -q "Copyright (c) 2018-2025 Chris Jones, Michael Dickens" "$N" && grep -q "are under the MIT License" "$N" \
+  && grep -q "The above copyright notice and this permission notice shall be included in all" "$N" \
+  || fail "NOTICE lacks legacy-support's LICENSE, the grant for pthread_chdir.c"
 
 echo "-- each Recaulk symbol build.sh links is named"
 for s in $(sed -En 's/^RECAULK_(RUNTIME|DARWIN)_SYMBOLS="([^"]*)"$/\2/p' "$REPO/build.sh"); do

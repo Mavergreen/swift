@@ -92,7 +92,9 @@ components/macports-legacy-support/version pins). They keep their own licenses:
     is included in support of clause 2.2 (b) of the Apple Public License,
     Version 2.0.
 
-  src/pthread_chdir.c, under this license:
+  src/pthread_chdir.c is a file of the MacPorts community's project, and the grant that covers it is
+  legacy-support's top-level LICENSE (reproduced verbatim after the file's own header). The header
+  carries only a copyright line and a disclaimer:
 
     Copyright (c) 2025 Frederick H. G. Wright II <fw@fwright.net>
 
@@ -107,6 +109,34 @@ components/macports-legacy-support/version pins). They keep their own licenses:
     LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
     OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
     SUCH DAMAGE.
+
+  The LICENSE of macports-legacy-support, the grant for pthread_chdir.c (from the pinned tarball,
+  sha256 37c8483a..., commit f89c155c):
+
+    Various.
+
+    Note that files in the repository have various licenses.
+
+    Some files originate from the Apple Open Source repository, and are subject to the 
+    Apple Public Open Source License Version 2.0. Other files may have other
+    licenses as per each source file.
+
+    Parts of this project that have been created by members of the MacPorts community 
+    are under the MIT License
+
+    Copyright (c) 2018-2025 Chris Jones, Michael Dickens
+    Mihai Moldovan, and many other contributing members of the MacPorts community
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
 
 libswiftCore also contains, statically linked, the definitions of
 os_system_version_get_current_version and objc_readClassPair from Recaulk (librecaulk.a, the release
