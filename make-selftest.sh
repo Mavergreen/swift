@@ -15,9 +15,17 @@
 #                             INSTALL_NAME_TOOL, else mavericks-clang-22's llvm-install-name-tool
 #                             (CLANG22_PREFIX, default /usr/local/mavergreen/clang22) where it is
 #                             installed, else install_name_tool from PATH.
+#          SELFTEST_SUPPORT=<dir> (scripts/stage-selftest-support.sh's layout, which build.sh stages as
+#          $SWIFT_BUILD/payload/selftest-support) adds upstream's own tests (spec: "Upstream tests"): each
+#          <dir>/upstream/<layer>/<path>.args, compiled from <path> (for a .gyb, gyb's output beside it) at
+#          -O and -Onone with the arguments that file lists, one per line (its compile-line), and
+#          `-I <dir>/modules -L <dir>/lib -Xlinker -rpath -Xlinker @executable_path/../../lib`, into
+#          upstream/bin/<layer>-<name> and <layer>-<name>-Onone; and <dir>/lib, the test-support dylibs,
+#          is copied to the bundle's lib/, which that rpath reaches from upstream/bin/. The support
+#          modules are binary .swiftmodule files: the compiler here must be the release that built them.
 #          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, TC (toolchain usr/), DIST (output dir),
 #          SWIFT_RUNTIME_PREFIX, SWIFTC, INSTALL_NAME_TOOL, CLANG22_PREFIX, SELFTEST_SRC (the dir whose
-#          *.swift are the tests, default this repo's tests/).
+#          *.swift are the tests, default this repo's tests/), SELFTEST_SUPPORT.
 set -eu
 REPO="$(cd "$(dirname "$0")" && pwd)"
 . "$REPO/lib.sh"    # -> $SWIFT_BUILD
@@ -40,11 +48,12 @@ if [ -n "${SWIFTC:-}" ]; then
       [ -x "$INT" ] || INT=install_name_tool
     fi
     compile() {
-      "$SWIFTC" "-$1" -Xlinker -headerpad_max_install_names "$2" -o "$3" >&2 &&
-        "$INT" -rpath /usr/local/mavergreen/swift-runtime/lib/swift "$SWIFT_RUNTIME_PREFIX/lib/swift" "$3" >&2
+      _c_o="$1" _c_s="$2" _c_out="$3"; shift 3
+      "$SWIFTC" "-$_c_o" -Xlinker -headerpad_max_install_names "$_c_s" -o "$_c_out" "$@" >&2 &&
+        "$INT" -rpath /usr/local/mavergreen/swift-runtime/lib/swift "$SWIFT_RUNTIME_PREFIX/lib/swift" "$_c_out" >&2
     }
   else
-    compile() { "$SWIFTC" "-$1" "$2" -o "$3" >&2; }
+    compile() { _c_o="$1" _c_s="$2" _c_out="$3"; shift 3; "$SWIFTC" "-$_c_o" "$_c_s" -o "$_c_out" "$@" >&2; }
   fi
 else
   TC="${TC:-${SWIFT_WORK:-$SWIFT_BUILD/work}/toolchain/usr}"
@@ -52,9 +61,28 @@ else
   SDK="$(xcrun --show-sdk-path)"
   RUNTIME_LIB="${SWIFT_RUNTIME_PREFIX:-/usr/local/mavergreen/swift-runtime}/lib/swift"
   compile() {
-    "$TC/bin/swiftc" -sdk "$SDK" -target x86_64-apple-macosx10.9 "-$1" -no-stdlib-rpath \
-      -Xlinker -rpath -Xlinker "$RUNTIME_LIB" "$2" -o "$3" >&2
+    _c_o="$1" _c_s="$2" _c_out="$3"; shift 3
+    "$TC/bin/swiftc" -sdk "$SDK" -target x86_64-apple-macosx10.9 "-$_c_o" -no-stdlib-rpath \
+      -Xlinker -rpath -Xlinker "$RUNTIME_LIB" "$_c_s" -o "$_c_out" "$@" >&2
   }
+fi
+
+# upstream_tests -- one line per upstream test of $SELFTEST_SUPPORT: <args file> <source> <binary name>,
+# sorted; fails, naming them, on two of one name (a test of one name in two directories of a layer).
+upstream_tests() {
+  find "$SELFTEST_SUPPORT/upstream" -name '*.args' | LC_ALL=C sort | while IFS= read -r _u_a; do
+    _u_r="${_u_a#"$SELFTEST_SUPPORT/upstream/"}"; _u_s="${_u_a%.args}"; _u_s="${_u_s%.gyb}"
+    _u_n="${_u_s##*/}"; printf '%s %s %s-%s\n' "$_u_a" "$_u_s" "${_u_r%%/*}" "${_u_n%.swift}"
+  done
+}
+if [ -n "${SELFTEST_SUPPORT:-}" ]; then
+  for d in lib modules upstream; do
+    [ -d "$SELFTEST_SUPPORT/$d" ] || {
+      echo "make-selftest: SELFTEST_SUPPORT=$SELFTEST_SUPPORT has no $d/ -- stage it with scripts/stage-selftest-support.sh" >&2; exit 1; }
+  done
+  UPSTREAM="$(upstream_tests)"
+  DUP="$(printf '%s\n' "$UPSTREAM" | awk '{ print $3 }' | LC_ALL=C sort | uniq -d)"
+  [ -z "$DUP" ] || { echo "make-selftest: two upstream tests would be named $DUP" | tr '\n' ' ' >&2; echo >&2; exit 1; }
 fi
 
 NAME=swift-runtime-selftest
@@ -66,6 +94,20 @@ for src in "${SELFTEST_SRC:-$REPO/tests}"/*.swift; do
   compile Onone "$src" "$B/bin/$n-Onone"; echo "built: $n-Onone" >&2
 done
 [ -n "$(ls -A "$B/bin")" ] || { echo "make-selftest: nothing was built" >&2; exit 1; }
+if [ -n "${SELFTEST_SUPPORT:-}" ]; then
+  mkdir -p "$B/upstream/bin" "$B/lib"; cp "$SELFTEST_SUPPORT"/lib/* "$B/lib/"
+  printf '%s\n' "$UPSTREAM" | while read -r args src n; do
+    [ -n "$args" ] || continue
+    # The compile-line, one argument per line (an availability macro holds spaces), becomes "$@".
+    set --; while IFS= read -r a; do set -- "$@" "$a"; done < "$args"
+    for o in O Onone; do
+      out="$B/upstream/bin/$n"; [ "$o" = O ] || out="$out-Onone"
+      compile "$o" "$src" "$out" "$@" -I "$SELFTEST_SUPPORT/modules" -L "$SELFTEST_SUPPORT/lib" \
+        -Xlinker -rpath -Xlinker @executable_path/../../lib || exit 1
+      echo "built: upstream/bin/${out##*/}" >&2
+    done
+  done || { echo "make-selftest: an upstream test did not build" >&2; exit 1; }
+fi
 cp "$REPO/tests/run-selftest.sh" "$B/run-selftest.sh"; chmod +x "$B/run-selftest.sh"
 
 # A modern host's bsdtar tags most files with com.apple.provenance and packs it as a pax

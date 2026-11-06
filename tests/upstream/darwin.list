@@ -34,7 +34,7 @@ exclude test/stdlib/FloatingPointIR_FP80.swift -- needs FileCheck, which no 10.9
 exclude test/stdlib/MathConstants.swift -- RUN uses %target-typecheck-verify-swift
 exclude test/stdlib/POSIX.swift -- RUN hands the test arguments (%t)
 include test/stdlib/PrintFloat.swift.gyb
-include test/stdlib/PrintFloat16.swift
+exclude test/stdlib/PrintFloat16.swift -- does not compile on 10.9: its regex literal (#/.../#, line 69) needs _StringProcessing, which this release does not ship
 exclude test/stdlib/PrintFloatLocale.swift.gyb -- RUN uses %gyb
 include test/stdlib/Runtime.swift.gyb
 include test/stdlib/ThreadLocalStorage.swift

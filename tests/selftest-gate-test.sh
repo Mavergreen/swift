@@ -3,7 +3,8 @@
 # usage: sh tests/selftest-gate-test.sh
 #   Exercises tests/run-selftest.sh against small C fixtures: a clean program, one that exits 1,
 #   one whose heap overrun only Guard Malloc catches, one that outlives SELFTEST_TIMEOUT, and
-#   (--loads) programs that load the runtime's libswift*.dylib from the prefix or from elsewhere.
+#   (--loads) programs that load the runtime's libswift*.dylib from the prefix or from elsewhere, or none;
+#   and a bundle's upstream/bin/, which runs after bin/, SELFTEST_UPSTREAM_RUNS times plus one Guard Malloc run.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 command -v cc >/dev/null 2>&1 || { echo "no cc -- skipping"; exit 77; }
@@ -33,6 +34,17 @@ printf 'int core_f(void);\nint main(void){return core_f();}\n' > "$T/useCore.c"
 printf 'int core_f(void); int darwin_f(void);\nint main(void){return core_f()+darwin_f();}\n' > "$T/useBoth.c"
 printf 'int core_f(void); int support_f(void);\nint main(void){return core_f()+support_f();}\n' > "$T/useSupport.c"
 cc -o "$T/sleeper" "$T/sleeper.c"
+# forker: a child that outlives it (as StdlibUnittest's child processes do), writing its pid first.
+printf '%s\n' '#include <stdio.h>' '#include <stdlib.h>' '#include <unistd.h>' \
+  'int main(void){pid_t p=fork(); if(p==0){sleep(30); return 0;} FILE *f=fopen(getenv("SELFTEST_PIDFILE"),"w"); fprintf(f,"%d\n",(int)p); fclose(f); sleep(5); return 0;}' > "$T/forker.c"
+cc -o "$T/forker" "$T/forker.c"
+# counter: appends its own name to $SELFTEST_COUNT on each run, so a case can count runs and their order.
+printf '%s\n' '#include <stdio.h>' '#include <stdlib.h>' \
+  'int main(int c, char **v){FILE *f=fopen(getenv("SELFTEST_COUNT"),"a"); if(!f) return 2; fprintf(f,"%s\n",v[0]); fclose(f); return 0;}' > "$T/counter.c"
+cc -o "$T/counter" "$T/counter.c"
+cc -o "$T/up_core" "$T/useCore.c" -L"$T/prefix/lib/swift" -lswiftCore -Wl,-rpath,"$T/prefix/lib/swift"
+cc -o "$T/up_support" "$T/useSupport.c" -L"$T/supportlib" -lswiftTestSupport -L"$T/prefix/lib/swift" -lswiftCore \
+  -Wl,-rpath,@executable_path/../../lib -Wl,-rpath,"$T/prefix/lib/swift"
 # loads_ok: Core from the prefix. loads_stray: Darwin from a stray dir (Core from the prefix).
 # support_ok / support_stray: Core from the prefix, a non-shipped libswift* from the bundle's lib/ or a stray dir.
 cc -o "$T/loads_ok" "$T/useCore.c" -L"$T/prefix/lib/swift" -lswiftCore -Wl,-rpath,"$T/prefix/lib/swift"
@@ -43,10 +55,12 @@ cc -o "$T/support_ok" "$T/useSupport.c" -L"$T/supportlib" -lswiftTestSupport -L"
 cc -o "$T/support_stray" "$T/useSupport.c" -L"$T/supportlib" -lswiftTestSupport -L"$T/prefix/lib/swift" -lswiftCore \
   -Wl,-rpath,"$T/stray" -Wl,-rpath,"$T/prefix/lib/swift"
 
-bundle() {  # $1.. = fixtures to put in a fresh bundle's bin/; prints the bundle dir
+bundle() {  # $1.. = fixtures to put in a fresh bundle's bin/, or its upstream/bin/ as up:<fixture>; prints the bundle dir
   b="$(mktemp -d "$T/bundle.XXXXXX")"; mkdir -p "$b/bin"
   cp "$REPO/tests/run-selftest.sh" "$b/"
-  for f in "$@"; do cp "$T/$f" "$b/bin/"; done
+  for f in "$@"; do
+    case "$f" in up:*) mkdir -p "$b/upstream/bin"; cp "$T/${f#up:}" "$b/upstream/bin/" ;; *) cp "$T/$f" "$b/bin/" ;; esac
+  done
   mkdir -p "$b/lib"; cp "$T/supportlib/libswiftTestSupport.dylib" "$b/lib/"
   printf '%s\n' "$b"
 }
@@ -125,6 +139,14 @@ rc=0; out="$(SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_TIMEOUT=1 SELFTEST_RUNS=3
 [ "$rc" = 1 ] || fail "gate timeout: rc=$rc: $out"
 case "$out" in *'run 1 of 3 timed out after 1 s'*) ;; *) fail "gate timeout: not named: $out" ;; esac
 
+echo "-- a run that times out takes its children with it (StdlibUnittest's would spin on, orphaned)"
+b="$(bundle forker)"; rc=0
+out="$(SELFTEST_PIDFILE="$T/pid" SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_TIMEOUT=1 sh "$b/run-selftest.sh" 2>&1)" || rc=$?
+[ "$rc" = 1 ] || fail "forker: rc=$rc: $out"
+case "$out" in *'run 1 of 1 timed out after 1 s'*) ;; *) fail "forker: not a timeout: $out" ;; esac
+kid="$(cat "$T/pid")"; [ -n "$kid" ] || fail "forker wrote no pid"
+if kill -0 "$kid" 2>/dev/null; then kill -9 "$kid"; fail "the timed-out run's child $kid outlived it"; fi
+
 echo "-- a SELFTEST_TIMEOUT that is not a positive integer is refused"
 for v in abc 0 -5; do
   b="$(bundle ok)"; rc=0
@@ -149,5 +171,40 @@ echo "-- --loads: other libswift* (test support) must load from the bundle's lib
 run "$(bundle support_ok)" --loads; [ "$rc" = 0 ] || fail "support_ok: rc=$rc: $out"
 run "$(bundle support_stray)" --loads; [ "$rc" = 1 ] || fail "support_stray: rc=$rc: $out"
 case "$out" in *'FAIL: support_stray'*) ;; *) fail "support_stray: not named: $out" ;; esac
+
+echo "-- --loads: a test that loads no libswiftCore from the prefix fails (it checked nothing)"
+run "$(bundle ok)" --loads; [ "$rc" = 1 ] || fail "--loads passed a test that loads no libswift*: rc=$rc: $out"
+case "$out" in *'FAIL: ok'*'libswiftCore'*) ;; *) fail "--loads did not say libswiftCore was not loaded: $out" ;; esac
+
+echo "-- upstream/bin/: --gate runs each SELFTEST_UPSTREAM_RUNS times and once under Guard Malloc, after bin/"
+b="$(bundle counter up:counter)"; mv "$b/upstream/bin/counter" "$b/upstream/bin/upcounter"
+rc=0; out="$(cd / && SELFTEST_COUNT="$T/count" SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_RUNS=3 SELFTEST_UPSTREAM_RUNS=2 \
+  sh "$b/run-selftest.sh" --gate 2>&1)" || rc=$?
+[ "$rc" = 0 ] || fail "gate with upstream: rc=$rc: $out"
+[ "$(grep -c '/bin/counter$' "$T/count")" = 13 ] || fail "bin/counter ran $(grep -c '/bin/counter$' "$T/count") times, not 3 + 10: $(cat "$T/count")"
+[ "$(grep -c '/upstream/bin/upcounter$' "$T/count")" = 3 ] || fail "upstream's ran $(grep -c 'upcounter$' "$T/count") times, not 2 + 1: $(cat "$T/count")"
+[ "$(sed -n '$p' "$T/count" | sed 's|.*/||')" = upcounter ] && [ "$(sed -n 1p "$T/count" | sed 's|.*/||')" = counter ] \
+  || fail "upstream/bin/ did not run after bin/: $(cat "$T/count")"
+case "$out" in *'PASS (2x + 1x Guard Malloc): upstream/bin/upcounter'*) ;; *) fail "upstream's pass not reported as such: $out" ;; esac
+case "$out" in *'passed=2  failed=0'*) ;; *) fail "not two passes counted: $out" ;; esac
+rm -f "$T/count"
+
+echo "-- upstream/bin/: a failure there fails the gate, named; quick mode runs it once"
+run "$(bundle ok up:bad)" --gate; [ "$rc" = 1 ] || fail "upstream bad: rc=$rc: $out"
+case "$out" in *'FAIL: upstream/bin/bad'*) ;; *) fail "upstream bad: not named: $out" ;; esac
+b="$(bundle counter up:counter)"; rc=0
+out="$(cd / && SELFTEST_COUNT="$T/count" SWIFT_RUNTIME_PREFIX="$T/prefix" sh "$b/run-selftest.sh" 2>&1)" || rc=$?
+[ "$rc" = 0 ] && [ "$(grep -c . "$T/count")" = 2 ] || fail "quick mode with upstream: rc=$rc, runs $(cat "$T/count"): $out"
+rm -f "$T/count"
+
+echo "-- upstream/bin/: --loads holds them to the same rule (support from the bundle's lib/)"
+run "$(bundle loads_ok up:up_core up:up_support)" --loads; [ "$rc" = 0 ] || fail "upstream loads: rc=$rc: $out"
+case "$out" in *'upstream/bin/up_support'*) ;; *) fail "upstream loads: upstream/bin/ not checked: $out" ;; esac
+
+echo "-- a SELFTEST_UPSTREAM_RUNS that is not a positive integer is refused"
+b="$(bundle ok)"; rc=0
+out="$(SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_UPSTREAM_RUNS=x sh "$b/run-selftest.sh" --gate 2>&1)" || rc=$?
+[ "$rc" = 1 ] || fail "SELFTEST_UPSTREAM_RUNS=x: rc=$rc: $out"
+case "$out" in *SELFTEST_UPSTREAM_RUNS*) ;; *) fail "SELFTEST_UPSTREAM_RUNS=x: not named: $out" ;; esac
 
 echo "PASS"

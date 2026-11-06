@@ -27,6 +27,7 @@
 #   librecaulk.a (fetch-recaulk.sh, pins.env's RECAULK_VERSION), and nothing else of Recaulk's.
 # Env: MAVERICKS_BUILD_ROOT (build root, see lib.sh), SWIFT_WORK (sources and build trees, default
 #   $SWIFT_BUILD/work), SWIFT_RUNTIME_OUT (the staged payload, default $SWIFT_BUILD/payload/runtime),
+#   SWIFT_SELFTEST_SUPPORT_OUT (the self-test's support, default $SWIFT_BUILD/payload/selftest-support),
 #   MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_HOST_TOOLCHAIN_VERSION (the release of a host toolchain no
 #   pkg installed, a copy; see lib.sh's host_toolchain_release), SWIFT_BUILTINS (a libclang_rt.osx.a to
 #   link instead of the mode's own), NM (native mode's nm), CLANG22_PREFIX, MAVERICKS_SDK_CACHE
@@ -34,7 +35,8 @@
 # Host: cmake through shipyard-cmake, ninja, python3 (gyb), curl, patch, tar. No git and, on OS X 10.9,
 # none of Xcode's Command Line Tools: natively the checks read with clang22's llvm-otool, llvm-nm and
 # llvm-strings. On 10.9 ninja and python3 are Mavergreen's packages, not pkgsrc's; see DEVELOPING.md.
-# Output: $SWIFT_RUNTIME_OUT, in scripts/stage-runtime.sh's layout, for package.sh.
+# Output: $SWIFT_RUNTIME_OUT, in scripts/stage-runtime.sh's layout, for package.sh; and
+#   $SWIFT_SELFTEST_SUPPORT_OUT, in scripts/stage-selftest-support.sh's, for make-selftest.sh (never a pkg).
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"   # capture BEFORE the cd below: $0 is relative as ./build.sh
@@ -366,6 +368,11 @@ echo "==> 6. stage the payload (usr/local/mavergreen/swift-runtime/, for package
 OUT="${SWIFT_RUNTIME_OUT:-$SWIFT_BUILD/payload/runtime}"
 sh "$HERE/scripts/stage-runtime.sh" "$ROOT/stdlib-build/lib/swift/macosx/$ARCH" "$OUT" "$HERE/LICENSE" "$HERE/NOTICE"
 CORE="$OUT/usr/local/mavergreen/swift-runtime/lib/swift/libswiftCore.dylib"
+# Beside it, never in it: the self-test bundle's test support and upstream's tests (make-selftest.sh's
+# SELFTEST_SUPPORT), which CI's build-cross uploads with the payload for vm-test.
+SELFTEST_SUPPORT_OUT="${SWIFT_SELFTEST_SUPPORT_OUT:-$SWIFT_BUILD/payload/selftest-support}"
+PYTHON="${PY:-python3}" sh "$HERE/scripts/stage-selftest-support.sh" "$ROOT/stdlib-build" "$ROOT/swift" "$HERE/tests/upstream" "$SELFTEST_SUPPORT_OUT" \
+  || { echo "FAIL: could not stage the self-test's support in $SELFTEST_SUPPORT_OUT"; exit 1; }
 
 echo "==> 7. self pre-flight (must show minOS 10.9 and NO os_unfair_lock)"
 # Every dylib that ships: the staged runtime's two, and the overlays, read from the stdlib build's tree

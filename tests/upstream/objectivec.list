@@ -79,8 +79,8 @@ exclude validation-test/stdlib/ErrorProtocol.swift -- imports Foundation, which 
 exclude validation-test/stdlib/HashingPrototype.swift -- imports Foundation, which no 10.9 pkg ships
 exclude validation-test/stdlib/NSDecimalNumberBridging.swift.gyb -- imports Foundation, which no 10.9 pkg ships
 exclude validation-test/stdlib/NSStringBridging.swift.gyb -- imports Foundation, which no 10.9 pkg ships
-include validation-test/stdlib/ObjectiveC.swift
-include validation-test/stdlib/ObjectiveC_without_Foundation.swift
+exclude validation-test/stdlib/ObjectiveC.swift -- does not compile against the 10.9 SDK, which declares -hash a method: `override var hash` (line 26) overrides nothing (overlay patch 0001's reason)
+exclude validation-test/stdlib/ObjectiveC_without_Foundation.swift -- does not compile against the 10.9 SDK, which has no nullability: NSObject() is NSObject!, so `var anNSObject` is NSObject? and not CVarArg (line 36)
 exclude validation-test/stdlib/StringGraphemeBreaking.swift -- imports Foundation, which no 10.9 pkg ships
 exclude validation-test/stdlib/StringNormalization.swift -- RUN uses %target-clang
 exclude validation-test/stdlib/StringWordBreaking.swift -- imports Foundation, which no 10.9 pkg ships
