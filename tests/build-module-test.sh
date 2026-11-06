@@ -8,7 +8,9 @@
 #   10.9, with its .swiftmodule; the stdlib's -define-availability list must be read from the .def it is
 #   given, with each StdlibDeploymentTarget clamped to 10.9 as the stdlib's CMake clamps it; a missing
 #   source must fail naming the file; and two build roots must give the same bytes (the prefix maps).
-#   SKIPs (77) without SWIFT_HOST_TOOLCHAIN, a shipyard, or a host that can run that toolchain.
+#   SKIPs (77) without SWIFT_HOST_TOOLCHAIN, a shipyard, or a host that can run that toolchain. Reads with
+#   OTOOL, NM and STRINGS, else otool, nm and strings, unless those are the Command Line Tools' stubs (OS X
+#   10.9 without them): then mavericks-clang-22's llvm-otool, llvm-nm and llvm-strings (CLANG22_PREFIX).
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 BM="$REPO/scripts/build-module.sh"
@@ -22,6 +24,15 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/build-module.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 T="$(CDPATH='' cd -P -- "$T" && pwd -P)"
 . "$REPO/lib.sh"
+# platform: OS X 10.9's /usr/bin/otool is a stub that prints nothing without the Command Line Tools, and
+#           an empty install name would read as a failure that checked nothing; clang22's readers then.
+if [ -z "${OTOOL:-}" ] && ! otool -L "$HTC/bin/swift-frontend" 2>/dev/null | grep -q libSystem; then
+  X="${CLANG22_PREFIX:-/usr/local/mavergreen/clang22}/bin"
+  [ -x "$X/llvm-otool" ] || fail "otool reads nothing here and there is no $X/llvm-otool"
+  OTOOL="$X/llvm-otool"; NM="${NM:-$X/llvm-nm}"; STRINGS="${STRINGS:-$X/llvm-strings}"
+fi
+OTOOL="${OTOOL:-otool}"; NM="${NM:-nm}"; STRINGS="${STRINGS:-strings}"; export OTOOL NM
+"$OTOOL" -L "$HTC/bin/swift-frontend" | grep -q libSystem || fail "$OTOOL reads nothing"
 SDK="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$SHIPYARD/fetch_sdk.sh")" || fail "could not fetch the 10.9 SDK"
 native_host_shim "$HTC" "$T/host" || fail "no host shim from $HTC"
 SWIFTC="$T/host/usr/bin/swiftc"; LLD="$HTC/bin/ld64.lld"; export SWIFTC LLD
@@ -50,14 +61,16 @@ D="$T/r1/work/out/x86_64/libswiftTiny.dylib"
 M="$T/r1/work/out/Tiny.swiftmodule/x86_64-apple-macos.swiftmodule"
 [ -f "$D" ] || fail "no $D"
 [ -f "$M" ] || fail "no $M"
-ID="$(otool -D "$D" | sed 1d)"
+ID="$("$OTOOL" -D "$D" | sed 1d)"
 [ "$ID" = "@rpath/libswiftTiny.dylib" ] || fail "install name is '$ID'"
-otool -l "$D" | awk '/LC_ID_DYLIB/ { f = 1 } f && /compatibility version/ { print $3; exit }' > "$T/cv"
+"$OTOOL" -l "$D" | awk '/LC_ID_DYLIB/ { f = 1 } f && /compatibility version/ { print $3; exit }' > "$T/cv"
 [ "$(cat "$T/cv")" = "1.0.0" ] || fail "compatibility version is '$(cat "$T/cv")'"
-[ "$(macho_minos "$D")" = 10.9 ] || fail "minOS is '$(macho_minos "$D")'"
-[ -z "$(nm -a "$D" | awk '$2 == "-" || $2 == "a"')" ] || { nm -a "$D" | awk '$2 == "-" || $2 == "a"'; fail "debug stabs in Tiny (listed above)"; }
+[ "$(DYLDINFO='' macho_minos "$D")" = 10.9 ] || fail "minOS is '$(DYLDINFO='' macho_minos "$D")'"
+SY="$("$NM" -a "$D")" || fail "$NM could not read $D"
+[ -n "$SY" ] || fail "$NM read no symbols from $D"
+[ -z "$(printf '%s\n' "$SY" | awk '$2 == "-" || $2 == "a"')" ] || { printf '%s\n' "$SY" | awk '$2 == "-" || $2 == "a"'; fail "debug stabs in Tiny (listed above)"; }
 [ ! -e "$T/r1/work/out/Tiny.swiftmodule/x86_64-apple-macos.swiftsourceinfo" ] || fail "a .swiftsourceinfo, which names the sources' paths"
-if otool -L "$D" | grep -q 'libc++'; then otool -L "$D"; fail "Tiny links a libc++ (listed above)"; fi
+if "$OTOOL" -L "$D" | grep -q 'libc++'; then "$OTOOL" -L "$D"; fail "Tiny links a libc++ (listed above)"; fi
 
 echo "-- the availability list: the .def's SwiftStdlib lines, StdlibDeploymentTarget clamped to 10.9"
 RSP="$T/r1/work/tmp/availability-macros.rsp"
@@ -78,5 +91,7 @@ src "$T/r1"; build "$T/r1" > "$T/log1" 2>&1 || { cat "$T/log1"; fail "rebuild in
 src "$T/r2-elsewhere"; build "$T/r2-elsewhere" > "$T/log3" 2>&1 || { cat "$T/log3"; fail "build in r2 failed"; }
 cmp "$D" "$T/r2-elsewhere/work/out/x86_64/libswiftTiny.dylib" || fail "the dylibs differ between roots"
 cmp "$M" "$T/r2-elsewhere/work/out/Tiny.swiftmodule/x86_64-apple-macos.swiftmodule" || fail "the swiftmodules differ between roots"
-if strings -a "$D" "$M" | grep -F "$T"; then fail "a build root's path survives (listed above)"; fi
+SS="$("$STRINGS" -a "$D" && "$STRINGS" -a "$M")" || fail "$STRINGS could not read Tiny"
+[ -n "$SS" ] || fail "$STRINGS read nothing from Tiny"
+if printf '%s\n' "$SS" | grep -F "$T"; then fail "a build root's path survives (listed above)"; fi
 echo PASS

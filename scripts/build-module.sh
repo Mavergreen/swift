@@ -62,7 +62,8 @@ done
 . "$HERE/pins.env"
 . "$HERE/lib.sh"   # -> $SWIFT_BUILD, prefix_map_flags
 ROOT="${SWIFT_WORK:-$SWIFT_BUILD/work}"
-PM="$(prefix_map_flags swift "$ROOT" | tr ';' ' ')" || exit 1
+PM="$(prefix_map_flags swift "$ROOT")" || { echo "build-module.sh: no prefix maps for the build root $ROOT" >&2; exit 1; }
+PM="$(printf '%s\n' "$PM" | tr ';' ' ')"
 
 rm -rf "$WORK" "$OUT/$NAME.swiftmodule" "$OUT/$ARCH/lib$LINKNAME.dylib"
 mkdir -p "$WORK/module-cache" "$WORK/tools" "$OUT/$NAME.swiftmodule" "$OUT/$ARCH"

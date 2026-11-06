@@ -388,7 +388,10 @@ for lib in $SHIPPED_DYLIBS; do
     *)
       # Global Constraints: every new library is @rpath/<name>, as the Swift libraries reach each other.
       ID="$("${OTOOL:-otool}" -D "$lib" | sed 1d)"
-      [ "$ID" = "@rpath/${lib##*/}" ] || { echo "FAIL: $lib's install name is '$ID', not @rpath/${lib##*/}"; exit 1; } ;;
+      [ "$ID" = "@rpath/${lib##*/}" ] || { echo "FAIL: $lib's install name is '$ID', not @rpath/${lib##*/}"; exit 1; }
+      # Concurrency, through _Builtin_float, demands compatibility version 1.0.0 of libswiftDarwin.
+      CV="$("${OTOOL:-otool}" -l "$lib" | awk '/LC_ID_DYLIB/ { f = 1 } f && /compatibility version/ { print $3; exit }')"
+      [ "$CV" = 1.0.0 ] || { echo "FAIL: $lib's compatibility version is '$CV', not 1.0.0"; exit 1; } ;;
   esac
   if printf '%s\n' "$DEPS" | grep -qx '/usr/lib/libc++\.1\.dylib'; then
     printf '%s\n' "$DEPS"; echo "FAIL: $lib links the OS's libc++ (listed above)"; exit 1

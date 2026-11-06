@@ -27,12 +27,14 @@ for f in "$PLAT/Platform.swift" "$PLAT/TiocConstants.swift" "$PLAT/POSIXError.sw
   [ -f "$f" ] || { echo "overlay-sources.sh: no $f" >&2; exit 1; }
 done
 # gyb's Python orders sets and dicts by hash; a fixed seed keeps the generated sources the same run to run.
+# --line-directive '': gyb's default marks each block with a comment naming the .gyb by its absolute path,
+# so the sources (never the compiled bytes) differed between build roots.
 PYTHONHASHSEED=0; export PYTHONHASHSEED
 rm -rf "$OUT"; mkdir -p "$OUT/Darwin" "$OUT/ObjectiveC/shims" "$OUT/.patch"
 
 cp "$PLAT/Platform.swift" "$PLAT/TiocConstants.swift" "$PLAT/POSIXError.swift" "$PLAT/MachError.swift" "$OUT/Darwin/"
 for g in tgmath Darwin; do
-  "${PYTHON:-python3}" "$GYB" -D CMAKE_SDK=OSX -o "$OUT/Darwin/$g.swift" "$PLAT/$g.swift.gyb" \
+  "${PYTHON:-python3}" "$GYB" -D CMAKE_SDK=OSX --line-directive '' -o "$OUT/Darwin/$g.swift" "$PLAT/$g.swift.gyb" \
     || { echo "overlay-sources.sh: gyb failed on $PLAT/$g.swift.gyb" >&2; exit 1; }
 done
 
