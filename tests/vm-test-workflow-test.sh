@@ -4,7 +4,8 @@
 #   .github/workflows/release.yml accepts every run on Mac OS X 10.9: its vm-test job installs, in
 #   Mavergreen/mavericks-vm's guest, libcxx22 and the previous release's runtime and native toolchain pkgs, then
 #   this run's over them, holds both receipts to this run's version, runs `mavergreen check`, builds the
-#   self-test bundle there with the installed swiftc, runs the bundle's gate, and only then installs
+#   self-test bundle there with the installed swiftc, upstream's tests in it from the swift-cross artifact's
+#   selftest-support/ (which build-cross uploads), runs the bundle's --loads and then its gate, and only then installs
 #   Longboat's latest release and mavericks-clang-22 (whose pkg requires Longboat) and runs the native
 #   toolchain smoke, a SKIP of which fails; publish waits for it. The
 #   build job runs no Rosetta smoke. Each check is run against a workflow mutated to break it, and must refuse it.
@@ -41,6 +42,12 @@ check() {
     || { echo "vm-test does not fetch and verify Longboat"; return 1; }
   grep -q 'SWIFTC=/usr/local/mavergreen/bin/swiftc .*sh make-selftest\.sh' "$T/job" || { echo "vm-test does not build the self-test with the installed swiftc"; return 1; }
   grep -q 'sh swift-runtime-selftest/run-selftest\.sh --gate' "$T/job" || { echo "vm-test does not run the self-test's gate"; return 1; }
+  grep -q 'SELFTEST_SUPPORT="\$PWD/dist/selftest-support" .*sh make-selftest\.sh' "$T/job" \
+    || { echo "vm-test does not build upstream's tests into the bundle (SELFTEST_SUPPORT=dist/selftest-support)"; return 1; }
+  awk '/run-selftest\.sh --loads/ { l = NR } /run-selftest\.sh --gate/ { g = NR } END { exit !(l && l <= g) }' "$T/job" \
+    || { echo "vm-test does not run the bundle's --loads before its --gate"; return 1; }
+  awk '/^  build-cross:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" | grep -q '^            \${{ env.SWIFT_BUILD }}/dist/selftest-support$' \
+    || { echo "build-cross does not upload the self-test's support in swift-cross"; return 1; }
   awk '/^  publish:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" | grep -q '^    needs: \[.*vm-test.*\]$' \
     || { echo "publish does not wait for vm-test"; return 1; }
   if grep -qi 'rosetta\|arch -x86_64' "$1"; then echo "the workflow still runs something under Rosetta"; return 1; fi
@@ -72,5 +79,8 @@ mutant "the build job smokes under Rosetta again" 's|^      - name: Build swift-
 mutant "libcxx22 goes unverified" 's/| sha256sum -c -/| cat/'
 mutant "the self-test is built by another swiftc" 's|SWIFTC=/usr/local/mavergreen/bin/swiftc |SWIFTC=/tmp/swiftc |'
 mutant "the gate is not run" 's/run-selftest\.sh --gate/run-selftest.sh/'
+mutant "the bundle has no upstream tests" 's|SELFTEST_SUPPORT="\$PWD/dist/selftest-support" ||'
+mutant "--loads is not run" 's/run-selftest\.sh --loads &&/true \&\&/'
+mutant "build-cross uploads no self-test support" '/^            \${{ env.SWIFT_BUILD }}\/dist\/selftest-support$/d'
 mutant "publish does not wait for vm-test" 's/^    needs: \[collect, scan, vm-test\]$/    needs: [collect, scan]/'
 echo "PASS: vm-test-workflow"

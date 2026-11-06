@@ -303,14 +303,23 @@ jobs:
       - name: The build must not have written into the source tree
         run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
 
+      # The self-test's support (build.sh's payload/selftest-support: the test-support dylibs and their
+      # modules, and upstream's included tests with their compile-lines), for vm-test's bundle; never a
+      # pkg, and collect publishes only what it names, so it rides in dist/ as a directory nothing else reads.
+      - name: Stage the self-test's support for vm-test
+        run: cp -R "$SWIFT_BUILD/payload/selftest-support" "$SWIFT_BUILD/dist/selftest-support"
+
       # build reads the cross toolchain pkg from this (its compiler's Swift half, and the stdlib and
       # builtins it stages); collect signs every pkg in it, beside build's. On a -mavericks.1 release it
-      # carries the swift.org mirror too, so build downloads that once per Swift version.
-      - name: Upload the runtime and cross toolchain pkgs for build and collect
+      # carries the swift.org mirror too, so build downloads that once per Swift version. vm-test reads
+      # selftest-support/ from it.
+      - name: Upload the runtime and cross toolchain pkgs for build and collect, and the self-test's support for vm-test
         uses: actions/upload-artifact@v7
         with:
           name: swift-cross
-          path: ${{ env.SWIFT_BUILD }}/dist/*.pkg
+          path: |
+            ${{ env.SWIFT_BUILD }}/dist/*.pkg
+            ${{ env.SWIFT_BUILD }}/dist/selftest-support
 
   # The native toolchain: x86_64, OS X 10.9, cross-compiled with mavericks-clang-22. Its compiler's Swift
   # half is compiled by build-cross's toolchain, the same run's -- never the swift.org compiler, never an
@@ -613,14 +622,16 @@ jobs:
   # the previous release's runtime and native toolchain pkgs install there, then this run's over them (an
   # upgrade, as a user's is), the family install checks, the installed swiftc builds the self-test bundle on
   # 10.9 itself (make-selftest.sh's SWIFTC= mode), and the bundle's gate runs against the installed runtime:
-  # 500x plus 10x under Guard Malloc, at -O and -Onone. Then the native toolchain's smoke runs, natively, its
+  # 500x plus 10x under Guard Malloc, at -O and -Onone, after a --loads run (each test once, every libswift*
+  # read from where it must load from), and upstream's own tests (build-cross's selftest-support) at 20x plus
+  # 1x under Guard Malloc. Then the native toolchain's smoke runs, natively, its
   # load commands read with mavericks-clang-22's llvm-otool and llvm-nm (10.9's are Command Line Tools stubs),
   # installed, with the Longboat its pkg requires, only after the gate so the gate ran on what a user's Mac
   # has. publish waits for it.
   vm-test:
     needs: [version, build-cross, build]
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120   # sized in INGREDIENTS ("Every Swift bump merges on green"): Release 2's ~120 more upstream tests fit
     permissions:
       contents: read
       packages: write
@@ -693,8 +704,12 @@ jobs:
             done
             /usr/local/bin/mavergreen check
             /usr/local/mavergreen/bin/swiftc -version
-            SWIFTC=/usr/local/mavergreen/bin/swiftc MAVERICKS_BUILD_ROOT="$HOME/mm-build" DIST="$PWD/gate" sh make-selftest.sh
-            ( cd gate && tar -xzf swift-runtime-selftest.tar.gz && sh swift-runtime-selftest/run-selftest.sh --gate )
+            # Upstream's tests too (dist/selftest-support, build-cross's). Their support modules are binary
+            # .swiftmodule files, which only the compiler that wrote them reads: build-cross's cross toolchain,
+            # this release's Swift, as the native swiftc installed above is.
+            SWIFTC=/usr/local/mavergreen/bin/swiftc SELFTEST_SUPPORT="$PWD/dist/selftest-support" MAVERICKS_BUILD_ROOT="$HOME/mm-build" DIST="$PWD/gate" sh make-selftest.sh
+            ( cd gate && tar -xzf swift-runtime-selftest.tar.gz && sh swift-runtime-selftest/run-selftest.sh --loads &&
+              sh swift-runtime-selftest/run-selftest.sh --gate )
             install longboat/longboat-[0-9]*.pkg clang22/mavericks-clang-22-native-*.pkg
             rc=0; MAVERICKS_BUILD_ROOT="$HOME/mm-smoke" sh tests/toolchain-smoke-test.sh || rc=$?
             [ "$rc" -ne 77 ] || { echo "the native toolchain smoke SKIPPED on 10.9"; exit 1; }
