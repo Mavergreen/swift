@@ -88,6 +88,29 @@ pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$M" 2>/dev/null; }
 ex=""; i=0; while e="$(pb "exports-exclude:$i")"; do ex="$ex$e "; i=$((i + 1)); done
 [ "$ex" = "bin/swift-frontend bin/ld64.lld bin/clang bin/clang++ bin/clang.cfg bin/clang++.cfg " ] || fail "the manifest excludes [$ex]"
 
+echo "-- its preinstall requires swift-runtime 6.4.1-mavericks.9 or later, the release notes' minimum, and libcxx22"
+# Programs this toolchain builds that import Darwin or ObjectiveC link @rpath/libswiftDarwin.dylib and
+# libswiftObjectiveC.dylib, which the installed runtime carries from 6.4.1-mavericks.9 on.
+RUNTIME_MIN=6.4.1-mavericks.9
+[ "$(sed -n 1p "$REPO/release-notes/swift-runtime/$RUNTIME_MIN/requires/swift-runtime" 2>/dev/null)" = "$RUNTIME_MIN" ] \
+  || fail "release-notes/swift-runtime/$RUNTIME_MIN/requires/swift-runtime does not say $RUNTIME_MIN"
+PRE="$comp/Scripts/preinstall"; [ -f "$PRE" ] || fail "the toolchain component has no preinstall"
+L22="$(sed -n 's/^CLANG22_VERSION="\([^"]*\)".*/\1/p' "$REPO/pins.env")"
+pre_on() {   # pre_on <runtime version, or none> -- runs the preinstall against a volume holding that runtime
+  _pv="$T/pre-$1"; rm -rf "$_pv"
+  for _pp in "libcxx22 $L22" "swift-runtime $1"; do
+    set -- $_pp; [ "$2" = none ] && continue
+    mkdir -p "$_pv/usr/local/mavergreen/$1"
+    /usr/libexec/PlistBuddy -c "Add :version string $2" "$_pv/usr/local/mavergreen/$1/mavergreen.plist" >/dev/null
+  done
+  sh "$PRE" "$pkg" / "$_pv" / > "$T/pre.log" 2>&1
+}
+if pre_on none; then fail "the preinstall ran with no swift-runtime installed"; fi
+grep -q "swift-runtime" "$T/pre.log" || fail "the preinstall refused, but did not name swift-runtime: $(cat "$T/pre.log")"
+if pre_on 6.4.1-mavericks.8; then fail "the preinstall ran beside swift-runtime 6.4.1-mavericks.8"; fi
+grep -q "swift-runtime $RUNTIME_MIN or newer" "$T/pre.log" || fail "the preinstall refused .8, but not for $RUNTIME_MIN: $(cat "$T/pre.log")"
+pre_on "$RUNTIME_MIN" || fail "the preinstall refused swift-runtime $RUNTIME_MIN: $(cat "$T/pre.log")"
+
 echo "-- beside an installed clang22, linking exports swiftc alone and takes none of clang22's names"
 C="$T/c22"; mkdir -p "$C/usr/local/mavergreen/clang22/bin"
 for f in clang clang++ ld64.lld; do : > "$C/usr/local/mavergreen/clang22/bin/$f"; done
@@ -161,6 +184,9 @@ M="$XV/$XP/mavergreen.plist"
 ex=""; i=0; while e="$(pb "exports-exclude:$i")"; do ex="$ex$e "; i=$((i + 1)); done
 [ "$ex" = "bin/swift-frontend bin/ld64.lld bin/clang bin/clang++ bin/clang.cfg bin/clang++.cfg " ] \
   || fail "the cross manifest excludes [$ex]"
+
+echo "-- the cross toolchain requires no swift-runtime: it runs nothing it builds"
+if grep -q swift-runtime "$xcomp/Scripts/preinstall" 2>/dev/null; then fail "the cross toolchain's preinstall requires swift-runtime"; fi
 
 echo "-- beside clang22-cross and a native toolchain linked first: swiftc-cross alone, then swiftc once selected"
 C="$T/c22x"; mkdir -p "$C/usr/local/mavergreen/clang22-cross/bin"

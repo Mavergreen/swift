@@ -61,6 +61,14 @@ if [ "$PRODUCT" = swift-toolchain ]; then
   CLANG22_VERSION="$(sed -n 's/^CLANG22_VERSION="\([^"]*\)".*/\1/p' "$HERE/pins.env")"
   [ -n "$CLANG22_VERSION" ] || { echo "no CLANG22_VERSION in $HERE/pins.env" >&2; exit 1; }
   set -- "$@" --requires "libcxx22>=$CLANG22_VERSION"
+  # spec: release-notes/swift-runtime/6.4.1-mavericks.9/requires/swift-runtime -- a program this toolchain builds that imports Darwin or
+  #       ObjectiveC links @rpath/libswiftDarwin.dylib or libswiftObjectiveC.dylib, which the installed
+  #       runtime carries from RUNTIME_MIN on; the cross toolchain's users install the runtime on their 10.9
+  #       Mac, where no pkg can ask, so the release notes say it (requires/swift-runtime). A fixed
+  #       minimum, not this release: raise it when the runtime gains a library the toolchain's programs
+  #       link, so a toolchain update never waits on a runtime update it does not need.
+  RUNTIME_MIN=6.4.1-mavericks.9
+  set -- "$@" --requires "swift-runtime>=$RUNTIME_MIN"
 fi
 if [ -d "$UPD_APP" ]; then
   set -- "$@" --updater-app "$UPD_APP"
