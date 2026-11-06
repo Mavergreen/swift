@@ -1,0 +1,25 @@
+--- stdlib/public/Darwin/ObjectiveC/ObjectiveC.swift
++++ stdlib/public/Darwin/ObjectiveC/ObjectiveC.swift
+@@ -223,7 +223,7 @@
+   ///   hash value across program runs.
+   @nonobjc
+   public var hashValue: Int {
+-    return hash
++    return hash()  // Mavericks: the 10.9 SDK declares -hash a method, not a property
+   }
+ 
+   /// Hashes the essential components of this value by feeding them into the
+@@ -234,11 +234,11 @@
+   /// `NSObject.hash(into:)` is not overridable; subclasses can customize
+   /// hashing by overriding the `hash` property.
+   public func hash(into hasher: inout Hasher) {
+-    hasher.combine(self.hash)
++    hasher.combine(self.hash())  // Mavericks: a method in the 10.9 SDK
+   }
+ 
+   public func _rawHashValue(seed: Int) -> Int {
+-    return self.hash._rawHashValue(seed: seed)
++    return self.hash()._rawHashValue(seed: seed)  // Mavericks: a method in the 10.9 SDK
+   }
+ }
+ 

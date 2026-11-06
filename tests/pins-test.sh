@@ -11,10 +11,11 @@ out="$(cd "$REPO" && env -i PATH=/usr/bin:/bin HOME="$HOME" /bin/sh -c 'set -eu;
   printf "%s\n" "$SWIFT_VERSION" "$SWIFT_TAG" "$SWIFT_SHA" "$LLVM_SWIFT_RELEASE" "$LLVM_TAG" "$LLVM_SHA" \
     "$TOOLCHAIN_URL" "$TOOLCHAIN_ASSET" "$DEPLOYMENT" "$ARCH" "${VERSION-unset}" "${BUILDSUPPORT_ASSET-unset}" \
     "$CMARK_SWIFT_RELEASE" "$CMARK_TAG" "$CMARK_SHA" "$CLANG22_VERSION" \
-    "$SWIFT_TARBALL_SHA256" "$LLVM_TARBALL_SHA256" "$CMARK_TARBALL_SHA256" "$RECAULK_VERSION"
+    "$SWIFT_TARBALL_SHA256" "$LLVM_TARBALL_SHA256" "$CMARK_TARBALL_SHA256" "$RECAULK_VERSION" \
+    "$SWIFT62_SHA" "$SWIFT62_TARBALL_SHA256" "$SWIFT54_SHA" "$SWIFT54_TARBALL_SHA256"
   [ -n "$TOOLCHAIN_SIGNER" ]')" || fail "sourcing pins.env with only /usr/bin:/bin on PATH failed"
 set -- $out
-[ $# -eq 20 ] || fail "expected 20 values from pins.env, got $#: $out"
+[ $# -eq 24 ] || fail "expected 24 values from pins.env, got $#: $out"
 v="$1"
 case "$v" in [0-9]*.[0-9]*.[0-9]*) ;; *) fail "SWIFT_VERSION '$v' is not X.Y.Z" ;; esac
 [ "$2" = "swift-$v-RELEASE" ] || fail "SWIFT_TAG '$2' is not derived from SWIFT_VERSION"
@@ -44,6 +45,19 @@ for h in "${17}" "${18}" "${19}"; do
 done
 
 printf '%s' "${20}" | grep -Eq '^[0-9]{8}\.[0-9]+$' || fail "RECAULK_VERSION '${20}' is not a YYYYMMDD.N release"
+
+# The overlay sources are frozen (upstream deleted the files in 6.3 and 5.5): their pins are never
+# Renovate's or the pins bot's, so each is a commit and a SHA-256 like the others, and none of the
+# automatic updaters' patterns may reach them.
+for h in "${21}" "${23}"; do
+  printf '%s' "$h" | grep -Eq '^[0-9a-f]{40}$' || fail "a frozen overlay pin '$h' is not a commit"
+done
+for h in "${22}" "${24}"; do
+  printf '%s' "$h" | grep -Eq '^[0-9a-f]{64}$' || fail "a frozen overlay pin '$h' is not a SHA-256"
+done
+! grep -E '^SWIFT(62|54)_' "$REPO/pins.env" | grep -q 'renovate:' || fail "a frozen overlay pin carries a renovate: marker"
+! grep -Eq 'SWIFT(62|54)' "$REPO/.github/renovate.json" "$REPO/scripts/pins-bot.sh" "$REPO/scripts/pin-source-tarballs.sh" \
+  || fail "an automatic updater names a frozen overlay pin"
 
 up="$(cd "$REPO" && sh scripts/derive-upstream-version.sh)"
 [ "$up" = "$v" ] || fail "derive-upstream-version.sh says '$up', pins.env says '$v'"
