@@ -4,7 +4,8 @@
 #   Builds the self-test bundle with the toolchain build.sh expanded, and checks every binary is
 #   x86_64 / minOS 10.9, records the 10.9 SDK, links its libswift* only by @rpath (the stdlib build's,
 #   never an SDK's /usr/lib/swift), and has exactly one rpath: the runtime prefix. Every tests/*.swift
-#   must compile there, the overlays' tests included. SKIP when build.sh has not run.
+#   must compile there, the overlays' tests included, but those whose first line says they need this
+#   repo's compiler (compiler patch 0003), which must be skipped. SKIP when build.sh has not run.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 : "${MAVERICKS_BUILD_ROOT:=${TMPDIR:-/tmp}/mm-build}"
@@ -40,6 +41,11 @@ cmp -s "$B/run-selftest.sh" "$REPO/tests/run-selftest.sh" || fail "bundled run-s
 
 for src in "$REPO"/tests/*.swift; do
   n="$(basename "$src" .swift)"
+  case "$(sed -n 1p "$src")" in
+    "// selftest: needs this repo's compiler"*)
+      [ ! -e "$B/bin/$n" ] && [ ! -e "$B/bin/$n-Onone" ] || fail "built $n, which needs this repo's compiler"
+      continue ;;
+  esac
   for bin in "$B/bin/$n" "$B/bin/$n-Onone"; do
     [ -x "$bin" ] || fail "missing $bin"
     plat="$("$DI" -platform "$bin")" || fail "dyld_info -platform $bin"

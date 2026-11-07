@@ -13,7 +13,11 @@
 #                             -resource-dir the stdlib build's lib/swift, so the Swift, Darwin and
 #                             ObjectiveC modules imported, and the dylibs linked, are this build's, never
 #                             an SDK's; -runtime-compatibility-version none, as that tree has no
-#                             compatibility archives (nor does the runtime need them).
+#                             compatibility archives (nor does the runtime need them). A test whose
+#                             first line is `// selftest: needs this repo's compiler ...` is skipped,
+#                             saying so: it uses a feature only compiler patch 0003 opens for 10.9,
+#                             which the swift.org compiler refuses (typed_throws_test,
+#                             parameter_packs_test). SWIFTC= mode builds every test.
 #            SWIFTC=<swiftc>  exactly `$SWIFTC -O|-Onone <file> -o <out>`: this repo's own toolchain,
 #                             on 10.9, whose defaults supply target, SDK and rpath. With SWIFT_RUNTIME_PREFIX
 #                             also set (a staged, uninstalled runtime), each compile adds
@@ -37,6 +41,7 @@ set -eu
 REPO="$(cd "$(dirname "$0")" && pwd)"
 . "$REPO/lib.sh"    # -> $SWIFT_BUILD
 DIST="${DIST:-$SWIFT_BUILD/dist}"
+SKIP_MARK=""   # the default mode's: see the usage above
 if [ -n "${SWIFTC:-}" ]; then
   [ -x "$SWIFTC" ] || { echo "make-selftest: SWIFTC=$SWIFTC is not executable" >&2; exit 1; }
   if [ -n "${SWIFT_RUNTIME_PREFIX:-}" ]; then
@@ -70,6 +75,7 @@ else
   RES="${SWIFT_WORK:-$SWIFT_BUILD/work}/stdlib-build/lib/swift"
   [ -f "$RES/macosx/x86_64/libswiftCore.dylib" ] || { echo "make-selftest: no stdlib build at $RES -- run build.sh first" >&2; exit 1; }
   RUNTIME_LIB="${SWIFT_RUNTIME_PREFIX:-/usr/local/mavergreen/swift-runtime}/lib/swift"
+  SKIP_MARK="// selftest: needs this repo's compiler"
   compile() {
     _c_o="$1" _c_s="$2" _c_out="$3"; shift 3
     "$TC/bin/swiftc" -sdk "$SDK" -resource-dir "$RES" -L "$RES/macosx/x86_64" -runtime-compatibility-version none \
@@ -101,6 +107,11 @@ B="$DIST/$NAME"; rm -rf "$B"; mkdir -p "$B/bin"
 for src in "${SELFTEST_SRC:-$REPO/tests}"/*.swift; do
   [ -f "$src" ] || continue
   n="$(basename "$src" .swift)"
+  if [ -n "$SKIP_MARK" ]; then
+    case "$(sed -n 1p "$src")" in
+      "$SKIP_MARK"*) echo "skipped: $n (needs this repo's compiler, not the swift.org one)" >&2; continue ;;
+    esac
+  fi
   compile O "$src" "$B/bin/$n"; echo "built: $n" >&2
   compile Onone "$src" "$B/bin/$n-Onone"; echo "built: $n-Onone" >&2
 done
