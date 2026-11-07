@@ -198,6 +198,9 @@ for p in $PATCHES; do
 done
 IFS="$_ifs"
 grep -q 'any macOS SDK back to 10.9 is accepted' "$SC/lib/Driver/Driver.cpp" || { echo "FAIL: compiler patch 0001 not applied"; exit 1; }
+for f in RuntimeVersions.def FeatureAvailability.def; do
+  grep -q "Mavergreen: the 10.9 runtime is the pkgs'" "$SC/include/swift/AST/$f" || { echo "FAIL: compiler patch 0003 not applied ($f)"; exit 1; }
+done
 if [ "$HOST" = x86_64 ]; then
   grep -q "host tools run on the toolchain's own bundled runtime" "$SC/cmake/modules/AddSwift.cmake" || { echo "FAIL: compiler patch 0002 not applied"; exit 1; }
 elif grep -q "host tools run on the toolchain's own bundled runtime" "$SC/cmake/modules/AddSwift.cmake"; then

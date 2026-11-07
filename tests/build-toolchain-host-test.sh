@@ -50,7 +50,7 @@ done
 cat > "$T/shipyard/fetch_pinned_source.sh" <<F
 #!/bin/sh
 echo "fetch_pinned_source \$*" >> "$T/log"
-rm -rf "\$4"; mkdir -p "\$4/lib/Driver" "\$4/cmake/modules"; : > "\$4/lib/Driver/Driver.cpp"; : > "\$4/cmake/modules/AddSwift.cmake"
+rm -rf "\$4"; mkdir -p "\$4/lib/Driver" "\$4/cmake/modules" "\$4/include/swift/AST"; : > "\$4/lib/Driver/Driver.cpp"; : > "\$4/cmake/modules/AddSwift.cmake"
 # FAKE_SWIFT_SOURCE and FAKE_CMARK_SOURCE stand for another commit's tarball of the compiler's source, or cmark's.
 l="\$1 \$2 \$3"; case "\$4" in swift-compiler*) l="\${FAKE_SWIFT_SOURCE:-\$l}" ;; cmark) l="\${FAKE_CMARK_SOURCE:-\$l}" ;; esac
 echo "\$l" > "\$4/.mavergreen-source"
@@ -83,6 +83,7 @@ echo "patch \$(basename "\$PWD") \$p" >> "$T/log"
 case "\${p##*/}" in
   0001-*) echo 'any macOS SDK back to 10.9 is accepted' >> lib/Driver/Driver.cpp ;;
   0002-*) echo "host tools run on the toolchain's own bundled runtime" >> cmake/modules/AddSwift.cmake ;;
+  0003-*) for f in RuntimeVersions FeatureAvailability; do echo "Mavergreen: the 10.9 runtime is the pkgs'" >> include/swift/AST/\$f.def; done ;;
 esac
 F
 # shipyard-cmake records its arguments and, like a configure, leaves a CMakeCache.txt in its -B dir.
@@ -163,6 +164,7 @@ x86_both() {  # what the x86_64 toolchain's configure is in either mode; $2 is t
   sources "$1" swift-compiler
   has "$1" "patch swift-compiler <T>/repo/patches/compiler/0001-accept-10.9-sdk.patch"
   has "$1" "patch swift-compiler <T>/repo/patches/compiler/0002-hosttools-rpath-loader-path.patch"
+  has "$1" "patch swift-compiler <T>/repo/patches/compiler/0003-runtime-versions-macos-10.9.patch"
   has "$1" "  -DSWIFT_LIPO=<T>/$2/bin/llvm-lipo"
   has "$1" "  -DCMAKE_C_COMPILER=<T>/$2/bin/clang"
   has "$1" "  -DCMAKE_AR=<T>/$2/bin/llvm-ar"
@@ -301,6 +303,7 @@ export FAKE_ARCH=arm64 FAKE_PLATFORM='11.0      11.3' FAKE_RPATH=/usr/lib/swift
 run arm64 cross --host arm64 || fail "the arm64 build failed: $(cat "$T/arm64.out")"
 sources arm64 swift-compiler-arm64
 has arm64 "patch swift-compiler-arm64 <T>/repo/patches/compiler/0001-accept-10.9-sdk.patch"
+has arm64 "patch swift-compiler-arm64 <T>/repo/patches/compiler/0003-runtime-versions-macos-10.9.patch"
 lacks arm64 "0002-hosttools-rpath-loader-path.patch"
 lacks arm64 "patch swift-compiler "
 lacks arm64 "SWIFT_LIPO"
