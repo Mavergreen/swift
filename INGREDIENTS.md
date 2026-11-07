@@ -17,7 +17,7 @@ was merged in (2026-09) and deleted (2026-10). Its 6.4.0 installer mirror is now
 | mavericks-clang-22 cross toolchain (compiles the 10.9-hosted toolchain and compiler-rt's builtins, and its `llvm-libtool-darwin`, `llvm-ar`, `llvm-ranlib` and `llvm-lipo` make their archives; on OS X 10.9, `self-host.sh` uses the native package of the same release) | `CLANG22_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/clang-22`, `-mavericks.N` versioning | auto-repackages `-mavericks.(N+1)` |
 | libcxx22, the family's shared libc++ (the stdlib's C++ compiles against the pinned clang22's libc++ headers and links libcxx22's `libc++.1.dylib`; the runtime and native toolchain pkgs require it at install) | `CLANG22_VERSION` in `pins.env`: one clang-22 release publishes clang22, clang22-cross and libcxx22 under one version | ✅ with the clang22 pin (`github-releases` on `Mavergreen/clang-22`) | auto-repackages `-mavericks.(N+1)`, and the pkgs then require that libcxx22 or later |
 | Recaulk, the family's back-fills of post-10.9 OS APIs (libswiftCore links Recaulk's definitions of the APIs `build.sh`'s `RECAULK_RUNTIME_SYMBOLS` names, and only those, statically: below) | `RECAULK_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/recaulk`, `YYYYMMDD.N` versioning | auto-repackages `-mavericks.(N+1)`; nothing is required at install, since the link is static |
-| LLVM and compiler source patches (`patches/llvm/`, `patches/compiler/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
+| LLVM and compiler source patches (`patches/llvm/`, `patches/compiler/`: compiler `0003` maps the compiler's runtime table to OS X 10.9, below) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | swift.org toolchain `.pkg` (CI's one seed: it compiles the cross toolchain's Swift half, and a first stdlib that only makes that toolchain runnable; everything the release ships is compiled by this repo's own compilers, below) | `TOOLCHAIN_URL`, derived from `SWIFT_VERSION` | ✅ moves with the Swift pin | verified by **signer identity**, not a hash (below) |
 | Runtime source patches (`patches/runtime/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | swift-6.2 Darwin overlay source (`stdlib/public/Platform`) | `SWIFT62_SHA` + `SWIFT62_TARBALL_SHA256` in `pins.env`, fetched by `fetch_source` into `swift-6.2` | ❌ untrackable: frozen, since upstream removed the files in 6.3 and Mavergreen owns them; no `renovate:` marker, and no updater (Renovate, the pins bot, `pin-source-tarballs.sh`) names the pin | n/a: moves only by a deliberate edit |
@@ -115,6 +115,26 @@ Step 7 also holds every dylib it ships, and the test-support libraries, to what 
 that library's stub in the 10.9 SDK, or be weak and listed in `scripts/resources/weak-absent-on-10.9.txt`
 beside the guard that reads it first. A strong import that 10.9 lacks otherwise links against the 11.3 SDK
 without complaint and fails in dyld on a real 10.9 box.
+
+## The compiler's runtime table: 10.9's Swift runtime is the pkgs'
+
+Upstream's compiler maps each Swift runtime version to the OS release that first shipped it
+(`RuntimeVersions.def`), and refuses, for an older target, anything that needs a newer runtime: `async`
+and actors (5.1 to 5.5), parameter packs in generic types (5.9), typed-throws function types (6.0). On a
+Mavergreen 10.9 that runtime is the swift-runtime pkg's, 6.4, not the OS's. Compiler patch `0003`
+(`patches/compiler/0003-runtime-versions-macos-10.9.patch`, both toolchains) maps every released
+version's macOS entry, 5.0 through 6.4, to 10.9, by one rule: **a gate opens when what it guards ships in
+our pkgs, and stays closed when what it guards is the OS's.** Four features of `FeatureAvailability.def`
+need 10.9's own libobjc, which lacks what they call, and read `FUTURE`, as a 10.9 target saw them before:
+`ObjCMetadataUpdateCallback` (which also keeps the legacy-layout path that runtime patch 0007 and Recaulk's
+`objc_readClassPair` realization depend on), `ObjCGetClassHook`, `ObjCClassStubs` and
+`ObjCIsUniquelyReferenced`. Three callers that read a Swift version directly for an OS need
+(`objc_opt_self`, `@objc @implementation`, ObjC protocol emission) keep asking for that OS's version.
+Every feature's class, with the symbol it needs and the compiler code that reads it, is in
+`patches/compiler/0003-AUDIT.md`, and `tests/compiler-patch-audit-test.sh` holds the patch to it. The
+proof programs are `tests/typed_throws_test.swift` and `tests/parameter_packs_test.swift`: only this
+repo's compiler builds them, so `make-selftest.sh`'s swift.org-compiler mode skips them by their first
+line.
 
 ## Two seeds, one result
 
