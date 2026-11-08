@@ -16,7 +16,11 @@
 #   for, CMake's Apple probes answered and check_language(Swift)'s probe not run (its sub-configure names no
 #   SDK and asks xcrun for one), and never run git or xcrun (OS X 10.9 has neither without the Command Line
 #   Tools). A stdlib-build is kept while the swift source is the same commit's, and started afresh when it
-#   is another's (its stamp records the source and the patches applied to it, lib.sh's source_stamp).
+#   is another's (its stamp records the source and the patches applied to it, lib.sh's source_stamp). Step
+#   5b builds the test support with Concurrency (--runtime-floor, StdlibUnittest's Concurrency define, every
+#   upstream layer staged) when the host compiler declares a 10.9 async function, and without it, saying
+#   so, when it refuses one as the swift.org seed does (no compiler patch 0003), so CI's first build.sh
+#   completes; a probe that fails otherwise stops the build.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -215,17 +219,75 @@ grep -qxF -e "  -DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$R/swift/work/recaulk-concur
   || fail "Concurrency's link does not take its Recaulk subset, hidden: $(grep MAVERGREEN_CONCURRENCY "$T/log")"
 [ "$(tr '\n' ' ' < "$R/swift/work/recaulk-concurrency.unexported")" = "___recaulk_copy_helper_block_8_32b ___recaulk_resolve _clock_getres _clock_gettime _dispatch_activate _os_release _qos_class_self _voucher_adopt _voucher_copy " ] \
   || fail "Recaulk's subset for Concurrency: $(cat "$R/swift/work/recaulk-concurrency.unexported")"
-# Step 5b's StdlibUnittest is built as the stdlib's CMake builds it with Concurrency on (SwiftSource.cmake's
-# -D SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY), so upstream's async tests find runAllTestsAsync and the async `code`.
-# (Step 5b is past the fake ninja: read off build.sh's own StdlibUnittest line.)
-grep '^build_support StdlibUnittest ' "$REPO/build.sh" | grep -qF -e '--flag -D --flag SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY' \
-  || fail "step 5b builds StdlibUnittest without -D SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY: $(grep '^build_support StdlibUnittest ' "$REPO/build.sh")"
-# Test support only runs on this runtime: build_support asks build-module.sh for --runtime-floor (every released
+# Test support only runs on this runtime: step 5b's test support (below) takes --runtime-floor (every released
 # SwiftStdlib version is 10.9 there), and the shipped overlays' build_overlay never does.
-awk '/^build_support\(\) \{/,/^}/' "$REPO/build.sh" | grep -q -e '--runtime-floor' || fail "build_support does not pass --runtime-floor"
 if awk '/^build_overlay\(\) \{/,/^}/' "$REPO/build.sh" | grep -q -e '--runtime-floor'; then fail "build_overlay passes --runtime-floor: a shipped module's availability would be 10.9"; fi
 awk '/^build_overlay\(\) \{/,/^}/' "$REPO/build.sh" | grep -q 'build-module.sh' || fail "no build_overlay calling build-module.sh in build.sh"
 if grep -q '^git \|^xcrun ' "$T/log"; then fail "ran $(grep '^git \|^xcrun ' "$T/log" | head -1)"; fi
+
+echo "-- step 5b's test support: with Concurrency when the host compiler declares a 10.9 async function; without"
+echo "   it, and without upstream's concurrency tests, saying so, when it refuses one (the swift.org seed); else FAIL"
+# Step 5b is past the fake ninja, so its test-support half is cut out of build.sh (from SUP= to the line that
+# reports the modules) and run with a fake host compiler, clang, gyb and build-module.sh.
+awk '/^SUP="\$ROOT\/stdlib-build\/selftest-support"/{on=1} on{print} on&&/^echo "    test support \(never in a pkg\)/{exit}' "$REPO/build.sh" > "$T/support.sh"
+grep -q 'test support (never in a pkg)' "$T/support.sh" || fail "found no test-support half of step 5b in build.sh: $(cat "$T/support.sh")"
+S5="$T/s5"; mkdir -p "$S5/tc/bin" "$S5/here/scripts" "$S5/root/swift/utils" "$S5/res"
+mkdir -p "$S5/here/tests"; cp -R "$REPO/tests/upstream" "$S5/here/tests/"
+# swiftc: answers the probe (a -typecheck) as FAKE_PROBE says: pass, refuse (patch 0003 absent), or broken
+cat > "$S5/tc/bin/swiftc" <<'F'
+#!/bin/sh
+echo "swiftc $*" >> "$FAKE_LOG"
+case "$FAKE_PROBE" in
+  pass) exit 0 ;;
+  refuse) echo "probe.swift:1:24: error: concurrency is only available in macOS 10.15.0 or newer" >&2; exit 1 ;;
+  *) echo "<unknown>:0: error: unable to load standard library for target 'x86_64-apple-macosx10.9'" >&2; exit 1 ;;
+esac
+F
+# clang, clang++ and gyb write the -o they are given; build-module.sh records its arguments and writes its module
+printf '#!/bin/sh
+while [ $# -gt 0 ]; do case "$1" in -o) : > "$2"; shift 2 ;; *) shift ;; esac; done
+' > "$S5/tc/bin/clang"
+cp "$S5/tc/bin/clang" "$S5/tc/bin/clang++"; cp "$S5/tc/bin/clang" "$S5/py"
+cat > "$S5/here/scripts/build-module.sh" <<'F'
+#!/bin/sh
+echo "build-module.sh $*" >> "$FAKE_LOG"
+while [ $# -gt 0 ]; do case "$1" in --name) n="$2"; shift 2 ;; --out) o="$2"; shift 2 ;; --) break ;; *) shift ;; esac; done
+mkdir -p "$o/$n.swiftmodule" "$o/x86_64" && : > "$o/x86_64/libswift$n.dylib"
+F
+chmod +x "$S5/tc/bin/"* "$S5/py" "$S5/here/scripts/build-module.sh"
+support() {  # $1 = the probe's answer; the cut's output in $T/out, and UPSTREAM_LISTS's last line
+  : > "$T/log"
+  ( set -eu; export FAKE_LOG="$T/log" FAKE_PROBE="$1"
+    ROOT="$S5/root" HERE="$S5/here" TC="$S5/tc" PY="$S5/py" ARCH=x86_64 DEPLOYMENT=10.9 SDK_OVERLAYS="$S5/sdk" PM_C="" CXX_LIBCXX=""
+    RES="$S5/res" LLD=/usr/bin/true
+    . "$T/support.sh"; echo "UPSTREAM_LISTS=$UPSTREAM_LISTS" ) > "$T/out" 2>&1
+}
+support pass || fail "step 5b's test support failed with a compiler that declares async for 10.9: $(cat "$T/out")"
+grep -q '^swiftc .*-typecheck' "$T/log" || fail "step 5b did not probe the host compiler: $(cat "$T/log")"
+grep -q 'test support: with Concurrency' "$T/out" || fail "step 5b did not say it builds test support with Concurrency: $(cat "$T/out")"
+for m in SwiftPrivate SwiftPrivateLibcExtras SwiftPrivateThreadExtras StdlibUnittest; do
+  grep -q "^build-module.sh .*--name $m .*--runtime-floor" "$T/log" || fail "with Concurrency, $m is built without --runtime-floor: $(cat "$T/log")"
+done
+grep '^build-module.sh .*--name StdlibUnittest ' "$T/log" | grep -qF -e '--flag -D --flag SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY' \
+  || fail "with Concurrency, StdlibUnittest is built without -D SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY: $(cat "$T/log")"
+L="$(sed -n 's/^UPSTREAM_LISTS=//p' "$T/out")"
+[ "$(cd "$L" && ls)" = "$(cd "$REPO/tests/upstream" && ls)" ] || fail "with Concurrency, the staged lists are not every layer's: $L"
+support refuse || fail "step 5b's test support failed with the swift.org seed, which refuses async for 10.9: $(cat "$T/out")"
+grep -q "test support: without Concurrency -- the host compiler .*concurrency is only available in macOS 10.15.0 or newer" "$T/out" \
+  || fail "step 5b did not say why it builds test support without Concurrency: $(cat "$T/out")"
+grep -q "upstream's concurrency tests are not staged" "$T/out" || fail "step 5b did not say it skips upstream's concurrency tests: $(cat "$T/out")"
+[ "$(grep -c '^build-module.sh ' "$T/log")" -eq 4 ] || fail "without Concurrency, not the four test-support modules: $(cat "$T/log")"
+if grep -q '^build-module.sh .*--runtime-floor' "$T/log"; then fail "without Concurrency, test support is built with --runtime-floor: $(cat "$T/log")"; fi
+if grep -q '^build-module.sh .*SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY' "$T/log"; then fail "without Concurrency, StdlibUnittest reads the Concurrency define: $(cat "$T/log")"; fi
+L="$(sed -n 's/^UPSTREAM_LISTS=//p' "$T/out")"
+[ "$(cd "$L" && ls)" = "$(cd "$REPO/tests/upstream" && ls | grep -vx concurrency.list)" ] || fail "without Concurrency, the staged lists: $(cd "$L" && ls)"
+for f in "$L"/*.list; do cmp -s "$f" "$REPO/tests/upstream/${f##*/}" || fail "without Concurrency, ${f##*/} is not the reviewed list"; done
+if support broken; then fail "step 5b went on past a host compiler the probe could not run: $(cat "$T/out")"; fi
+grep -q 'unable to load standard library' "$T/out" && grep -q 'FAIL: could not ask .* async function' "$T/out" \
+  || fail "step 5b's failed probe did not show its error: $(cat "$T/out")"
+# Step 6 stages the layers step 5b chose.
+grep -q '^PYTHON=.*stage-selftest-support.sh" "$ROOT/stdlib-build" "$ROOT/swift" "$UPSTREAM_LISTS" ' "$REPO/build.sh" \
+  || fail "step 6 does not stage the lists step 5b chose: $(grep 'stage-selftest-support.sh"' "$REPO/build.sh")"
 SB="$R/swift/work/stdlib-build"
 grep -q '^archiver ' "$SB/mavergreen-inputs.stamp" \
   || fail "the stdlib-build's stamp does not record the archiver: $(cat "$SB/mavergreen-inputs.stamp")"

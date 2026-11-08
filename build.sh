@@ -371,7 +371,30 @@ build_overlay ObjectiveC swiftObjectiveC --I "$OVS/ObjectiveC/shims" -- "$OVS/Ob
 #       libcxx22's headers, and handed to the link; they call nothing of a C++ library (step 7 holds them to
 #       that), so no libc++ is linked.
 SUP="$ROOT/stdlib-build/selftest-support"; SUW="$ROOT/selftest-support"; PRIV="$ROOT/swift/stdlib/private"
-rm -rf "$SUP" "$SUW"; mkdir -p "$SUW/src" "$SUW/obj"
+rm -rf "$SUP" "$SUW"; mkdir -p "$SUW/src" "$SUW/obj" "$SUW/probe"
+# The floor and the define make StdlibUnittest's @available(SwiftStdlib 5.1) async functions 10.9
+# declarations, which only compiler patch 0003 accepts. A host compiler without it -- CI's swift.org seed,
+# whose stdlib ships nowhere (build-cross's second build.sh, with the cross toolchain, stages the support
+# vm-test uses), or a 6.4.1-mavericks.9 or earlier toolchain on 10.9 -- refuses them ("concurrency is only
+# available in macOS 10.15.0 or newer"). So the host compiler is asked once, with a 10.9 async function and
+# no availability flag: refused for that reason, test support is built as it was before Concurrency, with
+# neither, and step 6 stages every layer but upstream's concurrency tests, which need both; refused for
+# any other, the build stops.
+printf 'func mavergreenProbe() async {}\n' > "$SUW/probe/probe.swift"
+UPSTREAM_LISTS="$HERE/tests/upstream"; SUPPORT_FLOOR=--runtime-floor
+SUPPORT_CONCURRENCY="--flag -D --flag SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY"
+if "$TC/bin/swiftc" -typecheck -parse-as-library -target "$ARCH-apple-macosx$DEPLOYMENT" -sdk "$SDK_OVERLAYS" -resource-dir "$RES" \
+     -module-cache-path "$SUW/probe/cache" "$SUW/probe/probe.swift" > "$SUW/probe/out" 2>&1; then
+  echo "    test support: with Concurrency (the host compiler declares an async function for macOS $DEPLOYMENT)"
+elif grep -q 'error: concurrency is only available in' "$SUW/probe/out"; then
+  echo "    test support: without Concurrency -- the host compiler (no compiler patch 0003) answers: $(grep -m1 'error: ' "$SUW/probe/out" | sed 's/^.*error: //'); upstream's concurrency tests are not staged"
+  SUPPORT_FLOOR=""; SUPPORT_CONCURRENCY=""; UPSTREAM_LISTS="$SUW/lists"; mkdir -p "$UPSTREAM_LISTS"
+  for l in "$HERE"/tests/upstream/*.list; do
+    case "${l##*/}" in concurrency.list) ;; *) cp "$l" "$UPSTREAM_LISTS/" ;; esac
+  done
+else
+  cat "$SUW/probe/out"; echo "FAIL: could not ask $TC/bin/swiftc for a $DEPLOYMENT async function (above)"; exit 1
+fi
 "${PY:-python3}" "$ROOT/swift/utils/gyb" --line-directive '' -o "$SUW/src/AtomicInt.swift" "$PRIV/SwiftPrivate/AtomicInt.swift.gyb" \
   || { echo "FAIL: gyb failed on $PRIV/SwiftPrivate/AtomicInt.swift.gyb"; exit 1; }
 # support_object clang|clang++ <source> [<flag>...] -- $SUW/obj/<source's name>.o
@@ -392,9 +415,10 @@ done
 # One line per module, in the order they import each other: build-module.sh <module> [its options --] <sources>...
 build_support() {
   _bs_m="$1"; shift
+  # shellcheck disable=SC2086  # SUPPORT_FLOOR: one word, or none
   SWIFT_WORK="$ROOT" SWIFTC="$TC/bin/swiftc" LLD="$LLD" sh "$HERE/scripts/build-module.sh" \
     --name "$_bs_m" --link-name "swift$_bs_m" --sdk "$SDK_OVERLAYS" --resource-dir "$RES" \
-    --availability "$ROOT/swift/utils/availability-macros.def" --work "$SUW/work/$_bs_m" --out "$SUP" --runtime-floor "$@" \
+    --availability "$ROOT/swift/utils/availability-macros.def" --work "$SUW/work/$_bs_m" --out "$SUP" $SUPPORT_FLOOR "$@" \
     || { echo "FAIL: could not build the test-support module $_bs_m"; exit 1; }
 }
 P="$PRIV/SwiftPrivate"
@@ -406,7 +430,8 @@ build_support SwiftPrivateLibcExtras --flag -D --flag SWIFT_STDLIB_HAS_COMMANDLI
 P="$PRIV/SwiftPrivateThreadExtras"
 build_support SwiftPrivateThreadExtras -- "$P/SwiftPrivateThreadExtras.swift" "$P/ThreadBarriers.swift"
 P="$PRIV/StdlibUnittest"
-build_support StdlibUnittest --flag -D --flag SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY --flag -D --flag MAVERICKS_NO_FOUNDATION \
+# shellcheck disable=SC2086  # space-free words
+build_support StdlibUnittest $SUPPORT_CONCURRENCY --flag -D --flag MAVERICKS_NO_FOUNDATION \
   --flag -enable-experimental-feature --flag Lifetimes \
   --link "$SUW/obj/InspectValue.cpp.o" --link "$SUW/obj/InterceptTraps.cpp.o" --link "$SUW/obj/OpaqueIdentityFunctions.cpp.o" -- \
   "$P/StdlibUnittest.swift" "$P/CheckStrideable.swift" "$P/InspectValue.swift" "$P/LifetimeTracked.swift" "$P/MinimalTypes.swift" \
@@ -431,7 +456,7 @@ CORE="$OUT/usr/local/mavergreen/swift-runtime/lib/swift/libswiftCore.dylib"
 # Beside it, never in it: the self-test bundle's test support and upstream's tests (make-selftest.sh's
 # SELFTEST_SUPPORT), which CI's build-cross uploads with the payload for vm-test.
 SELFTEST_SUPPORT_OUT="${SWIFT_SELFTEST_SUPPORT_OUT:-$SWIFT_BUILD/payload/selftest-support}"
-PYTHON="${PY:-python3}" sh "$HERE/scripts/stage-selftest-support.sh" "$ROOT/stdlib-build" "$ROOT/swift" "$HERE/tests/upstream" "$SELFTEST_SUPPORT_OUT" \
+PYTHON="${PY:-python3}" sh "$HERE/scripts/stage-selftest-support.sh" "$ROOT/stdlib-build" "$ROOT/swift" "$UPSTREAM_LISTS" "$SELFTEST_SUPPORT_OUT" \
   || { echo "FAIL: could not stage the self-test's support in $SELFTEST_SUPPORT_OUT"; exit 1; }
 
 echo "==> 7. self pre-flight (must show minOS 10.9 and NO os_unfair_lock)"
