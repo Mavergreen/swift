@@ -7,10 +7,7 @@
 #          compiler's own: only -parse-as-library (for @main in a one-file program), as anything else
 #          (-disable-availability-checking, say) would test another program than its users compile; any
 #          other flag fails the bundle. A test whose first line is `// selftest: skip: <reason>` is built
-#          in neither mode, saying why. The one so marked: concurrency_isolation_test, whose
-#          MainActor.assumeIsolated and preconditionIsolated call dispatch_assert_queue$V2, which 10.9's
-#          libdispatch lacks and Recaulk does not provide yet (requested: INGREDIENTS.md's Owed list);
-#          its marker goes when Recaulk ships it.
+#          in neither mode, saying why (none is so marked today).
 #          Two compilers:
 #            default          the swift.org toolchain build.sh expanded, for x86_64-apple-macosx10.9,
 #                             -no-stdlib-rpath and one rpath, $SWIFT_RUNTIME_PREFIX/lib/swift

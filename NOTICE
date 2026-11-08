@@ -176,8 +176,8 @@ components/macports-legacy-support/version pins). They keep their own licenses:
 libswift_Concurrency, the Swift concurrency runtime (built from the same Swift
 sources as libswiftCore, under the same license, with the patches 0012-0016
 above), contains, statically linked, the definitions of clock_gettime,
-clock_getres, qos_class_self, voucher_copy, voucher_adopt, os_release and
-dispatch_activate from Recaulk (the release pinned in pins.env; its license is
+clock_getres, qos_class_self, voucher_copy, voucher_adopt, os_release,
+dispatch_activate and dispatch_assert_queue from Recaulk (the release pinned in pins.env; its license is
 below). Recaulk builds clock_gettime and clock_getres from MacPorts'
 legacy-support library (the same commit as above), whose src/time.c keeps its
 own license, its header:

@@ -143,12 +143,11 @@ echo "    Recaulk $RECAULK_VERSION: $RECAULK_RUNTIME_SYMBOLS, $(grep -c . "$RECA
 #       lacks (the A1 spike's Q1 table): voucher_copy and voucher_adopt, strong (VoucherShims.h:60,63), so
 #       without them it does not load; qos_class_self for every task created (Actor.cpp:345); clock_gettime
 #       and clock_getres for every clock read and Task.sleep (Clock.cpp); dispatch_activate, a sleep with
-#       tolerance (DispatchGlobalExecutor.cpp); os_release, once a voucher is non-NULL (VoucherShims.h:74).
-#       Its own subset, linked into it alone through patch 0013's hook and hidden as Core's is. Not here
-#       yet: dispatch_assert_queue$V2 (weak and called unguarded, ExecutorBridge.cpp:80, reached by
-#       MainActor.assumeIsolated and preconditionIsolated), which Recaulk does not provide yet; it joins
-#       this list when Recaulk does (requested), and until then step 7's allowlist names the call.
-RECAULK_CONCURRENCY_SYMBOLS="_clock_gettime _clock_getres _qos_class_self _voucher_copy _voucher_adopt _os_release _dispatch_activate"
+#       tolerance (DispatchGlobalExecutor.cpp); os_release, once a voucher is non-NULL (VoucherShims.h:74);
+#       and dispatch_assert_queue$V2, weak and called unguarded (ExecutorBridge.cpp:80), when
+#       MainActor.assumeIsolated, preconditionIsolated or assertIsolated ask the main executor off its own
+#       job. Its own subset, linked into it alone through patch 0013's hook and hidden as Core's is.
+RECAULK_CONCURRENCY_SYMBOLS="_clock_gettime _clock_getres _qos_class_self _voucher_copy _voucher_adopt _os_release _dispatch_activate _dispatch_assert_queue\$V2"
 RECAULK_CONC_A="$ROOT/recaulk-concurrency.a"; RECAULK_CONC_UNX="$ROOT/recaulk-concurrency.unexported"
 # shellcheck disable=SC2086  # space-free symbol names
 ( NM="$X/llvm-nm"; AR="$X/llvm-ar"
@@ -487,8 +486,10 @@ recaulk_hidden() {
   _rh_syms="$("${NM:-nm}" "$_rh_lib")" || { echo "FAIL: could not read $_rh_lib's symbols"; exit 1; }
   [ -n "$_rh_exp" ] || { echo "FAIL: read no exports from $_rh_lib"; exit 1; }
   for _rh_s in "$@"; do
-    if printf '%s\n' "$_rh_imp" | grep -q "${_rh_s#_}"; then echo "FAIL: $_rh_s is imported by $_rh_lib, not Recaulk's"; exit 1; fi
-    printf '%s\n' "$_rh_syms" | grep -Eq " [Tt] $_rh_s\$" || { echo "FAIL: $_rh_lib does not define $_rh_s"; exit 1; }
+    # Whole names, compared as strings: _fma is not _fmaf, and dispatch_assert_queue$V2 has a $ in it.
+    if printf '%s\n' "$_rh_imp" | awk -v s="$_rh_s" '$1 == s { f = 1 } END { exit !f }'; then echo "FAIL: $_rh_s is imported by $_rh_lib, not Recaulk's"; exit 1; fi
+    printf '%s\n' "$_rh_syms" | awk -v s="$_rh_s" '($(NF - 1) == "T" || $(NF - 1) == "t") && $NF == s { f = 1 } END { exit !f }' \
+      || { echo "FAIL: $_rh_lib does not define $_rh_s"; exit 1; }
   done
   _rh_leak="$(printf '%s\n' "$_rh_exp" | grep -Fx -f "$_rh_unx" || :)"
   [ -z "$_rh_leak" ] || { printf '%s\n' "$_rh_leak"; echo "FAIL: $_rh_lib exports Recaulk's globals (listed above)"; exit 1; }

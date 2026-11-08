@@ -113,16 +113,16 @@ legacy-support's MIT LICENSE, and libswift_Concurrency's `mp-time.o` (below), un
 libswift_Concurrency takes a third subset, `RECAULK_CONCURRENCY_SYMBOLS`: `voucher_copy` and `voucher_adopt`,
 which it imports strongly, so without them it does not load on 10.9; `qos_class_self`, `clock_gettime`,
 `clock_getres` and `dispatch_activate`, weak but called with no check (every task, every clock read and
-`Task.sleep`, a sleep with tolerance); and `os_release`, once a voucher is non-NULL. Runtime patch 0013
+`Task.sleep`, a sleep with tolerance); `os_release`, once a voucher is non-NULL; and
+`dispatch_assert_queue$V2`, weak and called with no check from `MainActor.assumeIsolated`,
+`preconditionIsolated` and `assertIsolated` off the main queue's own job (Recaulk's traps only where the
+thread is provably off the queue, as 10.9's libdispatch cannot always tell). Runtime patch 0013
 gives Concurrency's link a hook, `MAVERGREEN_CONCURRENCY_LINK_FLAGS`, so this subset and its unexported
 list reach that dylib alone. The members include legacy-support's `src/time.c` (`clock_gettime`,
 `clock_getres`), whose own notice is in `NOTICE`; it has no notices-list row (it is not APSL), so
 `RECAULK_NOTICES_REVIEWED` names `mp-time.o` and step 7's notice check runs over libswift_Concurrency too.
 Every global the subset defines is a named API or `___recaulk_`-prefixed, the dispatch member's block
-helpers among them. Not yet in it: `dispatch_assert_queue$V2`, weak and called
-with no check from `MainActor.assumeIsolated` and `preconditionIsolated` off the main queue's own job,
-which Recaulk does not define yet; it is requested, joins the list when Recaulk ships it, and until then
-the allowlist below names that call for what it is, an unguarded one. Step 7 checks libswift_Concurrency
+helpers among them. Step 7 checks libswift_Concurrency
 as it does libswiftCore, and holds its tracing's weak imports (`os_signpost_*`, `_os_log_create`) to the OS's.
 
 Step 7 also holds every dylib it ships, and the test-support libraries, to what OS X 10.9 has
@@ -254,8 +254,8 @@ run the real-10.9 gate. It does: `vm-test`, a required check, installs each run'
 merges like any other, as the family's default has it.
 
 The gate is sized, so that upstream's tests can grow. `run-selftest.sh --gate` runs our own binaries
-500x plus 10x under Guard Malloc (24 with Release 2's concurrency_test; concurrency_isolation_test is skipped
-until Recaulk has `dispatch_assert_queue$V2`) and upstream's, each included test at -O and -Onone and once per
+500x plus 10x under Guard Malloc (26 with Release 2's concurrency_test and concurrency_isolation_test) and
+upstream's, each included test at -O and -Onone and once per
 variant (`SELFTEST_UPSTREAM_RUNS`, default 20, plus 1 under Guard Malloc), after a `--loads` run. Release 2's
 lists include 6 Darwin, 2 ObjectiveC and 19 Concurrency tests (most of those built twice: lit runs them again in
 Swift 5 mode with NonisolatedNonsendingByDefault), 43 builds, 86 upstream binaries.
@@ -278,9 +278,8 @@ pessimistic 15 s each is 28 min. Install, compiles, gate and smoke total about a
 short, deterministic-test budget, and halving it would save about 7 min on the box.
 
 The 120 minutes must be re-sized when the next excluded groups come in. Those are the 67 FileCheck tests (once
-output is checked), the 14 that set an environment variable, the 7 that need the Dispatch overlay, and
-concurrency_isolation_test (once Recaulk has `dispatch_assert_queue$V2`). Together that is about 90 tests and,
-most having two variants, up to about 330 binaries at -O and -Onone: some 80 min of compiles at 15 s each before
+output is checked), the 14 that set an environment variable, and the 7 that need the Dispatch overlay.
+Together that is about 90 tests and, most having two variants, up to about 330 binaries at -O and -Onone: some 80 min of compiles at 15 s each before
 their gate time, which would by itself pass today's budget.
 
 Owed: upstream tests the gate excludes because 10.9 or this release lacks something, each owed
@@ -293,8 +292,6 @@ until its blocker goes (the reasons are in `tests/upstream/*.list`):
 - `test/stdlib/FloatingPoint.swift.gyb`: 10.9's libm, where `fma` returns the wrong sign (`Double.addingProduct`
   at -Onone) and `truncl(-0)` returns +0 (`Float80.round`).
 - POSIX.swift and mmap.swift hand the test a temp directory (`%t`), which the gate does not supply.
-- `tests/concurrency_isolation_test.swift` (MainActor.assumeIsolated, preconditionIsolated): needs
-  `dispatch_assert_queue$V2`, which 10.9's libdispatch lacks; requested from Recaulk, skipped until it ships.
 - The Concurrency tests that use `DispatchQueue` or `DispatchTime` (7): the Dispatch Swift overlay, which this release
   does not ship.
 - The Concurrency tests whose RUN: line sets an environment variable with `env` (14, the isolation-mode

@@ -1,8 +1,7 @@
 # The weak imports OS X 10.9 does not define, which scripts/imports-on-10.9.sh lets a staged dylib keep:
 # each binds to NULL there, and the line after the symbol names the file:line, in the Swift 6.4.1 source
 # (or the llvm-project 6.4.1 pins), of the check that reads it before any call. A strong import is never
-# listed; a symbol is added only with the guard that makes it safe, found by reading the code (one
-# exception, marked NOT GUARDED below, waits for Recaulk).
+# listed; a symbol is added only with the guard that makes it safe, found by reading the code.
 #   <dylib> <symbol> -- <file>:<line>
 
 # ObjC runtime hooks and load-image registration: the runtime tests each before it calls.
@@ -36,11 +35,3 @@ libswift_Concurrency.dylib _os_signpost_id_make_with_pointer -- stdlib/public/Co
 libswift_Concurrency.dylib __os_signpost_emit_with_name_impl -- stdlib/public/Concurrency/TracingSignpost.h:86
 # Runtime patches 0014 and 0016 ask __builtin_available, which reads this as libswiftCore's does.
 libswift_Concurrency.dylib __availability_version_check -- compiler-rt/lib/builtins/os_version_check.c:102
-
-# NOT GUARDED, the one exception to this file's rule, until Recaulk defines it (requested): the line cited
-# calls dispatch_assert_queue with no check. Only the main executor's checkIsolated reaches it
-# (DispatchExecutor.swift:63), which MainActor.assumeIsolated, preconditionIsolated and assertIsolated call
-# when the current job does not settle the question; on 10.9 that call is a NULL call, a crash. The
-# self-test's isolation case stays excluded meanwhile. The entry leaves when the symbol joins build.sh's
-# RECAULK_CONCURRENCY_SYMBOLS.
-libswift_Concurrency.dylib _dispatch_assert_queue$V2 -- stdlib/public/Concurrency/ExecutorBridge.cpp:80

@@ -1,12 +1,12 @@
-// selftest: skip: needs dispatch_assert_queue$V2, which 10.9's libdispatch lacks and Recaulk does not provide yet
+// selftest: needs this repo's compiler (compiler patch 0003)
 // swiftc: -parse-as-library
 // concurrency_isolation_test.swift — the run-time isolation checks, on 10.9.
 //
 // MainActor.assumeIsolated and an actor's preconditionIsolated ask the executor whether the caller runs on
 // it; for the main actor's and a default actor's dispatch-backed executors libswift_Concurrency answers
-// with dispatch_assert_queue$V2 (ExecutorBridge.cpp), which 10.9's libdispatch lacks. Until Recaulk
-// provides it, make-selftest.sh skips this test by its first line (its usage says so); the marker goes
-// when Recaulk ships the symbol. Needs this repo's compiler as concurrency_test does. Covered:
+// with dispatch_assert_queue$V2 (ExecutorBridge.cpp), which 10.9's libdispatch lacks: libswift_Concurrency
+// links Recaulk's, hidden (build.sh's RECAULK_CONCURRENCY_SYMBOLS). Needs this repo's compiler as
+// concurrency_test does. Covered:
 // MainActor.assumeIsolated and preconditionIsolated from the main actor's own job, an actor's
 // preconditionIsolated and assumeIsolated from its own job, and assertIsolated on both.
 // STDLIB ONLY. Traps on any wrong value; exits 0.

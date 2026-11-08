@@ -126,7 +126,9 @@ printf '%s\n' "$2:fwd-97.o: 0000000000000000 T _os_system_version_get_current_ve
   "$2:recaulk-qos_class.o: 0000000000000000 T _qos_class_self" \
   "$2:recaulk-dispatch_modern.o: 0000000000000000 T _voucher_copy" "$2:recaulk-dispatch_modern.o: 0000000000000010 T _voucher_adopt" \
   "$2:recaulk-dispatch_modern.o: 0000000000000020 T _os_release" "$2:recaulk-dispatch_modern.o: 0000000000000030 T _dispatch_activate" \
-  "$2:recaulk-dispatch_modern.o: 0000000000000040 T ___recaulk_copy_helper_block_8_32b"
+  "$2:recaulk-dispatch_modern.o: 0000000000000040 T ___recaulk_copy_helper_block_8_32b" \
+  "$2:fwd-47.o: 0000000000000000 T _dispatch_assert_queue\$V2" "$2:fwd-47.o:                  U ___recaulk_resolve" \
+  "$2:recaulk-dispatch_assert_queue.o: 0000000000000000 T ___recaulk_impl_dispatch_assert_queue\$V2"
 F
 printf '#!/bin/sh\ncase "$1" in rcs) : > "$2" ;; esac\n' > "$C22/bin/llvm-ar"; chmod +x "$C22/bin/llvm-nm" "$C22/bin/llvm-ar"
 printf '#!/bin/sh\necho "%s/sdk/MacOSX11.3.sdk"\n' "$T" > "$T/shipyard/fetch_sdk.sh"
@@ -217,7 +219,7 @@ grep -qxF -e "  -DSWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY=ON" "$T/log" || fail "th
 grep -qxF -e "  -DSWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY=ON" "$T/log" || fail "the stdlib configure does not turn strict availability on: $(cat "$T/log")"
 grep -qxF -e "  -DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$R/swift/work/recaulk-concurrency.a -Wl,-unexported_symbols_list,$R/swift/work/recaulk-concurrency.unexported" "$T/log" \
   || fail "Concurrency's link does not take its Recaulk subset, hidden: $(grep MAVERGREEN_CONCURRENCY "$T/log")"
-[ "$(tr '\n' ' ' < "$R/swift/work/recaulk-concurrency.unexported")" = "___recaulk_copy_helper_block_8_32b ___recaulk_resolve _clock_getres _clock_gettime _dispatch_activate _os_release _qos_class_self _voucher_adopt _voucher_copy " ] \
+[ "$(tr '\n' ' ' < "$R/swift/work/recaulk-concurrency.unexported")" = "___recaulk_copy_helper_block_8_32b ___recaulk_resolve _clock_getres _clock_gettime _dispatch_activate _dispatch_assert_queue\$V2 _os_release _qos_class_self _voucher_adopt _voucher_copy " ] \
   || fail "Recaulk's subset for Concurrency: $(cat "$R/swift/work/recaulk-concurrency.unexported")"
 # Test support only runs on this runtime: step 5b's test support (below) takes --runtime-floor (every released
 # SwiftStdlib version is 10.9 there), and the shipped overlays' build_overlay never does.
