@@ -142,6 +142,39 @@ that library's stub in the 10.9 SDK, or be weak and listed in `scripts/resources
 beside the guard that reads it first. A strong import that 10.9 lacks otherwise links against the 11.3 SDK
 without complaint and fails in dyld on a real 10.9 box.
 
+## Recaulk in every program
+
+Both toolchains link Recaulk into every program and dylib their `swiftc` builds, as mavericks-clang-22 links
+it into every program its clang builds. The stdlib's floating-point operations are inlinable, so a program's
+own code calls `fma`, `fmal` and `truncl`, which 10.9's libm gets wrong (above); libswiftCore's hidden copies
+reach only libswiftCore's own calls. Each toolchain pkg carries its own copy of `librecaulk.a` at pins.env's
+`RECAULK_VERSION`, in `lib/recaulk/` with Recaulk's `notices.tsv` and a `VERSION` file:
+`scripts/stage-toolchain.sh` takes them from `fetch-recaulk.sh` (the pkg verified against its release's
+`SHA256SUMS`) and refuses a Recaulk prefix whose `mavergreen.plist` names another release. `toolchain_digest`
+covers `lib/recaulk`, so both pkgs carry the same bytes.
+
+The driver's linker, `libexec/mavergreen-swift/ld` (`toolchain/ld`), puts the archive on the line just before
+the driver's first `-lobjc` or `-lSystem`. ld pulls a member only for a symbol still undefined there, so a
+program defines Recaulk's weak, hidden `fma`, `fmal` and `truncl`, plus any back-fill it calls (`openat`
+through `import Darwin`, say), and binds everything else to libSystem as before. The archive must precede
+`-lSystem`: after it, ld has already taken libSystem's definition (the A1 probe: `-Xlinker <archive>` lands
+after `-lSystem` and does nothing). It goes in the linker wrapper, not among `swiftc`'s inputs, because only a
+link reaches that program: as an input it broke `-c`, `-typecheck`, `-emit-module` and the module name
+`-emit-library` infers, and `swiftc -v` tried to link the archive alone. A line without `-lSystem` (`ld -v`)
+reaches lld unchanged; `-emit-library -static` runs libtool, not ld, so a static library takes no copy and the
+program that links it takes one. A user's own inputs, `-l`, `-L` and `-Xlinker` arguments stay where the
+driver puts them. A dylib takes its own copy, as Recaulk wants ("every image gets its own copy"): the
+definitions are hidden, so two images never share one.
+
+Most programs take only Recaulk's own members, under its ISC licence. A program that calls an API Recaulk
+builds from Apple's code (`openat` and the other `*at` calls, `fdopendir`, `fstatat`, `utimensat`,
+`futimens`) links an APSL member, which carries its notice as a string in the program; its author should
+repeat that notice in the program's documentation (the README says so). `lib/recaulk/notices.tsv` lists those
+members and their notices. The toolchain pkgs redistribute the archive itself, so `NOTICE` carries Recaulk's
+licence, the notice of every APSL member in it and the licence of every other MacPorts member; step 7 of
+`build.sh` holds `NOTICE` to the whole archive (`recaulk_notices` over `librecaulk.a`, with
+`RECAULK_ARCHIVE_REVIEWED` naming the MacPorts members that have no row).
+
 ## The compiler's runtime table: 10.9's Swift runtime is the pkgs'
 
 Upstream's compiler maps each Swift runtime version to the OS release that first shipped it

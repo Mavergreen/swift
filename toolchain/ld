@@ -2,4 +2,36 @@
 # platform: macOS-only -- execs ld64.lld, this toolchain's OS X linker
 #   The Swift driver runs a program named `ld`; lld takes its Mach-O personality only when invoked as
 #   ld64.lld, so this execs it under that name.
-exec "$(dirname "$0")/../../bin/ld64.lld" "$@"
+#   spec: INGREDIENTS.md "Recaulk in every program" -- as mavericks-clang-22 does, every program and dylib
+#   this toolchain's swiftc links takes Recaulk: the toolchain's own copy of librecaulk.a (lib/recaulk,
+#   pins.env's RECAULK_VERSION) goes on the line just before the driver's first -lobjc or -lSystem. ld
+#   pulls a member only for a symbol still undefined there, so a program defines Recaulk's fixes of
+#   10.9's libm (fma, fmal, truncl: the stdlib's inlined floating-point code calls them) and any
+#   back-fill it calls (openat, say), all hidden, and binds everything else to libSystem as before. After
+#   -lSystem the archive would do nothing: ld takes the first definition, and libSystem has one, wrong on
+#   10.9. Here, not in swiftc, because only a link reaches this program: an archive among swiftc's inputs
+#   would break the compile-only modes (-c, -typecheck, -emit-module) and the module name -emit-library
+#   infers. A line without -lSystem is no link of the driver's (ld -v) and goes to lld as it was.
+set -e
+self="$0"
+# platform: 10.9's readlink has no -f, so a linked ld is resolved by hand, as swiftc resolves itself.
+while [ -L "$self" ]; do
+  link="$(readlink "$self")"
+  case "$link" in /*) self="$link" ;; *) self="$(dirname "$self")/$link" ;; esac
+done
+PREFIX="$(CDPATH= cd -P -- "$(dirname "$self")/../.." && pwd -P)"
+RK="$PREFIX/lib/recaulk/librecaulk.a"
+case " $* " in
+  *" -lSystem "*)
+    [ -f "$RK" ] || { echo "ld: no Recaulk archive at $RK -- reinstall this toolchain" >&2; exit 1; }
+    added=""; first=1
+    # `for a do` walks the arguments as they were when the loop began, so the list is rebuilt in place.
+    for a do
+      if [ -n "$first" ]; then set --; first=""; fi
+      if [ -z "$added" ]; then
+        case "$a" in -lobjc|-lSystem) set -- "$@" "$RK"; added=1 ;; esac
+      fi
+      set -- "$@" "$a"
+    done ;;
+esac
+exec "$PREFIX/bin/ld64.lld" "$@"

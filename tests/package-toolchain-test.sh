@@ -39,7 +39,7 @@ real_dylibs() {
 }
 real_dylibs
 O="$T/out"
-SWIFT_WORK="$W" sh scripts/stage-toolchain.sh "$O" > "$T/stage.log" 2>&1 \
+SWIFT_WORK="$W" sh scripts/stage-toolchain.sh --recaulk "$W/recaulk" "$O" > "$T/stage.log" 2>&1 \
   || { cat "$T/stage.log" >&2; fail "stage-toolchain.sh failed over the fake build"; }
 staged="$(cd "$O" && find . | sort)"
 A="$T/upd/swift-toolchain-updater.app"
@@ -149,7 +149,7 @@ XP=usr/local/mavergreen/swift-toolchain-cross
 fake_toolchain_build "$W" arm64
 real_dylibs
 XO="$T/xout"
-STAGE_HOST=arm64 SWIFT_WORK="$W" sh scripts/stage-toolchain.sh "$XO" > "$T/xstage.log" 2>&1 \
+STAGE_HOST=arm64 SWIFT_WORK="$W" sh scripts/stage-toolchain.sh --recaulk "$W/recaulk" "$XO" > "$T/xstage.log" 2>&1 \
   || { cat "$T/xstage.log" >&2; fail "STAGE_HOST=arm64 stage-toolchain.sh failed over the fake build"; }
 xstaged="$(cd "$XO" && find . | sort)"
 XA="$T/xupd/swift-toolchain-cross-updater.app"

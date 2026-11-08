@@ -5,7 +5,9 @@
 #   CI's one run of each toolchain it ships, where it runs: the cross toolchain in build-cross, on the
 #   arm64 runner; the native one in vm-test, on Mac OS X 10.9 (Mavergreen/mavericks-vm), after its pkg is
 #   installed. Its bin/swiftc compiles and links a hello world whose load commands record minOS 10.9 and
-#   SDK 10.9 and whose one rpath is the installed runtime's, then builds the gate corpus through
+#   SDK 10.9 and whose one rpath is the installed runtime's; links Recaulk (lib/recaulk, pins.env's
+#   RECAULK_VERSION) into a program and a dylib, each defining Recaulk's fma, fmal and truncl, hidden,
+#   the program still taking puts and malloc from libSystem, while -c compiles alone; then builds the gate corpus through
 #   make-selftest.sh's SWIFTC= mode, and its clang links C that uses @available (its builtins archive is
 #   where the driver looks). Its bare clang and clang++, given no flags, must build for 10.9 (clang.cfg and
 #   clang++.cfg), and its bare clang, given only the SDK, must link C with the toolchain's own ld64.lld (its
@@ -71,6 +73,37 @@ echo "-- its one rpath is the installed runtime's"
 rp="$(macho_rpaths "$T/hello")" || fail "could not read $T/hello's rpaths"
 echo "$rp"
 [ "$rp" = /usr/local/mavergreen/swift-runtime/lib/swift ] || fail "the rpaths are [$rp], not the runtime's alone"
+
+echo "-- it links Recaulk's archive, pins.env's release, into every program and dylib"
+. "$REPO/pins.env"
+[ "$(cat "$TC/lib/recaulk/VERSION" 2>/dev/null)" = "$RECAULK_VERSION" ] \
+  || fail "its lib/recaulk/VERSION is '$(cat "$TC/lib/recaulk/VERSION" 2>/dev/null)', not pins.env's $RECAULK_VERSION"
+# Runtime values, so that the compiler emits the libm calls: fma (Double), fmal (Float80), truncl.
+cat > "$T/fp.swift" <<'F'
+import Darwin
+let n = Double(CommandLine.arguments.count)
+let l = Float80(n)
+let p = malloc(16); free(p)
+puts("\(n.addingProduct(n, n)) \(l.addingProduct(l, l)) \((-l / 10).rounded(.towardZero))")
+F
+cat > "$T/fplib.swift" <<'F'
+public func f(_ n: Double, _ l: Float80) -> Float80 {
+  Float80(n.addingProduct(n, n)) + l.addingProduct(l, l) + l.rounded(.towardZero)
+}
+F
+"$COPY" -Onone "$T/fp.swift" -o "$T/fp" || fail "its swiftc could not link a program that calls fma, fmal and truncl"
+( cd "$T" && "$COPY" -Onone -emit-library fplib.swift ) || fail "its swiftc could not link a dylib"
+for b in "$T/fp" "$T/libfplib.dylib"; do
+  m="$("$NM" -m "$b")" || fail "could not read $b's symbols"
+  for s in _fma _fmal _truncl; do
+    printf '%s\n' "$m" | grep -q "(__TEXT,__text) non-external (was a private external) $s\$" \
+      || fail "$b does not define Recaulk's $s, hidden: $(printf '%s\n' "$m" | grep " $s\$")"
+  done
+done
+for s in _puts _malloc; do
+  "$NM" -m "$T/fp" | grep -q "(undefined) external $s (from libSystem)\$" || fail "$T/fp does not take $s from libSystem"
+done
+"$COPY" -c "$T/fp.swift" -o "$T/fp.o" || fail "its swiftc -c could not compile alone"
 
 echo "-- it builds the gate corpus through make-selftest.sh"
 SWIFTC="$COPY" DIST="$T/dist" sh "$REPO/make-selftest.sh" || fail "make-selftest.sh could not build the gate corpus"

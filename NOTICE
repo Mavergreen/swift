@@ -217,6 +217,153 @@ and libswift_Concurrency the APIs named above, under this license:
   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+Both toolchain packages also contain Recaulk's static library itself, unmodified:
+lib/recaulk/librecaulk.a (the release pinned in pins.env, under Recaulk's license
+above), with Recaulk's list of the notices its members need, lib/recaulk/notices.tsv.
+Their swiftc links it into every program and dylib it builds: a program takes only
+the members whose symbols it uses, for most programs only Recaulk's own (fma, fmal
+and truncl, which floating-point code calls), under Recaulk's license. Recaulk builds
+its mp-*.o members from MacPorts' legacy-support library (the same commit as
+above), whose sources keep their own licenses:
+
+  Under the Apple Public Source License 2.0 (its full text ends this file): mp-atcalls.o
+  (src/atcalls.c and src/atcalls.h, notices above), mp-fdopendir.o and mp-statxx.o
+  (which contain Covered Code from src/atcalls.h, notices above), and mp-utimensat.o
+  (src/utimensat.c). Recaulk's notices for them (notices.tsv), which each member also
+  carries in its code, as section 2.3 of that license asks, and so does every program
+  that links the member:
+
+    Recaulk member mp-fdopendir.o is object code compiled from src/fdopendir.c of
+    MacPorts legacy-support and contains Covered Code from src/atcalls.h (Copyright (c)
+    2013-2015 Apple Inc. All rights reserved.). Source Code of the Covered Code is
+    available under the terms of the Apple Public Source License Version 2.0
+    (https://opensource.apple.com/apsl/) at
+    https://github.com/macports/macports-legacy-support/blob/f89c155cbc2ca8714e4ada66c11b222353e8d87a/src/atcalls.h.
+    Recaulk's own source, which builds this member, is with each Recaulk release at
+    https://github.com/Mavergreen/recaulk/releases
+
+    Recaulk member mp-statxx.o is object code compiled from src/statxx.c of MacPorts
+    legacy-support and contains Covered Code from src/atcalls.h (Copyright (c)
+    2013-2015 Apple Inc. All rights reserved.). Source Code of the Covered Code is
+    available under the terms of the Apple Public Source License Version 2.0
+    (https://opensource.apple.com/apsl/) at
+    https://github.com/macports/macports-legacy-support/blob/f89c155cbc2ca8714e4ada66c11b222353e8d87a/src/atcalls.h.
+    Recaulk's own source, which builds this member, is with each Recaulk release at
+    https://github.com/Mavergreen/recaulk/releases
+
+    Recaulk member mp-utimensat.o is object code compiled from src/utimensat.c of
+    MacPorts legacy-support and contains Covered Code from src/utimensat.c (Copyright
+    (c) 2006, 2017 Apple Computer, Inc. All rights reserved.). Source Code of the
+    Covered Code is available under the terms of the Apple Public Source License
+    Version 2.0 (https://opensource.apple.com/apsl/) at
+    https://github.com/macports/macports-legacy-support/blob/f89c155cbc2ca8714e4ada66c11b222353e8d87a/src/utimensat.c.
+    Recaulk's own source, which builds this member, is with each Recaulk release at
+    https://github.com/Mavergreen/recaulk/releases
+
+  The notices of src/utimensat.c:
+
+    Copyright (c) 2006, 2017 Apple Computer, Inc. All rights reserved.
+
+    This file contains Original Code and/or Modifications of Original Code
+    as defined in and that are subject to the Apple Public Source License
+    Version 2.0 (the 'License'). You may not use this file except in
+    compliance with the License. Please obtain a copy of the License at
+    http://www.opensource.apple.com/apsl/ and read it before using this
+    file.
+
+    The Original Code and all software distributed under the License are
+    distributed on an 'AS IS' basis, WITHOUT WARRANTY OF ANY KIND, EITHER
+    EXPRESS OR IMPLIED, AND APPLE HEREBY DISCLAIMS ALL SUCH WARRANTIES,
+    INCLUDING WITHOUT LIMITATION, ANY WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT OR NON-INFRINGEMENT.
+    Please see the License for the specific language governing rights and
+    limitations under the License.
+
+    NOTICE: This file was modified in September 2020 to allow
+    for use as a supporting file for MacPorts legacy support library. This notice
+    is included in support of clause 2.2 (b) of the Apple Public License,
+    Version 2.0.
+
+  Under the ISC-style grant time.c carries (above), each with its own copyright
+  lines, the same permission notice and disclaimer: src/clonefile.c and
+  src/statxx.c (Copyright (c) 2025 Frederick H. G. Wright II <fw@fwright.net>),
+  src/dirfuncs_compat.c (Copyright (c) 2024 Frederick H. G. Wright II
+  <fw@fwright.net>), src/fdopendir.c (Copyright (c) 2019; Copyright (C) 2023 raf
+  <raf@raf.org>, Tavian Barnes <tavianator@tavianator.com>), src/fsgetpath.c
+  (Copyright (c) 2019, from an example posted in Apple Developer Support,
+  https://forums.developer.apple.com/thread/103162), src/getentropy.c (Copyright (c)
+  2021), src/os_unfair_lock.c and src/sysconf.c (Copyright (c) 2025), and
+  src/time.c (above). The permission notice and disclaimer, as each file has them:
+
+    Permission to use, copy, modify, and distribute this software for any
+    purpose with or without fee is hereby granted, provided that the above
+    copyright notice and this permission notice appear in all copies.
+
+    THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+    WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+    MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+    ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+    WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+    ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+  src/fmemopen.c, under this license:
+
+    Copyright (C) 2013 Pietro Cerutti <gahr@FreeBSD.org>
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions
+    are met:
+    1. Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
+    2. Redistributions in binary form must reproduce the above copyright
+       notice, this list of conditions and the following disclaimer in the
+       documentation and/or other materials provided with the distribution.
+
+    THIS SOFTWARE IS PROVIDED BY AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+    ARE DISCLAIMED.  IN NO EVENT SHALL AUTHOR OR CONTRIBUTORS BE LIABLE
+    FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+    DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+    OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+    HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+    LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+    OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+    SUCH DAMAGE.
+
+  src/memstream.c, "licensed under the MIT license by Copyright (c) 2013 Ian
+  Piumarta. Modifications for inclusion in macports-legacy-support Copyright (c)
+  2023 Dennis Camera.", the MIT license's text being:
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+  src/pthread_chdir.c (above) and src/pthread_get_stacksize_np.c, which carries no
+  header of its own, are the MacPorts community's, under legacy-support's LICENSE
+  (above).
+
+A program built with these toolchains that links an APSL member (one that calls
+openat or another *at call, fdopendir, fstatat, utimensat or futimens, say) carries
+that member's notice in its binary, and its author should repeat that notice in the
+program's documentation; lib/recaulk/notices.tsv lists those members and their
+notices.
+
 Build configuration (threading package = pthreads, deployment target = 10.9,
 availability flag) is recorded in MANIFEST and build.sh.
 
@@ -267,7 +414,7 @@ package's. Both toolchain packages also carry bin/clang.cfg and
 bin/clang++.cfg, this repo's defaults for their clang.
 
 
-=== The Apple Public Source License, Version 2.0 (src/atcalls.c and src/atcalls.h above) ===
+=== The Apple Public Source License, Version 2.0 (src/atcalls.c, src/atcalls.h and src/utimensat.c above) ===
 
 APPLE PUBLIC SOURCE LICENSE
 Version 2.0 - August 6, 2003

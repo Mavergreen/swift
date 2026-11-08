@@ -10,7 +10,8 @@
 #   --stdlib and --builtins name those inputs elsewhere: the stdlib from a stdlib build's lib/swift or a
 #   staged toolchain's (CI stages the native toolchain with the cross pkg's, self-host.sh a stage with the
 #   previous stage's), the same payload either way; a --stdlib that is neither, or an unknown option, is
-#   refused before anything is written.
+#   refused before anything is written. Recaulk's librecaulk.a and notices.tsv (--recaulk, a prefix
+#   fetch-recaulk.sh prints) go to lib/recaulk with its version, which must be pins.env's RECAULK_VERSION.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -31,7 +32,7 @@ for c in rm mkdir cp mv ln chmod; do
 done
 ln -s /bin "$T/rootchild"
 for bad in "" // /. /tmp/.. "$T/rootchild/.."; do
-  rc=0; PATH="$T/fakebin:$PATH" SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$bad" 2>/dev/null || rc=$?
+  rc=0; PATH="$T/fakebin:$PATH" SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" "$bad" 2>/dev/null || rc=$?
   [ "$rc" = 2 ] || fail "out-dir '$bad': exit $rc, not 2 (refused)"
   [ ! -f "$T/writes.log" ] || fail "tried to write, with out-dir '$bad': $(cat "$T/writes.log")"
 done
@@ -39,7 +40,7 @@ done
 echo "-- names a missing input"
 for f in llvm-x86/bin/lld builtins-x86/lib/darwin/libclang_rt.osx.a; do
   mv "$W/$f" "$T/away"
-  if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out" 2> "$T/err"; then fail "staged without $f"; fi
+  if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" "$T/out" 2> "$T/err"; then fail "staged without $f"; fi
   grep -q "$f" "$T/err" || fail "did not name the missing $f: $(cat "$T/err")"
   mv "$T/away" "$W/$f"
 done
@@ -50,15 +51,28 @@ for f in stdlib-build/lib/swift/macosx/Darwin.swiftmodule stdlib-build/lib/swift
          stdlib-build/lib/swift/macosx/_Concurrency.swiftmodule stdlib-build/lib/swift/macosx/_Builtin_float.swiftmodule \
          stdlib-build/lib/swift/macosx/x86_64/libswift_Concurrency.dylib; do
   mv "$W/$f" "$T/away"
-  if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out-missing" 2> "$T/err"; then fail "staged without $f"; fi
+  if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" "$T/out-missing" 2> "$T/err"; then fail "staged without $f"; fi
   grep -q "${f##*/}" "$T/err" || fail "did not name the missing ${f##*/}: $(cat "$T/err")"
   [ ! -e "$T/out-missing" ] || fail "wrote a payload before refusing the missing ${f##*/}"
   mv "$T/away" "$W/$f"
 done
 
+echo "-- refuses a Recaulk that is not pins.env's, or not whole, naming it, before writing anything"
+. "$REPO/pins.env"
+cp -R "$W/recaulk" "$T/rk-old"; fake_recaulk_plist 19990101.1 > "$T/rk-old/mavergreen.plist"
+if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$T/rk-old" "$T/out-rk" 2> "$T/err"; then fail "staged Recaulk 19990101.1"; fi
+grep -q "19990101.1" "$T/err" && grep -q "$RECAULK_VERSION" "$T/err" || fail "did not name both Recaulk versions: $(cat "$T/err")"
+[ ! -e "$T/out-rk" ] || fail "wrote a payload before refusing Recaulk 19990101.1"
+for f in lib/librecaulk.a share/recaulk/notices.tsv mavergreen.plist; do
+  rm -rf "$T/rk-part"; cp -R "$W/recaulk" "$T/rk-part"; rm "$T/rk-part/$f"
+  if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$T/rk-part" "$T/out-rk" 2> "$T/err"; then fail "staged a Recaulk without $f"; fi
+  grep -q "$T/rk-part/$f" "$T/err" || fail "did not name the missing $f: $(cat "$T/err")"
+  [ ! -e "$T/out-rk" ] || fail "wrote a payload before refusing a Recaulk without $f"
+done
+
 echo "-- refuses, naming them, when a reused build root holds more than one clang resource dir"
 mkdir -p "$W/llvm-x86/lib/clang/22/include"
-if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out" 2> "$T/err"; then
+if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" "$T/out" 2> "$T/err"; then
   fail "staged with two clang resource dirs, picking one"
 fi
 grep -q 'lib/clang/21/include' "$T/err" && grep -q 'lib/clang/22/include' "$T/err" \
@@ -68,11 +82,12 @@ rm -r "$W/llvm-x86/lib/clang/22"
 
 echo "-- lays out exactly the payload, replacing an earlier one, leaving Library/ alone"
 mkdir -p "$T/out/usr/stale" "$T/out/Library/keep"
-SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out"
+SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" "$T/out"
 P=usr/local/mavergreen/swift-toolchain
 got="$(cd "$T/out" && find usr Library -type f | sort)"
 want="$(printf '%s\n' "$P/bin/clang" "$P/bin/clang.cfg" "$P/bin/clang++.cfg" "$P/bin/ld64.lld" "$P/bin/swift-frontend" "$P/bin/swiftc" \
   "$P/lib/clang/21/include/stdint.h" "$P/lib/clang/21/lib/darwin/libclang_rt.osx.a" \
+  "$P/lib/recaulk/librecaulk.a" "$P/lib/recaulk/notices.tsv" "$P/lib/recaulk/VERSION" \
   "$P/lib/swift/macosx/SwiftOnoneSupport.swiftmodule/x86_64-apple-macos.swiftmodule" \
   "$P/lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule" \
   "$P/lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule" \
@@ -96,6 +111,9 @@ $want"
 [ "$(cat "$T/out/$P/lib/clang/21/lib/darwin/libclang_rt.osx.a")" = builtins-x86/lib/darwin/libclang_rt.osx.a ] \
   || fail "lib/clang/21/lib/darwin/libclang_rt.osx.a is not build-builtins.sh's archive"
 [ "$(readlink "$T/out/$P/bin/clang++")" = clang ] || fail "bin/clang++ is not a link to clang"
+cmp -s "$W/recaulk/lib/librecaulk.a" "$T/out/$P/lib/recaulk/librecaulk.a" || fail "lib/recaulk/librecaulk.a is not --recaulk's archive"
+cmp -s "$W/recaulk/share/recaulk/notices.tsv" "$T/out/$P/lib/recaulk/notices.tsv" || fail "lib/recaulk/notices.tsv is not --recaulk's notices"
+[ "$(cat "$T/out/$P/lib/recaulk/VERSION")" = "$RECAULK_VERSION" ] || fail "lib/recaulk/VERSION is $(cat "$T/out/$P/lib/recaulk/VERSION"), not $RECAULK_VERSION"
 for c in clang.cfg clang++.cfg; do
   cmp -s "$REPO/toolchain/clang.cfg" "$T/out/$P/bin/$c" || fail "bin/$c is not toolchain/clang.cfg"
 done
@@ -111,7 +129,7 @@ for f in bin/swift-frontend share/swift/compatibility-symbols share/swift/diagno
   echo "other $f" > "$T/fe/$f"
 done
 echo "other archive" > "$T/other.a"
-SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --frontend "$T/fe" --stdlib "$T/out/$P/lib/swift" --builtins "$T/other.a" "$T/out2"
+SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" --frontend "$T/fe" --stdlib "$T/out/$P/lib/swift" --builtins "$T/other.a" "$T/out2"
 got="$(cd "$T/out2" && find usr -type f | sort)"
 [ "$got" = "$want" ] || fail "payload from a toolchain's stdlib is
 $got
@@ -131,37 +149,37 @@ cp -R "$T/out/$P/lib/swift" "$T/seedlib"
 rm -r "$T/seedlib/macosx/Darwin.swiftmodule" "$T/seedlib/macosx/ObjectiveC.swiftmodule" \
   "$T/seedlib/macosx/libswiftDarwin.dylib" "$T/seedlib/macosx/libswiftObjectiveC.dylib" \
   "$T/seedlib/macosx/_Concurrency.swiftmodule" "$T/seedlib/macosx/_Builtin_float.swiftmodule" "$T/seedlib/macosx/libswift_Concurrency.dylib"
-if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --stdlib "$T/seedlib" "$T/out-seed" 2> "$T/err"; then
+if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" --stdlib "$T/seedlib" "$T/out-seed" 2> "$T/err"; then
   fail "staged a stdlib without overlays, without --overlays-optional"
 fi
-SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --overlays-optional --stdlib "$T/seedlib" "$T/out-seed" > "$T/seed.log" 2>&1 \
+SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" --overlays-optional --stdlib "$T/seedlib" "$T/out-seed" > "$T/seed.log" 2>&1 \
   || fail "--overlays-optional refused a stdlib without overlays: $(cat "$T/seed.log")"
 [ -f "$T/out-seed/$P/lib/swift/macosx/libswiftCore.dylib" ] || fail "--overlays-optional staged no libswiftCore"
 [ -z "$(cd "$T/out-seed/$P" && find . -name '*Darwin*' -o -name '*ObjectiveC*' -o -name '*Concurrency*' -o -name '*Builtin_float*')" ] || fail "--overlays-optional staged an overlay it was not given"
-SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --overlays-optional --frontend "$T/fe" --stdlib "$T/out/$P/lib/swift" --builtins "$T/other.a" "$T/out-opt" \
+SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" --overlays-optional --frontend "$T/fe" --stdlib "$T/out/$P/lib/swift" --builtins "$T/other.a" "$T/out-opt" \
   || fail "--overlays-optional refused a stdlib with overlays"
 [ "$(cd "$T/out-opt" && find usr -type f | sort)" = "$want" ] || fail "--overlays-optional over a stdlib with overlays staged another payload"
 
 echo "-- refuses a --stdlib that is no stdlib, and an unknown option, before writing anything"
 mkdir -p "$T/notstdlib/macosx"
-if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --stdlib "$T/notstdlib" "$T/out3" 2> "$T/err"; then fail "staged from a dir that is no stdlib"; fi
+if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" --stdlib "$T/notstdlib" "$T/out3" 2> "$T/err"; then fail "staged from a dir that is no stdlib"; fi
 grep -q "$T/notstdlib is no stdlib" "$T/err" || fail "did not name the bad --stdlib: $(cat "$T/err")"
 [ ! -e "$T/out3" ] || fail "wrote $T/out3 before refusing the bad --stdlib"
-rc=0; SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --stdib "$T/out/$P/lib/swift" "$T/out4" 2>/dev/null || rc=$?
+rc=0; SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" --stdib "$T/out/$P/lib/swift" "$T/out4" 2>/dev/null || rc=$?
 [ "$rc" -eq 2 ] || fail "--stdib: exit $rc, not 2"
-rc=0; SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --stdlib "$T/out4" 2>/dev/null || rc=$?
+rc=0; SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" --stdlib "$T/out4" 2>/dev/null || rc=$?
 [ "$rc" -eq 2 ] || fail "--stdlib with no out-dir: exit $rc, not 2"
 [ ! -e "$T/out4" ] || fail "wrote $T/out4 on a usage error"
 
 echo "-- refuses an unknown STAGE_HOST before writing anything"
-rc=0; STAGE_HOST=x86 SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/bad" 2> "$T/err" || rc=$?
+rc=0; STAGE_HOST=x86 SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" "$T/bad" 2> "$T/err" || rc=$?
 [ "$rc" -eq 2 ] || fail "STAGE_HOST=x86: exit $rc, not 2"
 [ ! -e "$T/bad" ] || fail "STAGE_HOST=x86 wrote $T/bad before refusing"
 grep -q "not 'x86'" "$T/err" || fail "did not name the bad host: $(cat "$T/err")"
 
 echo "-- STAGE_HOST=arm64: the cross toolchain, from the arm64 build, with the native payload's stdlib, wrappers and cfgs"
 fake_toolchain_build "$W" arm64
-STAGE_HOST=arm64 SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/xout"
+STAGE_HOST=arm64 SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" "$T/xout"
 X=usr/local/mavergreen/swift-toolchain-cross
 got="$(cd "$T/xout" && find usr -type f | sort)"
 xwant="$(printf '%s\n' "$want" | sed "s|^$P/|$X/|" | sort)"

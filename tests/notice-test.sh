@@ -11,7 +11,10 @@
 #   MacPorts community's files) as its grant; time.c's header is its own grant (ISC-style), which asks
 #   for its copyright notices and itself in every copy.
 #   Each MacPorts member build.sh's RECAULK_NOTICES_REVIEWED vouches for (one Recaulk's notices list has
-#   no row for, since it is not APSL) must have its source named here.
+#   no row for, since it is not APSL) must have its source named here. The toolchain pkgs ship
+#   librecaulk.a whole (lib/recaulk), so NOTICE also carries the notices of its other APSL members
+#   (mp-fdopendir.o, mp-statxx.o, mp-utimensat.o) and utimensat.c's header, and names the source of each
+#   member build.sh's RECAULK_ARCHIVE_REVIEWED vouches for.
 #   A patch or a member added without its NOTICE entry once shipped unnamed.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -84,6 +87,24 @@ for m in $REV; do
   f="${m#mp-}"; f="src/${f%.o}.c"
   grep -q "$f" "$N" || fail "NOTICE does not name $f, the source of $m, which build.sh vouches for"
 done
+echo "-- the toolchains' whole librecaulk.a: its APSL members' notices, and each other MacPorts source named"
+grep -q "lib/recaulk/librecaulk.a" "$N" && grep -q "lib/recaulk/notices.tsv" "$N" \
+  || fail "NOTICE does not name the toolchains' lib/recaulk/librecaulk.a and its notices.tsv"
+for m in fdopendir statxx utimensat; do
+  c="src/atcalls.h (Copyright (c) 2013-2015 Apple Inc. All rights reserved.)"
+  [ "$m" = utimensat ] && c="src/utimensat.c (Copyright (c) 2006, 2017 Apple Computer, Inc. All rights reserved.)"
+  t="Recaulk member mp-$m.o is object code compiled from src/$m.c of MacPorts legacy-support and contains Covered Code from $c. Source Code of the Covered Code is available under the terms of the Apple Public Source License Version 2.0 (https://opensource.apple.com/apsl/) at"
+  case "$NF" in *"$t"*) ;; *) fail "NOTICE lacks Recaulk's notice for mp-$m.o: $t" ;; esac
+done
+grep -q "NOTICE: This file was modified in September 2020" "$N" || fail "NOTICE lacks utimensat.c's modification notice"
+REVA="$(sed -n 's/^RECAULK_ARCHIVE_REVIEWED="\([^"]*\)"$/\1/p' "$REPO/build.sh")"
+[ -n "$REVA" ] || fail "read no RECAULK_ARCHIVE_REVIEWED from build.sh"
+for m in $REVA; do
+  case "$m" in mp-*.o) ;; *) fail "RECAULK_ARCHIVE_REVIEWED names $m, not a MacPorts mp-*.o member" ;; esac
+  f="${m#mp-}"; f="src/${f%.o}.c"
+  grep -q "$f" "$N" || fail "NOTICE does not name $f, the source of $m, which build.sh vouches for"
+done
+
 echo "-- each Recaulk symbol build.sh links is named"
 # By its API's name, as a whole word (fma is not fmax): a \$V2-style suffix, escaped in build.sh, is the
 # SDK's binding, not the API's name.

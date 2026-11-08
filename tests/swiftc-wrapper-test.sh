@@ -4,7 +4,10 @@
 #   toolchain/swiftc must find its prefix through links -- the family link farm's relative one, an
 #   absolute one, a chain -- put the 10.9 defaults before the user's arguments, honour SDKROOT without
 #   fetching, ask the fetch for the SDK that has SDKSettings.json, and refuse to run on a failed SDK
-#   fetch or an SDK that is not a directory.
+#   fetch or an SDK that is not a directory. The driver's linker, libexec/mavergreen-swift/ld, must run
+#   ld64.lld with the toolchain's Recaulk archive (lib/recaulk/librecaulk.a) just before the driver's
+#   -lobjc and -lSystem, so that every program and dylib swiftc links defines the Recaulk fixes and
+#   back-fills it uses; leave a line without -lSystem as it was; and refuse to link without the archive.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -98,4 +101,55 @@ rm -f "$T/fetch-empty" "$T/frontend-ran"; rc=0
 SDKROOT="$T/no-such-sdk" "$P/bin/swiftc" x.swift > "$T/out" 2> "$T/err" || rc=$?
 [ "$rc" != 0 ] && [ ! -f "$T/frontend-ran" ] || fail "ran the compiler with SDKROOT naming no directory: $(cat "$T/out")"
 grep -q "no Mac OS X 10.9 SDK at '$T/no-such-sdk'" "$T/err" || fail "a missing SDKROOT was not explained: $(cat "$T/err")"
+
+echo "-- the driver's linker: Recaulk's archive before the driver's -lobjc -lSystem, nowhere else"
+cp "$REPO/toolchain/ld" "$P/libexec/mavergreen-swift/ld"; chmod +x "$P/libexec/mavergreen-swift/ld"
+cat > "$P/bin/ld64.lld" <<EOF
+#!/bin/sh
+: > "$T/lld-ran"
+for a in "\$@"; do echo "\$a"; done
+EOF
+chmod +x "$P/bin/ld64.lld"
+mkdir -p "$P/lib/recaulk"; : > "$P/lib/recaulk/librecaulk.a"
+RK="$P/lib/recaulk/librecaulk.a"
+LD="$P/libexec/mavergreen-swift/ld"
+# The swift driver's line for a program (-dylib for -emit-library): its objects, the user's inputs, the
+# builtins, -lobjc -lSystem, then the user's -L, -framework, -l and -Xlinker arguments.
+got="$("$LD" /t/p.o u.o rt.a -syslibroot /sdk -lobjc -lSystem -arch x86_64 -L mydir -framework Foo -lfoo -lSystem -XL -o main)"
+want="/t/p.o
+u.o
+rt.a
+-syslibroot
+/sdk
+$RK
+-lobjc
+-lSystem
+-arch
+x86_64
+-L
+mydir
+-framework
+Foo
+-lfoo
+-lSystem
+-XL
+-o
+main"
+[ "$got" = "$want" ] || fail "ld's argv is
+$got
+wanted
+$want"
+got="$("$LD" /t/p.o -dylib rt.a -syslibroot /sdk -lSystem -o libp.dylib | tr '\n' ' ')"
+[ "$got" = "/t/p.o -dylib rt.a -syslibroot /sdk $RK -lSystem -o libp.dylib " ] || fail "a dylib's link: $got"
+# A line without -lSystem is no program the driver links (ld -v, say): it reaches lld as it was.
+[ "$("$LD" -v | tr '\n' ' ')" = "-v " ] || fail "a line without -lSystem was changed: $("$LD" -v)"
+[ -z "$("$LD")" ] || fail "an empty line was changed: $("$LD")"
+# Through a link to the toolchain's libexec, the archive is still the toolchain's.
+ln -s "$LD" "$T/links/ld"
+"$T/links/ld" x.o -lSystem | grep -qxF -- "$RK" || fail "through a link, ld did not find $RK"
+rm -f "$T/lld-ran"; mv "$RK" "$T/rk-away"; rc=0
+"$LD" x.o -lSystem > "$T/out" 2> "$T/err" || rc=$?
+[ "$rc" != 0 ] && [ ! -f "$T/lld-ran" ] || fail "linked without the Recaulk archive: $(cat "$T/out")"
+grep -qF "no Recaulk archive at $RK" "$T/err" || fail "a missing archive was not explained: $(cat "$T/err")"
+mv "$T/rk-away" "$RK"
 echo "PASS"

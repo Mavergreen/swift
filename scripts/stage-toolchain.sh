@@ -1,6 +1,6 @@
 #!/bin/sh
 # platform: host-agnostic
-#   usage: [STAGE_HOST=x86_64|arm64] stage-toolchain.sh [--overlays-optional] [--frontend <dir>] [--stdlib <dir>] [--builtins <file>] <out-dir>
+#   usage: [STAGE_HOST=x86_64|arm64] stage-toolchain.sh [--overlays-optional] [--frontend <dir>] [--stdlib <dir>] [--builtins <file>] [--recaulk <prefix>] <out-dir>
 #          Lays out a toolchain .pkg's payload under <out-dir>/usr/local/mavergreen/<product> from this
 #          build: build-toolchain.sh --host $STAGE_HOST's lld, clang and clang's headers, and its compiler
 #          and helper outputs (--frontend: the swift build dir holding bin/swift-frontend and
@@ -9,6 +9,9 @@
 #          dylib ships nowhere) (--stdlib: a stdlib build's lib/swift, default build.sh's $SWIFT_WORK/stdlib-build/lib/swift, or a staged toolchain's
 #          lib/swift: CI's build job takes the cross toolchain pkg's, self-host.sh a stage's); compiler-rt's
 #          builtins (--builtins, default build-builtins.sh's archive), where that clang looks for them;
+#          Recaulk's librecaulk.a and its notices.tsv (--recaulk: a Recaulk prefix, default the one
+#          fetch-recaulk.sh prints), in lib/recaulk with its VERSION, which must be pins.env's
+#          RECAULK_VERSION (the ld wrapper links that archive into every program swiftc links);
 #          the swiftc and ld wrappers; shipyard's SDK fetcher and the two scripts it sources; clang's
 #          clang.cfg and clang++.cfg. STAGE_HOST x86_64 (the default) is the native toolchain,
 #          swift-toolchain; arm64 the cross toolchain, swift-toolchain-cross. Everything but what each
@@ -19,14 +22,15 @@
 #          stage it without them.
 #          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, STAGE_HOST.
 set -eu
-usage() { echo "usage: [STAGE_HOST=x86_64|arm64] stage-toolchain.sh [--overlays-optional] [--frontend <dir>] [--stdlib <dir>] [--builtins <file>] <out-dir>" >&2; exit 2; }
-FRONTEND=""; STDLIB=""; BUILTINS=""; OVERLAYS_OPTIONAL=""
+usage() { echo "usage: [STAGE_HOST=x86_64|arm64] stage-toolchain.sh [--overlays-optional] [--frontend <dir>] [--stdlib <dir>] [--builtins <file>] [--recaulk <prefix>] <out-dir>" >&2; exit 2; }
+FRONTEND=""; STDLIB=""; BUILTINS=""; RECAULK=""; OVERLAYS_OPTIONAL=""
 while [ $# -gt 1 ]; do
   case "$1" in
     --overlays-optional) OVERLAYS_OPTIONAL=1; shift ;;
     --frontend) FRONTEND="$2"; shift 2 ;;
     --stdlib) STDLIB="$2"; shift 2 ;;
     --builtins) BUILTINS="$2"; shift 2 ;;
+    --recaulk) RECAULK="$2"; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -36,6 +40,7 @@ case "$OUT" in --*) usage ;; esac
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 . "$HERE/scripts/outdir.sh"
 refuse_root_outdir stage-toolchain "$OUT"
+. "$HERE/pins.env"   # -> $RECAULK_VERSION
 . "$HERE/lib.sh"     # -> $SWIFT_BUILD, clang_resource_include, toolchain_host_select, stdlib_layout
 toolchain_host_select "${STAGE_HOST:-x86_64}" || exit 2
 . "$HERE/msc.sh"     # -> $SHIPYARD (fetch_sdk.sh, mavericks_fetch.sh, sdk-pins.sh)
@@ -75,10 +80,23 @@ for o in Darwin ObjectiveC _Concurrency _Builtin_float; do
   fi
 done
 
+# spec: INGREDIENTS.md "Recaulk in every program" -- the toolchain carries the Recaulk release pins.env
+#       names, the one the runtime's subsets come from, so both toolchains link the same bytes into every
+#       program; its pkg's mavergreen.plist says which release a prefix is.
+if [ -z "$RECAULK" ]; then
+  RECAULK="$(sh "$HERE/fetch-recaulk.sh")" || { echo "stage-toolchain: could not fetch Recaulk $RECAULK_VERSION" >&2; exit 1; }
+fi
+for f in lib/librecaulk.a share/recaulk/notices.tsv mavergreen.plist; do
+  [ -f "$RECAULK/$f" ] || { echo "stage-toolchain: no $RECAULK/$f -- is $RECAULK a Recaulk prefix?" >&2; exit 1; }
+done
+RK_V="$(sed -n '/<key>version<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' "$RECAULK/mavergreen.plist")"
+[ "$RK_V" = "$RECAULK_VERSION" ] || {
+  echo "stage-toolchain: $RECAULK is Recaulk ${RK_V:-of no version}, not pins.env's $RECAULK_VERSION" >&2; exit 1; }
+
 P="$OUT/usr/local/mavergreen/$TH_PRODUCT"
 rm -rf "$OUT/usr"
 CLANG_V="$(basename "$(dirname "$CLANG_INC")")"
-mkdir -p "$P/bin" "$P/libexec/mavergreen-swift" "$P/lib/swift/macosx" "$P/lib/clang/$CLANG_V/lib/darwin" \
+mkdir -p "$P/bin" "$P/libexec/mavergreen-swift" "$P/lib/swift/macosx" "$P/lib/clang/$CLANG_V/lib/darwin" "$P/lib/recaulk" \
   "$P/share/swift/diagnostics" "$P/share/doc"
 cp "$SB/bin/swift-frontend" "$P/bin/swift-frontend"
 cp "$LB/bin/lld" "$P/bin/ld64.lld"
@@ -103,6 +121,11 @@ cp -R "$CLANG_INC" "$P/lib/clang/$CLANG_V/include"
 # build.sh on OS X 10.9 links the runtime with these same bytes.
 cp "$BUILTINS" "$P/lib/clang/$CLANG_V/lib/darwin/libclang_rt.osx.a"
 ln -s "../clang/$CLANG_V" "$P/lib/swift/clang"
+# Where libexec/mavergreen-swift/ld finds the archive; notices.tsv beside it names the members whose
+# licence asks a program's author for a notice (NOTICE, "Recaulk in every program").
+cp "$RECAULK/lib/librecaulk.a" "$P/lib/recaulk/librecaulk.a"
+cp "$RECAULK/share/recaulk/notices.tsv" "$P/lib/recaulk/notices.tsv"
+echo "$RK_V" > "$P/lib/recaulk/VERSION"
 cp "$SB/share/swift/compatibility-symbols" "$P/share/swift/"
 for f in "$SB"/share/swift/diagnostics/*.db "$SB"/share/swift/diagnostics/*.strings \
          "$SB"/share/swift/diagnostics/*.yaml; do

@@ -132,7 +132,8 @@ CXX_LIBCXX="-nostdinc++ -isystem $CXXINC -ffile-prefix-map=$CXXINC=/mavergreen-l
 #       sign in a cancellation, Double.addingProduct at -Onone; fmal's rounding, Float80.addingProduct;
 #       truncl(-0) is +0, Float80.round(.towardZero)): Recaulk's are correct on every macOS, and
 #       libswiftCore is the one shipped dylib that imports any of them. Only libswiftCore's own calls reach
-#       them: a program's inlined stdlib code imports libSystem's. The whole archive would also
+#       these copies; a program's inlined stdlib code calls its own, which the toolchains' ld wrapper
+#       links into every program (toolchain/ld). The whole archive would also
 #       bind weak imports whose presence the runtime reads as "the OS has this" (os_signpost_enabled
 #       turns tracing on over a NULL os_log_create on 10.9), so lib.sh's recaulk_subset picks the members
 #       by symbol, and the link hides every global they define.
@@ -526,6 +527,15 @@ recaulk_notices_in() {
 recaulk_notices_in "$CORE" "$RECAULK_A"
 recaulk_notices_in "$DARWIN" "$RECAULK_DARWIN_A"
 recaulk_notices_in "$CONCURRENCY" "$RECAULK_CONC_A"
+# spec: INGREDIENTS.md "Recaulk in every program" -- both toolchain pkgs ship this librecaulk.a whole
+#       (stage-toolchain.sh's lib/recaulk), so NOTICE carries the notice of every APSL member in it (the
+#       archive's strings hold each one), and every other MacPorts member is named here, its source's
+#       licence read and carried in NOTICE (tests/notice-test.sh holds NOTICE to each name).
+RECAULK_ARCHIVE_REVIEWED="mp-clonefile.o mp-dirfuncs_compat.o mp-fmemopen.o mp-fsgetpath.o mp-getentropy.o mp-memstream.o mp-os_unfair_lock.o mp-pthread_chdir.o mp-pthread_get_stacksize_np.o mp-sysconf.o mp-time.o"
+_rna="$(AR="$X/llvm-ar"; RECAULK_NOTICES_REVIEWED="$RECAULK_ARCHIVE_REVIEWED"
+  recaulk_notices "$RECAULK_PREFIX/share/recaulk/notices.tsv" "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_PREFIX/lib/librecaulk.a" "$HERE/NOTICE")" \
+  || { echo "FAIL: NOTICE lacks the notice of an APSL member of librecaulk.a, which the toolchain pkgs ship, or a MacPorts member is unreviewed (named above)"; exit 1; }
+echo "    librecaulk.a, which the toolchain pkgs ship: its APSL members' notices in NOTICE: $(printf '%s' "$_rna" | tr '\n' ' ')"
 # spec: INGREDIENTS.md "The compiler's runtime table" -- libswift_Builtin_float is not shipped: 6.4's _Concurrency
 #       imports its module, and its $ld$previous sends a client below 10.14.4 to @rpath/libswiftDarwin.dylib for the
 #       float constants it declares. So every export it has (its force-load symbol and the $ld$ directives aside)
