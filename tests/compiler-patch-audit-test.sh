@@ -107,6 +107,11 @@ body 'bool ASTContext::isPkgsRuntimeModule(' | sed -n 's/.*\.Case("\([A-Za-z0-9_
 [ "$(echo $(cat "$T/modules"))" = "Swift SwiftOnoneSupport _Builtin_float _Concurrency" ] \
   || fail "isPkgsRuntimeModule names [$(echo $(cat "$T/modules"))], not the runtime pkg's Swift modules: Swift, _Concurrency, SwiftOnoneSupport, _Builtin_float"
 body 'bool ASTContext::isPkgsRuntimeModule(' | grep -q '\.Default(false);' || fail "isPkgsRuntimeModule does not default to false"
+body 'bool ASTContext::isPkgsRuntimeModule(' > "$T/modsw"
+[ "$(grep -c '\.Case(' "$T/modsw")" = 4 ] || fail "isPkgsRuntimeModule has other than 4 .Case( lines: $(cat "$T/modsw")"
+x="$(grep -o '\.[A-Za-z]*(' "$T/modsw" | grep -vxF -e '.Case(' -e '.Default(' || true)"
+[ -z "$x" ] || fail "isPkgsRuntimeModule's StringSwitch uses more than .Case and .Default(false): $(echo $x)"
+[ "$(grep -c '\.Default(' "$T/modsw")" = 1 ] || fail "isPkgsRuntimeModule has other than one .Default(: $(cat "$T/modsw")"
 body 'bool ASTContext::isPkgsRuntimeModule(' | grep -Eq '"(Darwin|ObjectiveC)"' && fail "isPkgsRuntimeModule names Darwin or ObjectiveC, whose availability is the OS's APIs'"
 body 'ASTContext::getPkgsRuntimeIntroduced(' > "$T/decl"
 [ -s "$T/decl" ] || fail "no getPkgsRuntimeIntroduced in $AV"
@@ -134,6 +139,7 @@ al="$(grep -n 'new (ctx)' "$T/ds" | tail -n 1 | cut -d: -f1)"
 [ -n "$al" ] && [ "$cl" -lt "$al" ] || fail "readAvailable_DECL_ATTR asks getPkgsRuntimeIntroduced after it makes the attribute"
 has_line "$T/ds" '      (domain.getPlatformKind() == PlatformKind::macOS ||' && has_line "$T/ds" '       domain.getPlatformKind() == PlatformKind::anyAppleOS)) {' \
   || fail "readAvailable_DECL_ATTR does not apply the rule on exactly macOS and anyAppleOS: $(cat "$T/ds")"
+has_line "$T/ds" '      Introduced = *moved;' || fail "readAvailable_DECL_ATTR does not take the moved version: $(cat "$T/ds")"
 has_line "$T/ds" '      domain = AvailabilityDomain::forPlatform(PlatformKind::macOS);' \
   || fail "readAvailable_DECL_ATTR does not make an anyAppleOS introduction macOS's when it moves it"
 
