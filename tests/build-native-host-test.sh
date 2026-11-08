@@ -126,7 +126,7 @@ cat > "$T/shipyard/fetch_product_pkg.sh" <<'F'
 #!/bin/sh
 for d in "$@"; do :; done
 case " $* " in
-  *" recaulk "*) mkdir -p "$d/lib" && : > "$d/lib/librecaulk.a" ;;
+  *" recaulk "*) mkdir -p "$d/lib" "$d/share/recaulk" && : > "$d/lib/librecaulk.a" && : > "$d/share/recaulk/notices.tsv" ;;
   *) mkdir -p "$d/lib" && : > "$d/lib/libc++.1.dylib" && : > "$d/lib/libc++abi.1.dylib" ;;
 esac
 F

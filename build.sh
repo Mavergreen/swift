@@ -421,6 +421,19 @@ recaulk_hidden() {
 # shellcheck disable=SC2086  # space-free symbol names
 recaulk_hidden "$CORE" "$RECAULK_UNX" $RECAULK_RUNTIME_SYMBOLS
 recaulk_hidden "$DARWIN" "$RECAULK_DARWIN_UNX" $RECAULK_DARWIN_SYMBOLS
+# spec: INGREDIENTS.md "Recaulk" -- APSL 2.0 section 2.3 wants the "source is available" notice in the code
+#       itself and in the documentation. Recaulk embeds it in each Apple-derived member and lists it in
+#       share/recaulk/notices.tsv: every dylib that links a Recaulk subset (libswiftCore and libswiftDarwin;
+#       the other two link none) must still carry the notice of each APSL member it links after our link
+#       (dead-stripping, -S, the unexported list), and NOTICE must carry it too (lib.sh's recaulk_notices).
+# recaulk_notices_in <dylib> <subset.a>
+recaulk_notices_in() {
+  _rni="$(AR="$X/llvm-ar"; recaulk_notices "$RECAULK_PREFIX/share/recaulk/notices.tsv" "$2" "$1" "$HERE/NOTICE")" \
+    || { echo "FAIL: ${1##*/} or NOTICE lacks the APSL notice of a Recaulk member it links (named above)"; exit 1; }
+  echo "    ${1##*/}: Recaulk's APSL notices in the code and in NOTICE: $(printf '%s' "${_rni:-none linked}" | tr '\n' ' ')"
+}
+recaulk_notices_in "$CORE" "$RECAULK_A"
+recaulk_notices_in "$DARWIN" "$RECAULK_DARWIN_A"
 #       The weak imports whose presence the runtime reads as the OS's answer stay the OS's (a
 #       whole-archive link would bind them, and os_signpost_enabled would turn tracing on over NULLs).
 for s in objc_realizeClassFromSwift os_signpost_enabled os_signpost_emit_with_name_impl availability_version_check; do
@@ -501,4 +514,4 @@ IMPORTS_SUP="$(DYLDINFO="$DYLDINFO" NM="${NM:-nm}" OTOOL="${OTOOL:-otool}" sh "$
   "$HERE/scripts/resources/weak-absent-on-10.9.txt" $SUPPORT_DYLIBS)" \
   || { printf '%s\n' "$IMPORTS_SUP"; echo "FAIL: a test-support library imports what OS X 10.9 lacks (listed above)"; exit 1; }
 printf '%s\n' "$IMPORTS_SUP"
-echo "OK: minOS $DEPLOYMENT; no os_unfair_lock; Recaulk's $RECAULK_RUNTIME_SYMBOLS (libswiftCore) and $RECAULK_DARWIN_SYMBOLS (libswiftDarwin) defined and hidden; no debug strings; no build paths; checked $(for lib in $SHIPPED_DYLIBS; do printf '%s ' "${lib##*/}"; done); staged in $OUT; no test support in it"
+echo "OK: minOS $DEPLOYMENT; no os_unfair_lock; Recaulk's $RECAULK_RUNTIME_SYMBOLS (libswiftCore) and $RECAULK_DARWIN_SYMBOLS (libswiftDarwin) defined and hidden; Recaulk's APSL notices in the code and NOTICE; no debug strings; no build paths; checked $(for lib in $SHIPPED_DYLIBS; do printf '%s ' "${lib##*/}"; done); staged in $OUT; no test support in it"

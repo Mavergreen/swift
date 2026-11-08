@@ -65,9 +65,23 @@ builds from two sources of MacPorts' legacy-support library
 (https://github.com/macports/macports-legacy-support, the commit Recaulk's
 components/macports-legacy-support/version pins). They keep their own licenses:
 
-  src/atcalls.c, under the Apple Public Source License 2.0, whose full text
-  ends this file. Its source is available under the terms of that license at
-  https://github.com/macports/macports-legacy-support (src/atcalls.c). Its notices:
+  src/atcalls.c, and src/atcalls.h, which MacPorts refactored out of it, under
+  the Apple Public Source License 2.0, whose full text ends this file. Recaulk's
+  notice for the member built from them (its notices.tsv), which libswiftDarwin
+  also carries in its code, as section 2.3 of that license asks:
+
+    Recaulk member mp-atcalls.o is object code compiled from src/atcalls.c of
+    MacPorts legacy-support and contains Covered Code from src/atcalls.c,
+    src/atcalls.h (Copyright (c) 2013-2015 Apple Inc. All rights reserved.).
+    Source Code of the Covered Code is available under the terms of the Apple
+    Public Source License Version 2.0 (https://opensource.apple.com/apsl/) at
+    https://github.com/macports/macports-legacy-support/blob/f89c155cbc2ca8714e4ada66c11b222353e8d87a/src/atcalls.c
+    and
+    https://github.com/macports/macports-legacy-support/blob/f89c155cbc2ca8714e4ada66c11b222353e8d87a/src/atcalls.h.
+    Recaulk's own source, which builds this member, is with each Recaulk release
+    at https://github.com/Mavergreen/recaulk/releases
+
+  The notices of src/atcalls.c:
 
     Copyright (c) 2013-2015 Apple Inc. All rights reserved.
     Copyright (C) 2023 raf <raf@raf.org>
@@ -89,6 +103,14 @@ components/macports-legacy-support/version pins). They keep their own licenses:
 
     NOTICE: This file was modified in November 2018 to allow
     for use as a supporting file for MacPorts legacy support library. This notice
+    is included in support of clause 2.2 (b) of the Apple Public License,
+    Version 2.0.
+
+  src/atcalls.h carries the same copyright and license header, and:
+
+    NOTICE: This chunk of header was refactored from the above Apple-supplied
+    file, atcalls.c.  The relevant part of that header was moved here for use
+    as a supporting file for MacPorts legacy support library. This notice
     is included in support of clause 2.2 (b) of the Apple Public License,
     Version 2.0.
 
@@ -189,7 +211,7 @@ package's. Both toolchain packages also carry bin/clang.cfg and
 bin/clang++.cfg, this repo's defaults for their clang.
 
 
-=== The Apple Public Source License, Version 2.0 (src/atcalls.c above) ===
+=== The Apple Public Source License, Version 2.0 (src/atcalls.c and src/atcalls.h above) ===
 
 APPLE PUBLIC SOURCE LICENSE
 Version 2.0 - August 6, 2003

@@ -409,6 +409,33 @@ recaulk_subset() {
   rm -rf "$_rs_t"
 }
 
+# recaulk_notices <notices.tsv> <subset.a> <dylib> <NOTICE> -- APSL 2.0 section 2.3 asks for the "source is
+# available" notice in the code itself and in the documentation. Recaulk embeds it in each Apple-derived
+# member (a no-dead-strip __TEXT,__recaulk_apsl string) and lists it in notices.tsv, whose columns are
+# artifact, member, licence, covered-files, copyright, source-urls, notice. For each member of <subset.a>
+# (recaulk_subset's pick) that the tsv lists under librecaulk.a with an APSL licence, the notice must be in
+# <dylib>'s strings (${STRINGS:-strings} -a), so it survived the link, and in <NOTICE> with its whitespace
+# folded, as NOTICE wraps it. Prints each member it checked, one per line; fails naming the file and the
+# member that lacks its notice, and on a tsv with other columns. ${AR:-ar} lists the archive.
+recaulk_notices() {
+  _rn_tsv="$1"; _rn_a="$2"; _rn_lib="$3"; _rn_doc="$4"
+  [ -f "$_rn_tsv" ] || { echo "recaulk_notices: no $_rn_tsv" >&2; return 1; }
+  [ "$(sed -n 1p "$_rn_tsv")" = "$(printf '# artifact\tmember\tlicence\tcovered-files\tcopyright\tsource-urls\tnotice')" ] \
+    || { echo "recaulk_notices: $_rn_tsv does not have the columns artifact, member, licence, covered-files, copyright, source-urls, notice" >&2; return 1; }
+  _rn_m="$("${AR:-ar}" t "$_rn_a" | grep -v '^__\.SYMDEF')" || { echo "recaulk_notices: ${AR:-ar} could not list $_rn_a" >&2; return 1; }
+  _rn_s="$("${STRINGS:-strings}" -a "$_rn_lib")" || { echo "recaulk_notices: ${STRINGS:-strings} could not read $_rn_lib" >&2; return 1; }
+  _rn_d="$(tr -s ' \t\n' '   ' < "$_rn_doc")" || return 1
+  _rn_bad=0
+  for _rn_x in $_rn_m; do
+    _rn_n="$(awk -F '\t' -v m="$_rn_x" 'NR > 1 && $1 == "librecaulk.a" && $2 == m && $3 ~ /^APSL/ { print $7; f = 1 } END { exit !f }' "$_rn_tsv")" || continue
+    [ -n "$_rn_n" ] || { echo "recaulk_notices: $_rn_tsv gives APSL member $_rn_x no notice" >&2; _rn_bad=1; continue; }
+    echo "$_rn_x"
+    printf '%s\n' "$_rn_s" | grep -qF -- "$_rn_n" || { echo "recaulk_notices: $_rn_lib lacks the notice of $_rn_x, which it links" >&2; _rn_bad=1; }
+    case "$_rn_d" in *"$_rn_n"*) ;; *) echo "recaulk_notices: $_rn_doc lacks the notice of $_rn_x" >&2; _rn_bad=1 ;; esac
+  done
+  [ "$_rn_bad" -eq 0 ]
+}
+
 # macho_minos <macho> -- the minimum macOS <macho> records: macho_version's first word. Prints nothing when
 # the file records neither.
 macho_minos() {

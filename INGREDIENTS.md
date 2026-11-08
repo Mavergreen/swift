@@ -96,6 +96,16 @@ it once left bare (clang's block helpers in its dispatch member, legacy-support'
 `recaulk_subset` has no list of exceptions and a stray global is a request to Recaulk. Step 7 checks
 libswiftDarwin as it does libswiftCore: `openat` defined in it, exported by nothing, and no longer an import.
 
+`atcalls.c` is Apple's code under the APSL 2.0, whose section 2.3 asks for the "source is available"
+notice "in the code itself as well as in related documentation". Since 20261108.3 Recaulk compiles that
+notice into each Apple-derived member, as a string the linker may not dead-strip, and lists it in
+`share/recaulk/notices.tsv` (the same file as the release's `recaulk-notices.tsv`, verified with the pkg by
+the release's `SHA256SUMS`). Step 7 holds every dylib that links a Recaulk subset to it (`lib.sh`'s
+`recaulk_notices`): each member the subset links that the tsv lists under the APSL must still have its
+notice in the dylib's strings after our link, and in `NOTICE`, whitespace aside. Today that is
+libswiftDarwin's `mp-atcalls.o`; libswiftCore links only Recaulk's own ISC code. A bump that pulls in
+another APSL member fails the build until `NOTICE` carries its notice too.
+
 Step 7 also holds every dylib it ships, and the test-support libraries, to what OS X 10.9 has
 (`scripts/imports-on-10.9.sh`): each symbol imported from `/usr/lib` or a framework must be exported by
 that library's stub in the 10.9 SDK, or be weak and listed in `scripts/resources/weak-absent-on-10.9.txt`

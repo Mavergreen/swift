@@ -33,6 +33,16 @@ grep -q "Copyright (C) 2023 raf <raf@raf.org>" "$N" || fail "NOTICE lacks atcall
 grep -q "https://github.com/macports/macports-legacy-support" "$N" || fail "NOTICE does not say where atcalls.c's source is (APSL 2.0 section 2.3)"
 grep -q "^APPLE PUBLIC SOURCE LICENSE$" "$N" && grep -q "^Version 2.0 - August 6, 2003$" "$N" \
   || fail "NOTICE does not carry the APSL 2.0's text"
+# Recaulk's notices.tsv row for mp-atcalls.o: its notice, which libswiftDarwin also carries in its code,
+# names atcalls.h too and the commit-pinned sources. build.sh's step 7 holds NOTICE to the tsv's very
+# text (lib.sh's recaulk_notices); this keeps the hand-edited lines from going missing between builds.
+NF="$(tr -s ' \t\n' '   ' < "$N")"
+LS="https://github.com/macports/macports-legacy-support/blob/f89c155cbc2ca8714e4ada66c11b222353e8d87a/src"
+for t in "Recaulk member mp-atcalls.o is object code compiled from src/atcalls.c of MacPorts legacy-support" \
+         "contains Covered Code from src/atcalls.c, src/atcalls.h" "$LS/atcalls.c and $LS/atcalls.h." \
+         "This chunk of header was refactored from the above Apple-supplied file, atcalls.c."; do
+  case "$NF" in *"$t"*) ;; *) fail "NOTICE lacks Recaulk's atcalls notice text: $t" ;; esac
+done
 grep -q "src/pthread_chdir.c" "$N" || fail "NOTICE does not name MacPorts' pthread_chdir.c"
 grep -q "Copyright (c) 2025 Frederick H. G. Wright II <fw@fwright.net>" "$N" || fail "NOTICE lacks pthread_chdir.c's copyright"
 grep -q "Copyright (c) 2018-2025 Chris Jones, Michael Dickens" "$N" && grep -q "are under the MIT License" "$N" \
