@@ -426,6 +426,10 @@ recaulk_hidden "$DARWIN" "$RECAULK_DARWIN_UNX" $RECAULK_DARWIN_SYMBOLS
 #       share/recaulk/notices.tsv: every dylib that links a Recaulk subset (libswiftCore and libswiftDarwin;
 #       the other two link none) must still carry the notice of each APSL member it links after our link
 #       (dead-stripping, -S, the unexported list), and NOTICE must carry it too (lib.sh's recaulk_notices).
+#       The tsv lists only APSL members, so a linked MacPorts mp-* member without a row passes only when
+#       named here, its licence read and carried in NOTICE: pthread_chdir.c is under legacy-support's MIT
+#       LICENSE (tests/notice-test.sh holds NOTICE to each name).
+RECAULK_NOTICES_REVIEWED="mp-pthread_chdir.o"
 # recaulk_notices_in <dylib> <subset.a>
 recaulk_notices_in() {
   _rni="$(AR="$X/llvm-ar"; recaulk_notices "$RECAULK_PREFIX/share/recaulk/notices.tsv" "$2" "$1" "$HERE/NOTICE")" \

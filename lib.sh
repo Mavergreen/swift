@@ -415,8 +415,13 @@ recaulk_subset() {
 # artifact, member, licence, covered-files, copyright, source-urls, notice. For each member of <subset.a>
 # (recaulk_subset's pick) that the tsv lists under librecaulk.a with an APSL licence, the notice must be in
 # <dylib>'s strings (${STRINGS:-strings} -a), so it survived the link, and in <NOTICE> with its whitespace
-# folded, as NOTICE wraps it. Prints each member it checked, one per line; fails naming the file and the
-# member that lacks its notice, and on a tsv with other columns. ${AR:-ar} lists the archive.
+# folded, as NOTICE wraps it. Recaulk lists only its APSL members, so a linked member with no row is
+# accepted only if it is Recaulk's own code; a linked mp-* member (built from MacPorts legacy-support,
+# where Apple's files live) with no librecaulk.a row at all fails unless RECAULK_NOTICES_REVIEWED, a
+# space-separated list of whole member names, says someone read its source's licence and NOTICE covers
+# it: an Apple-derived member Recaulk forgot to list would otherwise ship with no notice anywhere.
+# Prints each APSL member it checked, one per line; fails naming the file and the member at fault, on
+# a tsv with other columns, and on a file it cannot read. ${AR:-ar} lists the archive.
 recaulk_notices() {
   _rn_tsv="$1"; _rn_a="$2"; _rn_lib="$3"; _rn_doc="$4"
   [ -f "$_rn_tsv" ] || { echo "recaulk_notices: no $_rn_tsv" >&2; return 1; }
@@ -424,10 +429,21 @@ recaulk_notices() {
     || { echo "recaulk_notices: $_rn_tsv does not have the columns artifact, member, licence, covered-files, copyright, source-urls, notice" >&2; return 1; }
   _rn_m="$("${AR:-ar}" t "$_rn_a" | grep -v '^__\.SYMDEF')" || { echo "recaulk_notices: ${AR:-ar} could not list $_rn_a" >&2; return 1; }
   _rn_s="$("${STRINGS:-strings}" -a "$_rn_lib")" || { echo "recaulk_notices: ${STRINGS:-strings} could not read $_rn_lib" >&2; return 1; }
-  _rn_d="$(tr -s ' \t\n' '   ' < "$_rn_doc")" || return 1
+  [ -f "$_rn_doc" ] || { echo "recaulk_notices: no $_rn_doc" >&2; return 1; }
+  _rn_d="$(tr -s ' \t\n' '   ' < "$_rn_doc")" || { echo "recaulk_notices: could not read $_rn_doc" >&2; return 1; }
   _rn_bad=0
   for _rn_x in $_rn_m; do
-    _rn_n="$(awk -F '\t' -v m="$_rn_x" 'NR > 1 && $1 == "librecaulk.a" && $2 == m && $3 ~ /^APSL/ { print $7; f = 1 } END { exit !f }' "$_rn_tsv")" || continue
+    _rn_n="$(awk -F '\t' -v m="$_rn_x" 'NR > 1 && $1 == "librecaulk.a" && $2 == m && $3 ~ /^APSL/ { print $7; f = 1 } END { exit !f }' "$_rn_tsv")" || {
+      case "$_rn_x" in
+        mp-*)
+          awk -F '\t' -v m="$_rn_x" 'NR > 1 && $1 == "librecaulk.a" && $2 == m { f = 1 } END { exit !f }' "$_rn_tsv" \
+            || case " ${RECAULK_NOTICES_REVIEWED:-} " in
+                 *" $_rn_x "*) ;;
+                 *) echo "recaulk_notices: $_rn_x is MacPorts legacy-support's and $_rn_tsv has no row for it: read its source's licence, then ask Recaulk to list it (APSL) or name it in RECAULK_NOTICES_REVIEWED with NOTICE covering it" >&2; _rn_bad=1 ;;
+               esac ;;
+      esac
+      continue
+    }
     [ -n "$_rn_n" ] || { echo "recaulk_notices: $_rn_tsv gives APSL member $_rn_x no notice" >&2; _rn_bad=1; continue; }
     echo "$_rn_x"
     printf '%s\n' "$_rn_s" | grep -qF -- "$_rn_n" || { echo "recaulk_notices: $_rn_lib lacks the notice of $_rn_x, which it links" >&2; _rn_bad=1; }

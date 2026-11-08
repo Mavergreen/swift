@@ -8,7 +8,10 @@
 #   tsv lists under librecaulk.a with an APSL licence it requires the notice in the dylib's strings and,
 #   whitespace aside, in NOTICE. On fixtures: it passes with both present, names the member when the
 #   dylib or NOTICE lacks the notice, ignores members it does not link, rows of other artifacts and
-#   non-APSL rows, and refuses a tsv whose columns are not the ones it reads.
+#   non-APSL rows, and refuses a tsv whose columns are not the ones it reads, and a file it cannot read.
+#   A linked mp-* member (MacPorts legacy-support's) with no row at all is refused unless
+#   RECAULK_NOTICES_REVIEWED names it whole: Recaulk lists only its APSL members, so an Apple-derived
+#   member it forgot would otherwise pass with no notice anywhere. Recaulk's own members need no row.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -66,4 +69,30 @@ grep -q "columns" "$T/err" || fail "did not say the columns are wrong: $(cat "$T
 if recaulk_notices "$T/empty.tsv" "$T/sub.a" "$T/with.dylib" "$T/NOTICE" > /dev/null 2> "$T/err"; then fail "accepted an APSL row with no notice"; fi
 grep -q "mp-a.o" "$T/err" || fail "did not name mp-a.o's empty notice: $(cat "$T/err")"
 if recaulk_notices "$T/none.tsv" "$T/sub.a" "$T/with.dylib" "$T/NOTICE" > /dev/null 2>&1; then fail "accepted a missing tsv"; fi
+
+echo "-- refused, naming what it could not read: a missing archive, dylib or NOTICE"
+if recaulk_notices "$T/notices.tsv" "$T/none.a" "$T/with.dylib" "$T/NOTICE" > /dev/null 2> "$T/err"; then fail "accepted a missing archive"; fi
+grep -q "none.a" "$T/err" || fail "did not name the missing archive: $(cat "$T/err")"
+# plain.a links no APSL member, so only the read itself can fail these: no notice is looked for.
+if recaulk_notices "$T/notices.tsv" "$T/plain.a" "$T/none.dylib" "$T/NOTICE" > /dev/null 2> "$T/err"; then fail "accepted a missing dylib"; fi
+grep -q "none.dylib" "$T/err" || fail "did not name the missing dylib: $(cat "$T/err")"
+if recaulk_notices "$T/notices.tsv" "$T/plain.a" "$T/with.dylib" "$T/NOTICE-none" > /dev/null 2> "$T/err"; then fail "accepted a missing NOTICE"; fi
+grep -q "NOTICE-none" "$T/err" || fail "did not name the missing NOTICE: $(cat "$T/err")"
+
+echo "-- a linked MacPorts-derived mp-* member with no row is refused unless RECAULK_NOTICES_REVIEWED names it"
+o mp-u 'int u(void) { return 4; }'
+( cd "$T" && ar rcs unlisted.a fwd-1.o mp-u.o ) || fail "cannot build unlisted.a"
+if ( unset RECAULK_NOTICES_REVIEWED; recaulk_notices "$T/notices.tsv" "$T/unlisted.a" "$T/without.dylib" "$T/NOTICE-short" ) > /dev/null 2> "$T/err"; then
+  fail "accepted mp-u.o, which the notices list has no row for"
+fi
+grep -q "mp-u.o" "$T/err" || fail "did not name mp-u.o: $(cat "$T/err")"
+grep -q "fwd-1.o" "$T/err" && fail "refused fwd-1.o, a Recaulk member, for having no row: $(cat "$T/err")"
+out="$(RECAULK_NOTICES_REVIEWED="mp-x.o mp-u.o"; export RECAULK_NOTICES_REVIEWED
+       recaulk_notices "$T/notices.tsv" "$T/unlisted.a" "$T/without.dylib" "$T/NOTICE-short")" \
+  || fail "refused mp-u.o although RECAULK_NOTICES_REVIEWED names it"
+[ -z "$out" ] || fail "checked '$out' for a reviewed, non-APSL member"
+if ( RECAULK_NOTICES_REVIEWED="mp-u"; export RECAULK_NOTICES_REVIEWED
+     recaulk_notices "$T/notices.tsv" "$T/unlisted.a" "$T/without.dylib" "$T/NOTICE-short" ) > /dev/null 2>&1; then
+  fail "RECAULK_NOTICES_REVIEWED matched mp-u.o by a prefix, not as a whole name"
+fi
 echo "PASS"

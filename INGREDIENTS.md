@@ -104,7 +104,11 @@ the release's `SHA256SUMS`). Step 7 holds every dylib that links a Recaulk subse
 `recaulk_notices`): each member the subset links that the tsv lists under the APSL must still have its
 notice in the dylib's strings after our link, and in `NOTICE`, whitespace aside. Today that is
 libswiftDarwin's `mp-atcalls.o`; libswiftCore links only Recaulk's own ISC code. A bump that pulls in
-another APSL member fails the build until `NOTICE` carries its notice too.
+another APSL member fails the build until `NOTICE` carries its notice too. The tsv lists only APSL
+members, so a linked MacPorts `mp-*` member with no row fails too, unless `build.sh`'s
+`RECAULK_NOTICES_REVIEWED` names it: someone read its source's licence and `NOTICE` carries it
+(`tests/notice-test.sh` holds `NOTICE` to each name). Today that is `mp-pthread_chdir.o`, under
+legacy-support's MIT LICENSE. An Apple-derived member Recaulk forgot to list cannot pass silently.
 
 Step 7 also holds every dylib it ships, and the test-support libraries, to what OS X 10.9 has
 (`scripts/imports-on-10.9.sh`): each symbol imported from `/usr/lib` or a framework must be exported by

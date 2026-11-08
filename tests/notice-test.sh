@@ -7,6 +7,8 @@
 #   openat) are MacPorts legacy-support's sources, which keep their own licences: atcalls.c's APSL 2.0
 #   asks for its notices, its licence text and where its source is; pthread_chdir.c's header is no grant, so NOTICE carries legacy-support's LICENSE (MIT for the
 #   MacPorts community's files) as its grant.
+#   Each MacPorts member build.sh's RECAULK_NOTICES_REVIEWED vouches for (one Recaulk's notices list has
+#   no row for, since it is not APSL) must have its source named here.
 #   A patch or a member added without its NOTICE entry once shipped unnamed.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -49,6 +51,16 @@ grep -q "Copyright (c) 2018-2025 Chris Jones, Michael Dickens" "$N" && grep -q "
   && grep -q "The above copyright notice and this permission notice shall be included in all" "$N" \
   || fail "NOTICE lacks legacy-support's LICENSE, the grant for pthread_chdir.c"
 
+echo "-- each MacPorts member build.sh's RECAULK_NOTICES_REVIEWED vouches for has its source named in NOTICE"
+# Recaulk's notices list has rows only for APSL members; step 7 accepts a linked mp-* member without one
+# only when this list names it, so NOTICE must carry that member's own licence (mp-X.o is src/X.c).
+REV="$(sed -n 's/^RECAULK_NOTICES_REVIEWED="\([^"]*\)"$/\1/p' "$REPO/build.sh")"
+[ -n "$REV" ] || fail "read no RECAULK_NOTICES_REVIEWED from build.sh"
+for m in $REV; do
+  case "$m" in mp-*.o) ;; *) fail "RECAULK_NOTICES_REVIEWED names $m, not a MacPorts mp-*.o member" ;; esac
+  f="${m#mp-}"; f="src/${f%.o}.c"
+  grep -q "$f" "$N" || fail "NOTICE does not name $f, the source of $m, which build.sh vouches for"
+done
 echo "-- each Recaulk symbol build.sh links is named"
 for s in $(sed -En 's/^RECAULK_(RUNTIME|DARWIN)_SYMBOLS="([^"]*)"$/\2/p' "$REPO/build.sh"); do
   grep -q "${s#_}" "$N" || fail "NOTICE does not name Recaulk's ${s#_}, which build.sh links"
