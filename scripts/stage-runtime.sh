@@ -4,7 +4,7 @@
 #          Lays out the runtime .pkg's payload under <out-dir>: libswiftCore.dylib,
 #          libswiftSwiftOnoneSupport.dylib, libswiftDarwin.dylib and libswiftObjectiveC.dylib (the
 #          overlays every program importing Darwin or ObjectiveC loads) and libswift_Concurrency.dylib (every program
-#          swiftc builds loads it, as swiftc imports _Concurrency implicitly) from <built-lib-dir> in
+#          that uses Concurrency loads it; swiftc imports _Concurrency implicitly) from <built-lib-dir> in
 #          usr/local/mavergreen/swift-runtime/lib/swift/, with libswiftCompatibilitySpan.dylib beside them
 #          as a link to libswiftCore.dylib, and <license-file> as
 #          usr/local/mavergreen/swift-runtime/share/doc/LICENSE.txt, and <notice-file> beside it as NOTICE (it

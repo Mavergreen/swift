@@ -61,10 +61,12 @@ if [ "$PRODUCT" = swift-toolchain ]; then
   CLANG22_VERSION="$(sed -n 's/^CLANG22_VERSION="\([^"]*\)".*/\1/p' "$HERE/pins.env")"
   [ -n "$CLANG22_VERSION" ] || { echo "no CLANG22_VERSION in $HERE/pins.env" >&2; exit 1; }
   set -- "$@" --requires "libcxx22>=$CLANG22_VERSION"
-  # spec: INGREDIENTS.md "The compiler's runtime table" -- every program this toolchain builds imports _Concurrency (swiftc
-  #       does it implicitly) and links @rpath/libswift_Concurrency.dylib, and one that imports Darwin or
-  #       ObjectiveC their overlays' dylibs, all of which the runtime pkg built beside this toolchain
-  #       carries and no earlier one does. So the minimum is this pkg's own version, read here and never
+  # spec: INGREDIENTS.md "The compiler's runtime table" -- below 10.14.4 compiler patch 0003 lets a program
+  #       this toolchain builds for 10.9 strongly import whatever the runtime pkg built beside it provides:
+  #       libswift_Concurrency.dylib (a program that uses Concurrency links it), the
+  #       libswiftCompatibilitySpan.dylib link, Core's newer entry points, the overlays' dylibs. An earlier
+  #       runtime lacks some of them, and the program then fails to load, so it needs that runtime or
+  #       newer. So the minimum is this pkg's own version, read here and never
   #       written down: the release's tag is the runtime's and the toolchain's both. The cross toolchain's
   #       users install the runtime on their 10.9 Mac, where no pkg can ask, so the release notes say it
   #       (release-notes/swift-runtime/notice, which opens every release's notes: the requirement

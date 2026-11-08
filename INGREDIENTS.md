@@ -167,9 +167,12 @@ needs a runtime that has it, and an app that bundles our runtime must bundle the
 and `_Builtin_float.swiftmodule` and `libswift_Concurrency.dylib`, the runtime pkg that dylib alone. `_Builtin_float`
 is a module only. Its dylib is a stub whose every export (but its force-load symbol) libswiftDarwin
 defines, so no pkg ships it and no program links it; step 7 checks that, so a Darwin that lost a symbol fails
-the build, not a client. A program built by these toolchains links `@rpath/libswift_Concurrency.dylib`,
-so a toolchain pkg requires the runtime pkg of its own release or later, not the earlier runtime that had
-Darwin and ObjectiveC alone. `-disable-implicit-string-processing-module-import` stays: `_StringProcessing` ships nowhere.
+the build, not a client. Below 10.14.4 the rule above lets a program built for 10.9 strongly import
+whatever this release's runtime pkg provides: `libswift_Concurrency.dylib`, which a program that uses
+Concurrency links (one that does not, a plain or Darwin or ObjectiveC program, links no Concurrency even
+though swiftc imports the module), the Span link, Core's newer entry points. On an earlier runtime such a
+program fails to load, so it needs this release's runtime or newer, and a toolchain pkg requires the runtime
+pkg of its own release or later. `-disable-implicit-string-processing-module-import` stays: `_StringProcessing` ships nowhere.
 Every feature's class, with the symbol it needs and the compiler code that reads it, and the declaration
 rule, are in `patches/compiler/0003-AUDIT.md`, and `tests/compiler-patch-audit-test.sh` holds the patch to
 them. The proof programs are `tests/typed_throws_test.swift`, `tests/parameter_packs_test.swift` and

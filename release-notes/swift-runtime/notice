@@ -1,1 +1,1 @@
-The OS X 10.9 toolchain requires the swift-runtime of the same version, and programs built with either toolchain need that runtime to run.
+The OS X 10.9 toolchain requires the swift-runtime of the same version or later; programs either toolchain builds may use what it adds, and then need it to run.
