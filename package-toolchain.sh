@@ -67,7 +67,8 @@ if [ "$PRODUCT" = swift-toolchain ]; then
   #       carries and no earlier one does. So the minimum is this pkg's own version, read here and never
   #       written down: the release's tag is the runtime's and the toolchain's both. The cross toolchain's
   #       users install the runtime on their 10.9 Mac, where no pkg can ask, so the release notes say it
-  #       (requires/swift-runtime).
+  #       (requires/swift-runtime), which scripts/check-runtime-requires-note.sh makes release.yml's version
+  #       job demand, for the version being released, before anything builds.
   set -- "$@" --requires "swift-runtime>=$VERSION"
 fi
 if [ -d "$UPD_APP" ]; then
