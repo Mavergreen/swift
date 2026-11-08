@@ -89,12 +89,12 @@ the stdlib build's stamped inputs, so a Recaulk bump starts that build afresh. R
 libswiftDarwin takes a subset of the same archive the same way, for `openat` (macOS 10.10): the overlay
 calls it, so on 10.9 it would be a strong import that fails to load. `build.sh` links `recaulk_subset`'s
 pick into libswiftDarwin and hides every global it defines, so the dylib exports what the overlay sources
-define and nothing of Recaulk's. The members that define `openat` also define macports-legacy-support's
-`___mpls_*` globals, and Recaulk's dispatch members clang's `___copy_helper_block_*` and
-`___destroy_helper_block_*`; `recaulk_subset` refuses a member that defines any other API unless
-`RECAULK_ALSO_HIDE` (build.sh's `RECAULK_INCIDENTAL`) names those incidental globals, and they are hidden
-too. That is a workaround until Recaulk makes them private itself. Step 7 checks libswiftDarwin as it does
-libswiftCore: `openat` defined in it, exported by nothing, and no longer an import.
+define and nothing of Recaulk's. Its members are Recaulk's forwarder and resolver and two files of
+macports-legacy-support, `atcalls.c` (under the APSL 2.0) and `pthread_chdir.c` (MIT). Every global they
+define is `openat` or `___recaulk_`-prefixed: since 20261108.3 Recaulk also prefixes the incidental globals
+it once left bare (clang's block helpers in its dispatch member, legacy-support's `best_fchdir`), so
+`recaulk_subset` has no list of exceptions and a stray global is a request to Recaulk. Step 7 checks
+libswiftDarwin as it does libswiftCore: `openat` defined in it, exported by nothing, and no longer an import.
 
 Step 7 also holds every dylib it ships, and the test-support libraries, to what OS X 10.9 has
 (`scripts/imports-on-10.9.sh`): each symbol imported from `/usr/lib` or a framework must be exported by

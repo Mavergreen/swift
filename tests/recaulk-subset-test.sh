@@ -6,9 +6,10 @@
 #   ___recaulk_resolve), by symbol, never the rest. On a fixture shaped like Recaulk's (fwd-N.o forwarders,
 #   their bodies, the resolver, an unasked-for API), it must pick exactly the closure, list every global it
 #   defines for -unexported_symbols_list, write the same bytes whatever the members' order in the input,
-#   and refuse a name no member defines or a member that defines an API nobody asked for. A caller may
-#   name incidental globals (clang's block helpers) in RECAULK_ALSO_HIDE: they are accepted and hidden,
-#   and nothing else is.
+#   and refuse a name no member defines or a member that defines an API nobody asked for. Every global a
+#   picked member defines is a named API or ___recaulk_-prefixed; there is no list of exceptions (Recaulk
+#   prefixes its incidental globals, clang's block helpers among them, since 20261108.3), so a stray
+#   global is refused even when the retired RECAULK_ALSO_HIDE is set.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -54,15 +55,17 @@ grep -q 'no member defines _nonesuch' "$T/err" || fail "did not name _nonesuch: 
 if recaulk_subset "$T/in.a" "$T/x.a" "$T/x.unx" _api_three 2> "$T/err"; then fail "accepted greedy.o's _api_four"; fi
 grep -q 'greedy.o also defines _api_four' "$T/err" || fail "did not name _api_four: $(cat "$T/err")"
 rc=0; recaulk_subset "$T/in.a" "$T/x.a" "$T/x.unx" 2>/dev/null || rc=$?; [ "$rc" -eq 2 ] || fail "no symbols: exit $rc, not 2"
-echo "-- incidental globals: refused unless the caller names them, and then hidden"
-INC='^___(copy|destroy)_helper_block_|^___mpls_'
-if ( unset RECAULK_ALSO_HIDE; recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk ) 2> "$T/err"; then fail "accepted fwd-blk.o's block helper without RECAULK_ALSO_HIDE"; fi
+echo "-- an incidental global without the ___recaulk_ prefix is refused, whatever RECAULK_ALSO_HIDE says"
+if ( unset RECAULK_ALSO_HIDE; recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk ) 2> "$T/err"; then fail "accepted fwd-blk.o's block helper"; fi
 grep -q '___copy_helper_block_8_32b' "$T/err" || fail "did not name ___copy_helper_block_8_32b: $(cat "$T/err")"
-( RECAULK_ALSO_HIDE="$INC"; export RECAULK_ALSO_HIDE; recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk ) || fail "refused incidental globals with RECAULK_ALSO_HIDE"
-for g in ___copy_helper_block_8_32b ___mpls_best_fchdir _api_blk; do
-  grep -qx "$g" "$T/b.unx" || fail "$g missing from the unexported list: $(tr '\n' ' ' < "$T/b.unx")"
-done
-if ( RECAULK_ALSO_HIDE="$INC"; export RECAULK_ALSO_HIDE; recaulk_subset "$T/in.a" "$T/s.a" "$T/s.unx" _api_sig ) 2> "$T/err"; then fail "RECAULK_ALSO_HIDE let an unasked _os_signpost_enabled through"; fi
-grep -q 'also defines _os_signpost_enabled' "$T/err" || fail "did not name _os_signpost_enabled: $(cat "$T/err")"
-if ( RECAULK_ALSO_HIDE=; export RECAULK_ALSO_HIDE; recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk ) 2>/dev/null; then fail "an empty RECAULK_ALSO_HIDE accepted incidental globals"; fi
+if ( RECAULK_ALSO_HIDE='^___(copy|destroy)_helper_block_|^___mpls_'; export RECAULK_ALSO_HIDE
+     recaulk_subset "$T/in.a" "$T/b.a" "$T/b.unx" _api_blk ) 2> "$T/err"; then fail "RECAULK_ALSO_HIDE still lets a block helper through"; fi
+grep -q '___mpls_best_fchdir' "$T/err" || fail "did not name ___mpls_best_fchdir: $(cat "$T/err")"
+echo "-- Recaulk's prefixed block helpers are accepted and hidden"
+o fwd-pblk 'int api_pblk(void) { return 7; }
+void __recaulk_copy_helper_block_8_32b(void) {} void __recaulk_mpls_best_fchdir(void) {}'
+( cd "$T" && ar rcs p.a fwd-pblk.o ) || fail "cannot build p.a"
+recaulk_subset "$T/p.a" "$T/pb.a" "$T/pb.unx" _api_pblk || fail "refused fwd-pblk.o's prefixed helpers"
+[ "$(tr '\n' ' ' < "$T/pb.unx")" = "___recaulk_copy_helper_block_8_32b ___recaulk_mpls_best_fchdir _api_pblk " ] \
+  || fail "unexported list: $(tr '\n' ' ' < "$T/pb.unx")"
 echo "PASS"

@@ -360,12 +360,10 @@ runtime_patches_unlisted() {
 # members define a global that is neither a <symbol> nor ___recaulk_-prefixed: libswiftCore takes the
 # APIs it names and nothing more, since the whole archive would bind weak imports whose presence the
 # runtime reads as "the OS has this" (os_signpost_enabled turns tracing on over a NULL os_log_create on
-# 10.9). RECAULK_ALSO_HIDE, an ERE, names the incidental globals a picked member may also define (clang's
-# ___copy_helper_block_*, macports-legacy-support's ___mpls_*, which Recaulk's dispatch_modern and openat
-# members leave global): a global that matches is accepted, and still hidden through <out.unexported> like
-# the rest; nothing else is accepted, so an unasked OS API still fails. Unset or empty accepts none. awk
-# matches the ERE anywhere in the name, so callers anchor it (^...); and awk -v interprets backslash escapes
-# in the value, so callers must not rely on \.-style escapes (use [.] instead). ${NM:-nm} reads the archive (-A), ${AR:-ar} extracts and writes it.
+# 10.9). There are no exceptions: since 20261108.3 Recaulk prefixes its incidental globals too (clang's
+# block helpers in dispatch_modern, macports-legacy-support's best_fchdir in pthread_chdir), so a global
+# outside the rule is something to ask Recaulk to rename, not to hide here. ${NM:-nm} reads the archive
+# (-A), ${AR:-ar} extracts and writes it.
 recaulk_subset() {
   _rs_in="$1"; _rs_out="$2"; _rs_unx="$3"; shift 3
   [ $# -gt 0 ] || { echo "recaulk_subset: no symbols named" >&2; return 2; }
@@ -376,7 +374,7 @@ recaulk_subset() {
   "${NM:-nm}" -A "$_rs_in" > "$_rs_t/nm" || { echo "recaulk_subset: ${NM:-nm} could not read $_rs_in" >&2; rm -rf "$_rs_t"; return 1; }
   # Each line is "<archive>:<member>: [value] <type> <name>": the member is the first word's second-last
   # colon-separated field.
-  awk -v want="$*" -v also="${RECAULK_ALSO_HIDE:-}" -v members="$_rs_t/members" -v globals="$_rs_t/globals" '
+  awk -v want="$*" -v members="$_rs_t/members" -v globals="$_rs_t/globals" '
     { np = split($1, p, ":"); m = p[np - 1]; ty = $(NF - 1); n = $NF
       if (ty == "U") { und[m] = und[m] " " n } else if (ty ~ /^[A-Z]$/) { def[n] = m; glob[m] = glob[m] " " n } }
     END {
@@ -393,7 +391,7 @@ recaulk_subset() {
         print m > members
         ng = split(glob[m], g, " ")
         for (k = 1; k <= ng; k++) {
-          ok = (g[k] ~ /^___recaulk_/) || (also != "" && g[k] ~ also); for (i = 1; i <= nw; i++) if (g[k] == w[i]) ok = 1
+          ok = (g[k] ~ /^___recaulk_/); for (i = 1; i <= nw; i++) if (g[k] == w[i]) ok = 1
           if (!ok) { print "recaulk_subset: " m " also defines " g[k] ", which is not asked for" > "/dev/stderr"; bad = 1 }
           print g[k] > globals
         }

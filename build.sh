@@ -279,14 +279,12 @@ OVS="$ROOT/overlays/src"; OVW="$ROOT/overlays/work"
 SDK_OVERLAYS="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$SHIPYARD/fetch_sdk.sh")" || { echo "FAIL: could not fetch the 10.9 SDK"; exit 1; }
 # spec: INGREDIENTS.md "Recaulk" -- libswiftDarwin compiles LibcOverlayShims.h's _swift_stdlib_openat, which
 #       calls openat (macOS 10.10), so a strong import that fails to load on 10.9: Recaulk's, linked and
-#       hidden, as libswiftCore takes its own. The member that defines openat (and the one that brings
-#       getattrlist and friends, all in 10.9) also defines macports-legacy-support's ___mpls_* globals, and
-#       Recaulk's dispatch members clang's block helpers: RECAULK_INCIDENTAL accepts those, still hidden.
-RECAULK_INCIDENTAL='^___(copy|destroy)_helper_block_|^___mpls_'
+#       hidden, as libswiftCore takes its own. Its members are macports-legacy-support's atcalls.c (under
+#       the APSL) and pthread_chdir.c (MIT), beside Recaulk's forwarder and resolver.
 RECAULK_DARWIN_SYMBOLS="_openat"
 RECAULK_DARWIN_A="$ROOT/recaulk-darwin.a"; RECAULK_DARWIN_UNX="$ROOT/recaulk-darwin.unexported"
 # shellcheck disable=SC2086  # space-free symbol names
-( NM="$X/llvm-nm"; AR="$X/llvm-ar"; RECAULK_ALSO_HIDE="$RECAULK_INCIDENTAL"
+( NM="$X/llvm-nm"; AR="$X/llvm-ar"
   recaulk_subset "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_DARWIN_A" "$RECAULK_DARWIN_UNX" $RECAULK_DARWIN_SYMBOLS ) \
   || { echo "FAIL: could not take $RECAULK_DARWIN_SYMBOLS from $RECAULK_PREFIX/lib/librecaulk.a"; exit 1; }
 echo "    Recaulk $RECAULK_VERSION for Darwin: $RECAULK_DARWIN_SYMBOLS, $(grep -c . "$RECAULK_DARWIN_UNX") globals, all unexported"
