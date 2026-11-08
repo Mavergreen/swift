@@ -45,6 +45,13 @@ cc -o "$T/crasher" "$T/crasher.c"
 printf '%s\n' '#include <stdio.h>' '#include <stdlib.h>' \
   'int main(int c, char **v){FILE *f=fopen(getenv("SELFTEST_COUNT"),"a"); if(!f) return 2; fprintf(f,"%s\n",v[0]); fclose(f); return 0;}' > "$T/counter.c"
 cc -o "$T/counter" "$T/counter.c"
+# os_support / os_shipped: loads_ok that also prints, as a modern dyld does, a load line for an OS libswift* image.
+for n in Prespecialized Core; do
+  printf '%s\n' '#include <stdio.h>' 'int core_f(void);' \
+    "int main(void){fprintf(stderr,\"dyld[1]: <UUID> /usr/lib/libswift$n.dylib\\n\"); return core_f();}" > "$T/os$n.c"
+done
+cc -o "$T/os_support" "$T/osPrespecialized.c" -L"$T/prefix/lib/swift" -lswiftCore -Wl,-rpath,"$T/prefix/lib/swift"
+cc -o "$T/os_shipped" "$T/osCore.c" -L"$T/prefix/lib/swift" -lswiftCore -Wl,-rpath,"$T/prefix/lib/swift"
 cc -o "$T/up_core" "$T/useCore.c" -L"$T/prefix/lib/swift" -lswiftCore -Wl,-rpath,"$T/prefix/lib/swift"
 cc -o "$T/up_support" "$T/useSupport.c" -L"$T/supportlib" -lswiftTestSupport -L"$T/prefix/lib/swift" -lswiftCore \
   -Wl,-rpath,@executable_path/../../lib -Wl,-rpath,"$T/prefix/lib/swift"
@@ -182,6 +189,11 @@ echo "-- --loads: other libswift* (test support) must load from the bundle's lib
 run "$(bundle support_ok)" --loads; [ "$rc" = 0 ] || fail "support_ok: rc=$rc: $out"
 run "$(bundle support_stray)" --loads; [ "$rc" = 1 ] || fail "support_stray: rc=$rc: $out"
 case "$out" in *'FAIL: support_stray'*) ;; *) fail "support_stray: not named: $out" ;; esac
+
+echo "-- --loads: an OS libswift* image (/usr/lib) is fine for non-shipped names, never for what the runtime ships"
+run "$(bundle os_support)" --loads; [ "$rc" = 0 ] || fail "os_support: rc=$rc: $out"
+run "$(bundle os_shipped)" --loads; [ "$rc" = 1 ] || fail "os_shipped: rc=$rc: $out"
+case "$out" in *'FAIL: os_shipped'*'/usr/lib/libswiftCore.dylib'*) ;; *) fail "os_shipped: not named: $out" ;; esac
 
 echo "-- --loads: a test that loads no libswiftCore from the prefix fails (it checked nothing)"
 run "$(bundle ok)" --loads; [ "$rc" = 1 ] || fail "--loads passed a test that loads no libswift*: rc=$rc: $out"

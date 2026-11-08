@@ -12,7 +12,7 @@
 #            --loads    each test once with DYLD_PRINT_LIBRARIES=1: libswiftCore must load, and
 #                       every libswift*.dylib that the runtime ships (the names in
 #                       $SWIFT_RUNTIME_PREFIX/lib/swift) must load from there, every other libswift*
-#                       (test support) from this bundle's lib/. The one mode that sets a DYLD
+#                       (test support) from this bundle's lib/ or the OS's own (/usr/lib, /System). The one mode that sets a DYLD
 #                       variable, and only on the test's own command.
 #          The default and --loads run upstream/bin/* too, once each, after bin/*.
 #          Every run is killed after SELFTEST_TIMEOUT seconds (default 60) and reported as a timeout:
@@ -119,6 +119,10 @@ run_one() {
         [ "$dir" = "$RTDIR_P" ] || { ok=0; why="$lib loaded from $p, not from $RTDIR"; }
         [ "$lib" != libswiftCore.dylib ] || core=1
       else
+        # An OS image (/usr/lib, /System) is the OS's own libswift*, never a stray copy of ours: modern dyld maps
+        # libswiftPrespecialized into any process that links libswiftCore. 10.9 has none, so the real gate never
+        # sees one, and what the runtime ships (above) stays strict. Everything else must be the bundle's.
+        case "$dir" in /usr/lib|/usr/lib/*|/System/*) continue ;; esac
         [ "$dir" = "$SUPDIR" ] || { ok=0; why="$lib loaded from $p, not from the bundle's $SUPDIR"; }
       fi
     done
