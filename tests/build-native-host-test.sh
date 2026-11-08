@@ -213,7 +213,7 @@ grep -qxF -e "  -DCMAKE_CXX_FLAGS=$(grep -m1 '^  -DCMAKE_C_FLAGS=' "$T/log" | se
 grep -q -e "^  -DCMAKE_SHARED_LINKER_FLAGS=.* -nostdlib++ $LCX -Wl,-syslibroot,$R/swift/work/libcxx22-root $R/swift/work/recaulk-runtime.a -Wl,-unexported_symbols_list,$R/swift/work/recaulk-runtime.unexported\$" "$T/log" \
   || fail "the runtime does not link libcxx22's libc++ by path, alone, then Recaulk's subset, hidden: $(grep CMAKE_SHARED_LINKER_FLAGS "$T/log")"
 # The subset is the APIs named and what they need, never the archive's other APIs.
-[ "$(tr '\n' ' ' < "$R/swift/work/recaulk-runtime.unexported")" = "___recaulk_fma ___recaulk_libm_exact_sum ___recaulk_resolve ___recaulk_truncl _fma _objc_readClassPair _os_system_version_get_current_version _truncl " ] \
+[ "$(tr '\n' ' ' < "$R/swift/work/recaulk-runtime.unexported")" = "___recaulk_fma ___recaulk_libm_exact_sum ___recaulk_resolve ___recaulk_truncl _fma _fmal _objc_readClassPair _os_system_version_get_current_version _truncl " ] \
   || fail "Recaulk's subset: $(cat "$R/swift/work/recaulk-runtime.unexported")"
 # libswift_Concurrency: built, and its own subset reaches its link alone, through patch 0013's hook; the
 # dispatch member's block helper (___recaulk_-prefixed since Recaulk 20261108.3) is hidden with the rest.

@@ -128,14 +128,15 @@ CXX_LIBCXX="-nostdinc++ -isystem $CXXINC -ffile-prefix-map=$CXXINC=/mavergreen-l
 #       only those: a forwarder that calls the OS's where it has one (macOS 10.12 and later, for
 #       os_system_version_get_current_version; macOS 10.11, objc_readClassPair) and Recaulk's body on
 #       10.9. Not _objc_realizeClassFromSwift: upstream's legacy, fragile-layout path stays, as a 10.9
-#       deployment target's metadata expects. And fma and truncl, which 10.9 has but gets wrong (fma's sign
-#       in a cancellation, Double.addingProduct at -Onone; truncl(-0) is +0, Float80.round(.towardZero)):
-#       Recaulk's are correct on every macOS, and libswiftCore is the one shipped dylib that imports
-#       either. Only libswiftCore's own calls reach them: a program's inlined stdlib code imports libSystem's. The whole archive would also
+#       deployment target's metadata expects. And fma, fmal and truncl, which 10.9 has but gets wrong (fma's
+#       sign in a cancellation, Double.addingProduct at -Onone; fmal's rounding, Float80.addingProduct;
+#       truncl(-0) is +0, Float80.round(.towardZero)): Recaulk's are correct on every macOS, and
+#       libswiftCore is the one shipped dylib that imports any of them. Only libswiftCore's own calls reach
+#       them: a program's inlined stdlib code imports libSystem's. The whole archive would also
 #       bind weak imports whose presence the runtime reads as "the OS has this" (os_signpost_enabled
 #       turns tracing on over a NULL os_log_create on 10.9), so lib.sh's recaulk_subset picks the members
 #       by symbol, and the link hides every global they define.
-RECAULK_RUNTIME_SYMBOLS="_os_system_version_get_current_version _objc_readClassPair _fma _truncl"
+RECAULK_RUNTIME_SYMBOLS="_os_system_version_get_current_version _objc_readClassPair _fma _fmal _truncl"
 RECAULK_PREFIX="$(sh "$HERE/fetch-recaulk.sh")" || { echo "FAIL: could not fetch Recaulk $RECAULK_VERSION"; exit 1; }
 RECAULK_A="$ROOT/recaulk-runtime.a"; RECAULK_UNX="$ROOT/recaulk-runtime.unexported"
 # shellcheck disable=SC2086  # space-free symbol names

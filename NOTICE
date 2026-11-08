@@ -198,7 +198,7 @@ own license, its header:
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 libswiftCore also contains, statically linked, the definitions of
-os_system_version_get_current_version, objc_readClassPair, fma and truncl from Recaulk (librecaulk.a, the release
+os_system_version_get_current_version, objc_readClassPair, fma, fmal and truncl from Recaulk (librecaulk.a, the release
 pinned in pins.env), https://github.com/Mavergreen/recaulk, as libswiftDarwin contains its openat
 and libswift_Concurrency the APIs named above, under this license:
 

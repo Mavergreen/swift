@@ -73,16 +73,16 @@ either. For the OS version, upstream's own failure value stays (0.0.0, never a g
 only `_swift_stdlib_operatingSystemVersion`, an ABI entry point kept for old binaries, calls it
 (`tests/availability_test.swift` holds both to 10.9.5 on 10.9.5).
 
-libswiftCore also takes Recaulk's `fma` and `truncl`, which 10.9's libm has but gets wrong: `fma` gives
-a cancellation the wrong sign (`Double.addingProduct` calls it at -Onone) and tiny results the wrong zero,
-and `truncl` gives `-0` and small negatives `+0` (`Float80.round(.towardZero)`). Recaulk's are correct, and
-used on every macOS, as no later x86_64 libm is known to be right (its PROVENANCE, "fma, fmal and
-truncl"). No other shipped dylib imports either. That fixes only the calls compiled into libswiftCore,
-such as a generic `addingProduct` at -Onone that goes through its witness: the stdlib's floating-point
-operations are inlinable, so a program's own code calls `fma` and `truncl` too, and binds them to
-libSystem's. Upstream's `test/stdlib/FloatingPoint.swift.gyb`, which found both, still fails on 10.9 for
-that reason (owed, below). Recaulk's `fmal`, which 10.9 also gets wrong, is not taken: libswiftCore
-imports it (`Float80.addingProduct`), but no test here or upstream's has failed on it yet.
+libswiftCore also takes Recaulk's `fma`, `fmal` and `truncl`, which 10.9's libm has but gets wrong: `fma`
+gives a cancellation the wrong sign (`Double.addingProduct` calls it at -Onone) and tiny results the wrong
+zero, `fmal` misrounds (Recaulk measured 5484 of 80124 roundings wrong on 10.9; `Float80.addingProduct`
+calls it), and `truncl` gives `-0` and small negatives `+0` (`Float80.round(.towardZero)`). Recaulk's are
+correct, and used on every macOS, as no later x86_64 libm is known to be right (its PROVENANCE, "fma, fmal
+and truncl"). No other shipped dylib imports any of them. That fixes only the calls compiled into
+libswiftCore, such as a generic `addingProduct` at -Onone that goes through its witness: the stdlib's
+floating-point operations are inlinable, so a program's own code calls `fma`, `fmal` and `truncl` too, and
+binds them to libSystem's. Upstream's `test/stdlib/FloatingPoint.swift.gyb`, which found `fma` and
+`truncl`, still fails on 10.9 for that reason (owed, below).
 
 `build.sh` links a subset of `librecaulk.a`, never the whole archive, which would bind six of
 libswiftCore's weak imports where it means one: the runtime reads a weak import's presence as "the OS has
