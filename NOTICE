@@ -23,7 +23,8 @@ WHAT IS AND ISN'T REDISTRIBUTED HERE
 Local modifications (full diffs in ./patches/runtime) — 0004-0007 all confined to making
 Swift's runtime work on 10.9's objc4-532, all gated to the 10.9/10.10 code path; 0008
 keeps a runtime built on OS X 10.9 identical to the one CI builds; 0009 keeps one libc++;
-0010 is for the self-test only; 0011 fixes a call the 10.9 deployment target misresolves:
+0010 is for the self-test only; 0011 fixes a call the 10.9 deployment target misresolves;
+0012-0016 build libswift_Concurrency for 10.9 and make it work with 10.9's libdispatch:
   0004  realization-aware getROData — follow rw->ro when RW_REALIZED, because
         objc4-532 realizes classes eagerly at image load.
   0005  objc-super instance-size fix — size subclasses from
@@ -44,6 +45,18 @@ keeps a runtime built on OS X 10.9 identical to the one CI builds; 0009 keeps on
   0011  float parsing delegation — init(_: some StringProtocol) calls
         init(_: Substring) through a function carrying its availability, where
         it otherwise called itself without end at a 10.9 deployment target.
+  0012  Concurrency deployment floor — build libswift_Concurrency for the
+        stdlib's 10.9 deployment target, not the 10.15 its build forced.
+  0013  Concurrency extra link flags — a hook through which the build links
+        libswift_Concurrency, and it alone, with its Recaulk definitions (below).
+  0014  Concurrency legacy dispatch priority — below 10.10, ask libdispatch for
+        a global queue by priority, not by a QoS class 10.9 does not know.
+  0015  Concurrency task_resume tracing guard — check that tracing is on before
+        task_resume's signpost call, as every other trace call does; os_signpost
+        is absent before 10.14.
+  0016  Concurrency continuous deadline as uptime — below 10.15, give
+        libdispatch a continuous-clock deadline as an uptime one, the only form
+        10.9's libdispatch fires.
 
 The runtime package also contains libswiftDarwin.dylib and libswiftObjectiveC.dylib,
 and both toolchain packages contain them and their modules (Darwin.swiftmodule,
@@ -160,10 +173,34 @@ components/macports-legacy-support/version pins). They keep their own licenses:
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
+libswift_Concurrency, the Swift concurrency runtime (built from the same Swift
+sources as libswiftCore, under the same license, with the patches 0012-0016
+above), contains, statically linked, the definitions of clock_gettime,
+clock_getres, qos_class_self, voucher_copy, voucher_adopt, os_release and
+dispatch_activate from Recaulk (the release pinned in pins.env; its license is
+below). Recaulk builds clock_gettime and clock_getres from MacPorts'
+legacy-support library (the same commit as above), whose src/time.c keeps its
+own license, its header:
+
+  Copyright (c) 2018 Chris Jones <jonesc@macports.org>
+  Copyright (c) 2025 Frederick H. G. Wright II <fw@fwright.net>
+
+  Permission to use, copy, modify, and distribute this software for any
+  purpose with or without fee is hereby granted, provided that the above
+  copyright notice and this permission notice appear in all copies.
+
+  THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+  WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+  MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+  ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+  WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+  ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+  OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
 libswiftCore also contains, statically linked, the definitions of
 os_system_version_get_current_version and objc_readClassPair from Recaulk (librecaulk.a, the release
 pinned in pins.env), https://github.com/Mavergreen/recaulk, as libswiftDarwin contains its openat
-(above), under this license:
+and libswift_Concurrency the APIs named above, under this license:
 
   Copyright (c) 2025 Wowfunhappy
   Copyright (c) 2026 Amitai Schleier

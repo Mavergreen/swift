@@ -1,0 +1,11 @@
+diff --git stdlib/public/Concurrency/TracingSignpost.h stdlib/public/Concurrency/TracingSignpost.h
+--- stdlib/public/Concurrency/TracingSignpost.h
++++ stdlib/public/Concurrency/TracingSignpost.h
+@@ -277,6 +277,7 @@
+ }
+ 
+ inline void task_resume(AsyncTask *task) {
++  ENSURE_LOGS();  // Mavericks: the one trace call without it; os_signpost is absent before 10.14
+   auto id = os_signpost_id_make_with_pointer(TaskLog, task);
+   os_signpost_interval_end(TaskLog, id, SWIFT_LOG_TASK_WAIT_NAME,
+                            "task=%" PRId64 " taskPointer=%p",

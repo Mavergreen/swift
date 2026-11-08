@@ -116,7 +116,13 @@ cat > "$C22/bin/llvm-nm" <<'F'
 [ "$1" = -A ] || exit 0
 printf '%s\n' "$2:fwd-97.o: 0000000000000000 T _os_system_version_get_current_version" "$2:fwd-97.o:                  U ___recaulk_resolve" \
   "$2:fwd-resolve.o: 0000000000000000 T ___recaulk_resolve" "$2:fwd-9.o: 0000000000000000 T _os_signpost_enabled" \
-  "$2:fwd-90.o: 0000000000000000 T _objc_readClassPair" "$2:fwd-90.o:                  U ___recaulk_resolve"
+  "$2:fwd-90.o: 0000000000000000 T _objc_readClassPair" "$2:fwd-90.o:                  U ___recaulk_resolve" \
+  "$2:fwd-40.o: 0000000000000000 T _clock_gettime" "$2:fwd-40.o:                  U ___recaulk_resolve" \
+  "$2:fwd-41.o: 0000000000000000 T _clock_getres" "$2:fwd-41.o:                  U ___recaulk_resolve" \
+  "$2:recaulk-qos_class.o: 0000000000000000 T _qos_class_self" \
+  "$2:recaulk-dispatch_modern.o: 0000000000000000 T _voucher_copy" "$2:recaulk-dispatch_modern.o: 0000000000000010 T _voucher_adopt" \
+  "$2:recaulk-dispatch_modern.o: 0000000000000020 T _os_release" "$2:recaulk-dispatch_modern.o: 0000000000000030 T _dispatch_activate" \
+  "$2:recaulk-dispatch_modern.o: 0000000000000040 T ___recaulk_copy_helper_block_8_32b"
 F
 printf '#!/bin/sh\ncase "$1" in rcs) : > "$2" ;; esac\n' > "$C22/bin/llvm-ar"; chmod +x "$C22/bin/llvm-nm" "$C22/bin/llvm-ar"
 printf '#!/bin/sh\necho "%s/sdk/MacOSX11.3.sdk"\n' "$T" > "$T/shipyard/fetch_sdk.sh"
@@ -134,10 +140,11 @@ cat > "$T/shipyard/fetch_pinned_source.sh" <<F
 #!/bin/sh
 echo "fetch_pinned_source \$*" >> "$T/log"
 rm -rf "\$4"; mkdir -p "\$4/stdlib/public/stubs" "\$4/stdlib/public/runtime" "\$4/stdlib/public/core" "\$4/include/swift/Runtime" \
-  "\$4/stdlib/private/StdlibUnittest"
+  "\$4/stdlib/private/StdlibUnittest" "\$4/stdlib/public/Concurrency"
 for f in CMakeLists.txt stdlib/public/stubs/Availability.mm stdlib/public/runtime/SwiftObject.mm stdlib/public/runtime/Metadata.cpp \
          include/swift/Runtime/Config.h stdlib/public/core/StringBridge.swift stdlib/private/StdlibUnittest/StdlibUnittest.swift \
-         stdlib/public/core/FloatingPointParsing.swift.gyb; do : > "\$4/\$f"; done
+         stdlib/public/core/FloatingPointParsing.swift.gyb stdlib/public/Concurrency/CMakeLists.txt \
+         stdlib/public/Concurrency/DispatchGlobalExecutor.cpp stdlib/public/Concurrency/TracingSignpost.h; do : > "\$4/\$f"; done
 echo "\${FAKE_SWIFT_SOURCE:-\$1 \$2 \$3}" > "\$4/.mavergreen-source"   # FAKE_SWIFT_SOURCE: another commit's tarball
 F
 # patch: a dry run applies; a real one writes the marker build.sh greps for that patch.
@@ -156,6 +163,11 @@ case "$(basename "$p")" in
   0009-*) echo 'Mavericks: no libc++ autolink' >> stdlib/public/runtime/Metadata.cpp ;;
   0010-*) echo 'Mavericks: Foundation-free StdlibUnittest' >> stdlib/private/StdlibUnittest/StdlibUnittest.swift ;;
   0011-*) echo 'Mavericks: through a function that carries the same availability' >> stdlib/public/core/FloatingPointParsing.swift.gyb ;;
+  0012-*) echo "Mavericks: follow the stdlib's 10.9" >> stdlib/public/Concurrency/CMakeLists.txt ;;
+  0013-*) echo 'mavericks_concurrency_link_flags UNIX_COMMAND "${MAVERGREEN_CONCURRENCY_LINK_FLAGS}"' >> stdlib/public/Concurrency/CMakeLists.txt ;;
+  0014-*) echo mav_globalQueueIdentifier >> stdlib/public/Concurrency/DispatchGlobalExecutor.cpp ;;
+  0015-*) echo 'ENSURE_LOGS();  // Mavericks: the one trace call without it' >> stdlib/public/Concurrency/TracingSignpost.h ;;
+  0016-*) echo "Mavericks: OS X 10.9's libdispatch does not know the bit-63 encoding" >> stdlib/public/Concurrency/DispatchGlobalExecutor.cpp ;;
 esac
 F
 # The stdlib configure records its arguments and leaves a cache; the build (ninja) stops the run.
@@ -178,7 +190,7 @@ build_native() {  # build.sh's native mode past step 1, everything faked; ninja 
 build_native
 grep -qxF "fetch_pinned_source https://github.com/swiftlang/swift.git $SWIFT_SHA $SWIFT_TARBALL_SHA256 swift" "$T/log" \
   || fail "did not fetch the swift tarball by its pin: $(cat "$T/out")"
-[ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0004 0005 0007 0008 0009 0010 0011 " ] \
+[ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0004 0005 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016 " ] \
   || fail "patched in another order: $(grep '^patch' "$T/log" | tr '\n' ' ')"
 for a in "-DCMAKE_AR=$C22/bin/llvm-ar" "-DCMAKE_RANLIB=$C22/bin/llvm-ranlib" "-DSWIFT_LIPO=$C22/bin/llvm-lipo" -DSWIFT_ENABLE_LIBXML2=OFF \
          -DCMAKE_TAPI=/usr/bin/false "-DCMAKE_STRIP=$C22/bin/llvm-strip" -DLD64_EXECUTABLE=/usr/bin/false -DCMAKE_Swift_COMPILER=NOTFOUND \
@@ -193,12 +205,19 @@ grep -q -e "^  -DCMAKE_SHARED_LINKER_FLAGS=.* -nostdlib++ $LCX -Wl,-syslibroot,$
 # The subset is the APIs named and what they need, never the archive's other APIs.
 [ "$(tr '\n' ' ' < "$R/swift/work/recaulk-runtime.unexported")" = "___recaulk_resolve _objc_readClassPair _os_system_version_get_current_version " ] \
   || fail "Recaulk's subset: $(cat "$R/swift/work/recaulk-runtime.unexported")"
+# libswift_Concurrency: built, and its own subset reaches its link alone, through patch 0013's hook; the
+# dispatch member's block helper (___recaulk_-prefixed since Recaulk 20261108.3) is hidden with the rest.
+grep -qxF -e "  -DSWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY=ON" "$T/log" || fail "the stdlib configure does not turn Concurrency on: $(cat "$T/log")"
+grep -qxF -e "  -DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$R/swift/work/recaulk-concurrency.a -Wl,-unexported_symbols_list,$R/swift/work/recaulk-concurrency.unexported" "$T/log" \
+  || fail "Concurrency's link does not take its Recaulk subset, hidden: $(grep MAVERGREEN_CONCURRENCY "$T/log")"
+[ "$(tr '\n' ' ' < "$R/swift/work/recaulk-concurrency.unexported")" = "___recaulk_copy_helper_block_8_32b ___recaulk_resolve _clock_getres _clock_gettime _dispatch_activate _os_release _qos_class_self _voucher_adopt _voucher_copy " ] \
+  || fail "Recaulk's subset for Concurrency: $(cat "$R/swift/work/recaulk-concurrency.unexported")"
 if grep -q '^git \|^xcrun ' "$T/log"; then fail "ran $(grep '^git \|^xcrun ' "$T/log" | head -1)"; fi
 SB="$R/swift/work/stdlib-build"
 grep -q '^archiver ' "$SB/mavergreen-inputs.stamp" \
   || fail "the stdlib-build's stamp does not record the archiver: $(cat "$SB/mavergreen-inputs.stamp")"
-# libcxx22's dylib and headers and the Recaulk subset: three further inputs.
-[ "$(grep -c '^input ' "$SB/mavergreen-inputs.stamp")" -eq 3 ] \
+# libcxx22's dylib and headers and the two Recaulk subsets (Core's, Concurrency's): four further inputs.
+[ "$(grep -c '^input ' "$SB/mavergreen-inputs.stamp")" -eq 4 ] \
   || fail "the stdlib-build's stamp does not record libcxx22 and Recaulk: $(cat "$SB/mavergreen-inputs.stamp")"
 
 echo "-- the stdlib-build's stamp records the swift source: the same commit keeps it, another commit's starts it afresh"

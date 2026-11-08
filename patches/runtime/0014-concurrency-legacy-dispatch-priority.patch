@@ -1,0 +1,53 @@
+diff --git stdlib/public/Concurrency/DispatchGlobalExecutor.cpp stdlib/public/Concurrency/DispatchGlobalExecutor.cpp
+--- stdlib/public/Concurrency/DispatchGlobalExecutor.cpp
++++ stdlib/public/Concurrency/DispatchGlobalExecutor.cpp
+@@ -141,7 +141,25 @@
+ static constexpr size_t dispatchQueueCooperativeFlag = 4;
+ #else
+ extern "C" void dispatch_queue_set_width(dispatch_queue_t dq, long width);
++#endif
++
++// Mavericks: OS X 10.9's libdispatch predates QoS classes. Its dispatch_get_global_queue takes only the
++// DISPATCH_QUEUE_PRIORITY_* values and answers NULL for every QoS class but 0, so a QoS is mapped to the
++// priority libdispatch 10.10 and later maps to that QoS (_dispatch_qos_from_queue_priority's inverse).
++static long mav_globalQueueIdentifier(SwiftJobPriority priority) {
++#if defined(__APPLE__) && defined(__x86_64__)
++  if (__builtin_available(macOS 10.10, *))
++    return (long)priority;
++  size_t p = static_cast<size_t>(priority);
++  if (p == 0) return DISPATCH_QUEUE_PRIORITY_DEFAULT;      // Unspecified
++  if (p >= 0x19) return DISPATCH_QUEUE_PRIORITY_HIGH;      // UserInitiated, UserInteractive
++  if (p >= 0x15) return DISPATCH_QUEUE_PRIORITY_DEFAULT;   // Default
++  if (p >= 0x11) return DISPATCH_QUEUE_PRIORITY_LOW;       // Utility
++  return DISPATCH_QUEUE_PRIORITY_BACKGROUND;               // Background and below
++#else
++  return (long)priority;
+ #endif
++}
+ 
+ static dispatch_queue_t getGlobalQueue(SwiftJobPriority priority) {
+   size_t numericPriority = static_cast<size_t>(priority);
+@@ -182,12 +200,12 @@
+   // race with other threads doing this at the same time for this priority, but
+   // that's OK, they'll all end up writing the same value.
+   if (runtime::environment::concurrencyEnableCooperativeQueues())
+-    queue = dispatch_get_global_queue((dispatch_qos_class_t)priority,
++    queue = dispatch_get_global_queue(mav_globalQueueIdentifier(priority),
+                                       dispatchQueueCooperativeFlag);
+   // If dispatch doesn't support dispatchQueueCooperativeFlag, it will return
+   // NULL. Fall back to a standard global queue.
+   if (!queue)
+-    queue = dispatch_get_global_queue((dispatch_qos_class_t)priority,
++    queue = dispatch_get_global_queue(mav_globalQueueIdentifier(priority),
+                                       /*flags*/ 0);
+ 
+   // Unconditionally store it back in the cache. If we raced with another
+@@ -207,7 +225,7 @@
+     return getGlobalQueue(priority);
+ 
+   // On older OSes, use a standard global queue.
+-  return dispatch_get_global_queue((dispatch_qos_class_t)priority, /*flags*/ 0);
++  return dispatch_get_global_queue(mav_globalQueueIdentifier(priority), /*flags*/ 0);
+ }
+ 
+ extern "C" SWIFT_CC(swift)

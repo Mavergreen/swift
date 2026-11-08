@@ -1,0 +1,24 @@
+diff --git stdlib/public/Concurrency/CMakeLists.txt stdlib/public/Concurrency/CMakeLists.txt
+--- stdlib/public/Concurrency/CMakeLists.txt
++++ stdlib/public/Concurrency/CMakeLists.txt
+@@ -240,6 +240,11 @@
+   set(osx_deployment_target "${SWIFT_DARWIN_DEPLOYMENT_VERSION_OSX}")
+ endif()
+ 
++# Mavericks: build.sh links libswift_Concurrency with Recaulk's subset for it and hides every global that
++# subset defines, as it links libswiftCore with its own; MAVERGREEN_CONCURRENCY_LINK_FLAGS holds those words,
++# space-separated, and LINK_FLAGS takes a list.
++separate_arguments(mavericks_concurrency_link_flags UNIX_COMMAND "${MAVERGREEN_CONCURRENCY_LINK_FLAGS}")
++
+ add_swift_target_library(swift_Concurrency ${SWIFT_STDLIB_LIBRARY_BUILD_TYPES} IS_STDLIB
+   ${SWIFT_RUNTIME_CONCURRENCY_C_SOURCES}
+   ${SWIFT_RUNTIME_CONCURRENCY_EXECUTOR_SOURCES}
+@@ -275,7 +280,7 @@
+     -parse-stdlib
+     ${SWIFT_RUNTIME_CONCURRENCY_SWIFT_FLAGS}
+   ${swift_concurrency_options}
+-  LINK_FLAGS "${SWIFT_RUNTIME_SWIFT_LINK_FLAGS}"
++  LINK_FLAGS "${SWIFT_RUNTIME_SWIFT_LINK_FLAGS}" ${mavericks_concurrency_link_flags}
+   INSTALL_IN_COMPONENT stdlib
+   MACCATALYST_BUILD_FLAVOR zippered
+ )

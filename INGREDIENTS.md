@@ -16,7 +16,7 @@ was merged in (2026-09) and deleted (2026-10). Its 6.4.0 installer mirror is now
 | swiftlang/swift-cmark commit | `CMARK_SWIFT_RELEASE` + `CMARK_SHA` + `CMARK_TARBALL_SHA256` in `pins.env` | ✅ `github-tags` on `swiftlang/swift-cmark`, in the same "Swift release" PR; the SHA-256 as for Swift | moves only WITH the Swift pin: `build-toolchain.sh` runs `check_release_pin` on it |
 | mavericks-clang-22 cross toolchain (compiles the 10.9-hosted toolchain and compiler-rt's builtins, and its `llvm-libtool-darwin`, `llvm-ar`, `llvm-ranlib` and `llvm-lipo` make their archives; on OS X 10.9, `self-host.sh` uses the native package of the same release) | `CLANG22_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/clang-22`, `-mavericks.N` versioning | auto-repackages `-mavericks.(N+1)` |
 | libcxx22, the family's shared libc++ (the stdlib's C++ compiles against the pinned clang22's libc++ headers and links libcxx22's `libc++.1.dylib`; the runtime and native toolchain pkgs require it at install) | `CLANG22_VERSION` in `pins.env`: one clang-22 release publishes clang22, clang22-cross and libcxx22 under one version | ✅ with the clang22 pin (`github-releases` on `Mavergreen/clang-22`) | auto-repackages `-mavericks.(N+1)`, and the pkgs then require that libcxx22 or later |
-| Recaulk, the family's back-fills of post-10.9 OS APIs (libswiftCore links Recaulk's definitions of the APIs `build.sh`'s `RECAULK_RUNTIME_SYMBOLS` names, and only those, statically: below) | `RECAULK_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/recaulk`, `YYYYMMDD.N` versioning | auto-repackages `-mavericks.(N+1)`; nothing is required at install, since the link is static |
+| Recaulk, the family's back-fills of post-10.9 OS APIs (libswiftCore links Recaulk's definitions of the APIs `build.sh`'s `RECAULK_RUNTIME_SYMBOLS` names, and only those, statically, and libswiftDarwin and libswift_Concurrency their own subsets: below) | `RECAULK_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/recaulk`, `YYYYMMDD.N` versioning | auto-repackages `-mavericks.(N+1)`; nothing is required at install, since the link is static |
 | LLVM and compiler source patches (`patches/llvm/`, `patches/compiler/`: compiler `0003` maps the compiler's runtime table to OS X 10.9 for targets below 10.14.4, below) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | swift.org toolchain `.pkg` (CI's one seed: it compiles the cross toolchain's Swift half, and a first stdlib that only makes that toolchain runnable; everything the release ships is compiled by this repo's own compilers, below) | `TOOLCHAIN_URL`, derived from `SWIFT_VERSION` | ✅ moves with the Swift pin | verified by **signer identity**, not a hash (below) |
 | Runtime source patches (`patches/runtime/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
@@ -108,7 +108,22 @@ another APSL member fails the build until `NOTICE` carries its notice too. The t
 members, so a linked MacPorts `mp-*` member with no row fails too, unless `build.sh`'s
 `RECAULK_NOTICES_REVIEWED` names it: someone read its source's licence and `NOTICE` carries it
 (`tests/notice-test.sh` holds `NOTICE` to each name). Today that is `mp-pthread_chdir.o`, under
-legacy-support's MIT LICENSE. An Apple-derived member Recaulk forgot to list cannot pass silently.
+legacy-support's MIT LICENSE, and libswift_Concurrency's `mp-time.o` (below), under its own ISC-style grant. An Apple-derived member Recaulk forgot to list cannot pass silently.
+
+libswift_Concurrency takes a third subset, `RECAULK_CONCURRENCY_SYMBOLS`: `voucher_copy` and `voucher_adopt`,
+which it imports strongly, so without them it does not load on 10.9; `qos_class_self`, `clock_gettime`,
+`clock_getres` and `dispatch_activate`, weak but called with no check (every task, every clock read and
+`Task.sleep`, a sleep with tolerance); and `os_release`, once a voucher is non-NULL. Runtime patch 0013
+gives Concurrency's link a hook, `MAVERGREEN_CONCURRENCY_LINK_FLAGS`, so this subset and its unexported
+list reach that dylib alone. The members include legacy-support's `src/time.c` (`clock_gettime`,
+`clock_getres`), whose own notice is in `NOTICE`; it has no notices-list row (it is not APSL), so
+`RECAULK_NOTICES_REVIEWED` names `mp-time.o` and step 7's notice check runs over libswift_Concurrency too.
+Every global the subset defines is a named API or `___recaulk_`-prefixed, the dispatch member's block
+helpers among them. Not yet in it: `dispatch_assert_queue$V2`, weak and called
+with no check from `MainActor.assumeIsolated` and `preconditionIsolated` off the main queue's own job,
+which Recaulk does not define yet; it is requested, joins the list when Recaulk ships it, and until then
+the allowlist below names that call for what it is, an unguarded one. Step 7 checks libswift_Concurrency
+as it does libswiftCore, and holds its tracing's weak imports (`os_signpost_*`, `_os_log_create`) to the OS's.
 
 Step 7 also holds every dylib it ships, and the test-support libraries, to what OS X 10.9 has
 (`scripts/imports-on-10.9.sh`): each symbol imported from `/usr/lib` or a framework must be exported by
@@ -266,13 +281,15 @@ believing a release is good; it is not the bar for publishing one.
 
 `check-artifact-conformance.sh` holds a release's artifacts to the family's schemes, and the compat
 guard (`scripts/guard.sh`) reads the `sdk-pin` entries too. These departures are deliberate, and
-each is scoped to the artifact it concerns: the first six to the two stdlib dylibs (libswiftCore and
-libswiftSwiftOnoneSupport: the runtime pkg's, and the same bytes in both toolchain pkgs), the next to the cross toolchain pkg's install floor, the
+each is scoped to the artifact it concerns: the first seven to the stdlib dylibs (libswiftCore and
+libswiftSwiftOnoneSupport: the runtime pkg's, and the same bytes in both toolchain pkgs; and
+libswift_Concurrency, the runtime pkg's), the next to the cross toolchain pkg's install floor, the
 next to vm-test's upgrade from the newest release, and the last ones to the swift.org mirror attached to
 `-mavericks.1` releases.
 
 - sdk-pin:*/swift-runtime/lib/swift/libswiftCore.dylib: the Swift runtime cannot be built against the 10.9 SDK, which has no libc++ headers at all (only libstdc++ 4.2.1) while Swift 6.4 requires C++17, and which lacks declarations of post-10.9 APIs the runtime calls behind availability checks. Its build uses a modern SDK, pinned: MacOSX11.3.sdk, shipyard's arm64 pin (`fetch_sdk.sh --arch arm64`), the same in CI and on 10.9, so a runtime built on 10.9 is byte-identical to CI's. These two record sdk 11.3 (the Darwin and ObjectiveC overlays beside them compile against the 10.9 SDK, record sdk 10.9, and take no exemption); their libc++ is libcxx22's, not the SDK's ("One C++ runtime", above). minos stays 10.9, and the real-10.9 gate is its acceptance. Revisit if the gate gains per-product pins.
 - sdk-pin:*/swift-runtime/lib/swift/libswiftSwiftOnoneSupport.dylib: the same stdlib build and the same reason as libswiftCore.dylib's, above.
+- sdk-pin:*/swift-runtime/lib/swift/libswift_Concurrency.dylib: the same stdlib build and the same reason as libswiftCore.dylib's, above: Concurrency's runtime is C++17 as Core's is, and records sdk 11.3 and minos 10.9 (runtime patch 0012 lowers the 10.15 its build forced).
 - sdk-pin:*/swift-toolchain/lib/swift/macosx/libswiftCore.dylib: the toolchain's stdlib dylibs are the runtime's own bytes, staged from the one stdlib build (scripts/stage-toolchain.sh), so the runtime's reason above applies verbatim. The compiler, lld and clang beside them record the pinned 10.9 SDK and take no exemption.
 - sdk-pin:*/swift-toolchain/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib: the same stdlib build and the same reason as libswiftCore.dylib's, above.
 - sdk-pin:*/swift-toolchain-cross/lib/swift/macosx/libswiftCore.dylib: the cross toolchain's stdlib dylibs are the runtime's own bytes too: CI's build-cross job builds the one stdlib, with that cross toolchain, and stages it into all three pkgs, and collect refuses a release whose two toolchains' stdlib and builtins trees differ in a byte, so the runtime's reason above applies verbatim. The compiler, lld and clang beside them are arm64 and record the family's arm64 pin (minOS 11.0, SDK 11.3) and take no exemption.

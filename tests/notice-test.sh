@@ -3,10 +3,12 @@
 # usage: sh tests/notice-test.sh
 #   NOTICE ships in every pkg (stage-runtime.sh, stage-toolchain.sh) and must name what those pkgs hold:
 #   every patch in patches/runtime and patches/overlays by its number, the Darwin and ObjectiveC overlays'
-#   sources, and each of Recaulk's members build.sh links statically. Two of those (libswiftDarwin's
-#   openat) are MacPorts legacy-support's sources, which keep their own licences: atcalls.c's APSL 2.0
-#   asks for its notices, its licence text and where its source is; pthread_chdir.c's header is no grant, so NOTICE carries legacy-support's LICENSE (MIT for the
-#   MacPorts community's files) as its grant.
+#   sources, and each of Recaulk's members build.sh links statically. Three of those (libswiftDarwin's
+#   openat, libswift_Concurrency's clock_gettime) are MacPorts legacy-support's sources, which keep their
+#   own licences: atcalls.c's APSL 2.0 asks for its notices, its licence text and where its source is;
+#   pthread_chdir.c's header is no grant, so NOTICE carries legacy-support's LICENSE (MIT for the
+#   MacPorts community's files) as its grant; time.c's header is its own grant (ISC-style), which asks
+#   for its copyright notices and itself in every copy.
 #   Each MacPorts member build.sh's RECAULK_NOTICES_REVIEWED vouches for (one Recaulk's notices list has
 #   no row for, since it is not APSL) must have its source named here.
 #   A patch or a member added without its NOTICE entry once shipped unnamed.
@@ -51,6 +53,15 @@ grep -q "Copyright (c) 2018-2025 Chris Jones, Michael Dickens" "$N" && grep -q "
   && grep -q "The above copyright notice and this permission notice shall be included in all" "$N" \
   || fail "NOTICE lacks legacy-support's LICENSE, the grant for pthread_chdir.c"
 
+echo "-- MacPorts legacy-support's time.c in libswift_Concurrency, with its notices and grant"
+grep -q "src/time.c" "$N" || fail "NOTICE does not name MacPorts' time.c"
+grep -q "libswift_Concurrency" "$N" || fail "NOTICE does not name libswift_Concurrency"
+grep -q "Copyright (c) 2018 Chris Jones <jonesc@macports.org>" "$N" || fail "NOTICE lacks time.c's first copyright"
+[ "$(grep -c "Copyright (c) 2025 Frederick H. G. Wright II <fw@fwright.net>" "$N")" -ge 2 ] \
+  || fail "NOTICE lacks time.c's second copyright (it appears once, for pthread_chdir.c)"
+[ "$(grep -c "copyright notice and this permission notice appear in all copies." "$N")" -ge 2 ] \
+  || fail "NOTICE lacks time.c's own grant (its permission text appears once, for Recaulk)"
+
 echo "-- each MacPorts member build.sh's RECAULK_NOTICES_REVIEWED vouches for has its source named in NOTICE"
 # Recaulk's notices list has rows only for APSL members; step 7 accepts a linked mp-* member without one
 # only when this list names it, so NOTICE must carry that member's own licence (mp-X.o is src/X.c).
@@ -62,8 +73,9 @@ for m in $REV; do
   grep -q "$f" "$N" || fail "NOTICE does not name $f, the source of $m, which build.sh vouches for"
 done
 echo "-- each Recaulk symbol build.sh links is named"
-for s in $(sed -En 's/^RECAULK_(RUNTIME|DARWIN)_SYMBOLS="([^"]*)"$/\2/p' "$REPO/build.sh"); do
+for s in $(sed -En 's/^RECAULK_(RUNTIME|DARWIN|CONCURRENCY)_SYMBOLS="([^"]*)"$/\2/p' "$REPO/build.sh"); do
   grep -q "${s#_}" "$N" || fail "NOTICE does not name Recaulk's ${s#_}, which build.sh links"
 done
 [ -n "$(sed -n 's/^RECAULK_DARWIN_SYMBOLS="\([^"]*\)"$/\1/p' "$REPO/build.sh")" ] || fail "read no RECAULK_DARWIN_SYMBOLS from build.sh"
+[ -n "$(sed -n 's/^RECAULK_CONCURRENCY_SYMBOLS="\([^"]*\)"$/\1/p' "$REPO/build.sh")" ] || fail "read no RECAULK_CONCURRENCY_SYMBOLS from build.sh"
 echo "PASS"

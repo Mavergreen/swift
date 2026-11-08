@@ -1,0 +1,31 @@
+diff --git stdlib/public/Concurrency/DispatchGlobalExecutor.cpp stdlib/public/Concurrency/DispatchGlobalExecutor.cpp
+--- stdlib/public/Concurrency/DispatchGlobalExecutor.cpp
++++ stdlib/public/Concurrency/DispatchGlobalExecutor.cpp
+@@ -37,6 +37,9 @@
+ #if SWIFT_CONCURRENCY_ENABLE_DISPATCH
+ #include "swift/Runtime/HeapObject.h"
+ #include <dispatch/dispatch.h>
++#if defined(__APPLE__)
++#include <mach/mach_time.h>  // Mavericks: mach_absolute_time, for 10.9 deadlines
++#endif
+ #if defined(_WIN32)
+ #define WIN32_LEAN_AND_MEAN
+ #define NOMINMAX
+@@ -338,6 +341,17 @@
+   case swift_clock_id_suspending:
+     return value;
+   case swift_clock_id_continuous:
++#if defined(__APPLE__) && defined(__x86_64__)
++    // Mavericks: OS X 10.9's libdispatch does not know the bit-63 encoding and never fires such a timer;
++    // below upstream's 10.15 floor, express the continuous deadline as an uptime one.
++    if (!__builtin_available(macOS 10.15, *)) {
++      long long cs = 0, cn = 0;
++      swift_get_time(&cs, &cn, swift_clock_id_continuous);
++      uint64_t contNow = (uint64_t)cs * NSEC_PER_SEC + (uint64_t)cn;
++      uint64_t upNow = mach_absolute_time();
++      return value > contNow ? upNow + (value - contNow) : upNow;
++    }
++#endif
+     return value | DISPATCH_UP_OR_MONOTONIC_TIME_MASK;
+   case swift_clock_id_wall: {
+     struct timespec ts = {

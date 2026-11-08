@@ -1,0 +1,12 @@
+diff --git stdlib/public/Concurrency/CMakeLists.txt stdlib/public/Concurrency/CMakeLists.txt
+--- stdlib/public/Concurrency/CMakeLists.txt
++++ stdlib/public/Concurrency/CMakeLists.txt
+@@ -234,7 +234,7 @@
+   Task+immediate.swift.gyb)
+ 
+ # Build with a minimum deployment target of 10.15
+-if(SWIFT_DARWIN_DEPLOYMENT_VERSION_OSX VERSION_LESS "10.15")
++if(FALSE AND SWIFT_DARWIN_DEPLOYMENT_VERSION_OSX VERSION_LESS "10.15")  # Mavericks: follow the stdlib's 10.9
+   set(osx_deployment_target "10.15")
+ else()
+   set(osx_deployment_target "${SWIFT_DARWIN_DEPLOYMENT_VERSION_OSX}")

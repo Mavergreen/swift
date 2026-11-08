@@ -1,7 +1,8 @@
 #!/bin/sh
 # platform: macOS-only -- a modern Mac (cross: pkgutil and ditto expand the swift.org compiler) or OS X 10.9 (native)
 # build.sh — from-source build of the Swift runtime (libswiftCore + libswiftSwiftOnoneSupport) for
-# OS X 10.9 / x86_64, staged as the runtime .pkg's payload, and beside it, in the stdlib build's tree, the
+# OS X 10.9 / x86_64, staged as the runtime .pkg's payload, and beside it, in the stdlib build's tree,
+# libswift_Concurrency (built and checked here; not yet staged into any pkg) and the
 # Darwin and ObjectiveC overlays (libswiftDarwin, libswiftObjectiveC and their modules: swift-6.2's
 # Platform and swift-5.4's ObjectiveC sources, pinned tarballs, compiled against the 10.9 SDK by
 # scripts/build-module.sh with the stdlib's flags). No Apple prebuilt runtime bytes ship.
@@ -24,7 +25,8 @@
 #   that clang22's libc++ headers and links libcxx22's libc++.1.dylib (fetch-libcxx22.sh, the same release),
 #   the family's one shared libc++, never the SDK's, which on 10.9 is the OS's own; libswiftCore links
 #   Recaulk's definitions of the post-10.9 APIs RECAULK_RUNTIME_SYMBOLS names, statically, from
-#   librecaulk.a (fetch-recaulk.sh, pins.env's RECAULK_VERSION), and nothing else of Recaulk's.
+#   librecaulk.a (fetch-recaulk.sh, pins.env's RECAULK_VERSION), and nothing else of Recaulk's;
+#   libswift_Concurrency, those RECAULK_CONCURRENCY_SYMBOLS names, the same way.
 # Env: MAVERICKS_BUILD_ROOT (build root, see lib.sh), SWIFT_WORK (sources and build trees, default
 #   $SWIFT_BUILD/work), SWIFT_RUNTIME_OUT (the staged payload, default $SWIFT_BUILD/payload/runtime),
 #   SWIFT_SELFTEST_SUPPORT_OUT (the self-test's support, default $SWIFT_BUILD/payload/selftest-support),
@@ -137,6 +139,22 @@ RECAULK_A="$ROOT/recaulk-runtime.a"; RECAULK_UNX="$ROOT/recaulk-runtime.unexport
 ( NM="$X/llvm-nm"; AR="$X/llvm-ar"; recaulk_subset "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_A" "$RECAULK_UNX" $RECAULK_RUNTIME_SYMBOLS ) \
   || { echo "FAIL: could not take $RECAULK_RUNTIME_SYMBOLS from $RECAULK_PREFIX/lib/librecaulk.a"; exit 1; }
 echo "    Recaulk $RECAULK_VERSION: $RECAULK_RUNTIME_SYMBOLS, $(grep -c . "$RECAULK_UNX") globals, all unexported"
+# spec: INGREDIENTS.md "Recaulk" -- libswift_Concurrency calls, unguarded or strongly, these APIs 10.9
+#       lacks (the A1 spike's Q1 table): voucher_copy and voucher_adopt, strong (VoucherShims.h:60,63), so
+#       without them it does not load; qos_class_self for every task created (Actor.cpp:345); clock_gettime
+#       and clock_getres for every clock read and Task.sleep (Clock.cpp); dispatch_activate, a sleep with
+#       tolerance (DispatchGlobalExecutor.cpp); os_release, once a voucher is non-NULL (VoucherShims.h:74).
+#       Its own subset, linked into it alone through patch 0013's hook and hidden as Core's is. Not here
+#       yet: dispatch_assert_queue$V2 (weak and called unguarded, ExecutorBridge.cpp:80, reached by
+#       MainActor.assumeIsolated and preconditionIsolated), which Recaulk does not provide yet; it joins
+#       this list when Recaulk does (requested), and until then step 7's allowlist names the call.
+RECAULK_CONCURRENCY_SYMBOLS="_clock_gettime _clock_getres _qos_class_self _voucher_copy _voucher_adopt _os_release _dispatch_activate"
+RECAULK_CONC_A="$ROOT/recaulk-concurrency.a"; RECAULK_CONC_UNX="$ROOT/recaulk-concurrency.unexported"
+# shellcheck disable=SC2086  # space-free symbol names
+( NM="$X/llvm-nm"; AR="$X/llvm-ar"
+  recaulk_subset "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_CONC_A" "$RECAULK_CONC_UNX" $RECAULK_CONCURRENCY_SYMBOLS ) \
+  || { echo "FAIL: could not take $RECAULK_CONCURRENCY_SYMBOLS from $RECAULK_PREFIX/lib/librecaulk.a"; exit 1; }
+echo "    Recaulk $RECAULK_VERSION for Concurrency: $RECAULK_CONCURRENCY_SYMBOLS, $(grep -c . "$RECAULK_CONC_UNX") globals, all unexported"
 clang_resource_shim "$CLANG_INC" "$BUILTINS" "$ROOT/clang-resource" || { echo "FAIL: could not lay out $ROOT/clang-resource"; exit 1; }
 echo "    host compiler $TC; SDK $SDK_RUNTIME; linker $LLD; builtins $BUILTINS"
 
@@ -181,10 +199,25 @@ echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order
 #       delegates through a local function carrying the same @available, where the concrete init
 #       resolves. Behavior is upstream's on every OS, since `#available` is folded away under that
 #       flag; the compiler's own "infinite recursion" warning is gone.
+#  0012 Concurrency deployment floor — Concurrency's CMakeLists.txt raised its deployment target to
+#       10.15 whatever the stdlib's; it now follows SWIFT_DARWIN_DEPLOYMENT_VERSION_OSX, 10.9, so the dylib
+#       records minOS 10.9 as Core does, and step 7 holds it to that.
+#  0013 Concurrency extra link flags — a hook, MAVERGREEN_CONCURRENCY_LINK_FLAGS, appended to Concurrency's
+#       LINK_FLAGS: step 4 passes Recaulk's subset for Concurrency and its unexported list, so they reach
+#       that link alone (CMAKE_SHARED_LINKER_FLAGS, which carries Core's subset, reaches every dylib).
+#  0014 Concurrency legacy dispatch priority — 10.9's libdispatch predates QoS classes: its
+#       dispatch_get_global_queue answers NULL for every QoS class but 0, and Concurrency passed a job's
+#       QoS. Below 10.10 a QoS now maps to the DISPATCH_QUEUE_PRIORITY_* value later libdispatch maps it to.
+#  0015 Concurrency task_resume tracing guard — task_resume is the one trace call without ENSURE_LOGS(),
+#       so on 10.9, where os_signpost is absent (weak, NULL), it called os_signpost_id_make_with_pointer:
+#       the A1 spike's first box run died in dyld's lazy binding there.
+#  0016 Concurrency continuous deadline as uptime — 10.9's libdispatch never fires a deadline in the
+#       continuous clock's bit-63 encoding, and every Task.sleep uses one (the spike's box hung, both
+#       threads idle); below 10.15 such a deadline is expressed as an uptime one, which 10.9 honours.
 # Patches are --no-prefix format; patch_source applies them with -p0. A new patch needs its number here and a marker grep
 # below: a patch file this list lacks fails the build rather than being skipped, and
 # tests/runtime-patch-list-test.sh holds the list, the files and the marker greps together.
-RUNTIME_PATCHES="0004 0005 0007 0008 0009 0010 0011"
+RUNTIME_PATCHES="0004 0005 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016"
 PATCHES_DIR="$HERE/patches/runtime"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $RUNTIME_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED"
@@ -201,6 +234,11 @@ grep -q 'was: hasFeature(Macros)' swift/stdlib/public/core/StringBridge.swift ||
 grep -q 'Mavericks: no libc++ autolink' swift/stdlib/public/runtime/Metadata.cpp || { echo "patch 0009 (no libc++ autolink) not applied"; exit 1; }
 grep -q 'Mavericks: Foundation-free StdlibUnittest' swift/stdlib/private/StdlibUnittest/StdlibUnittest.swift || { echo "patch 0010 (Foundation-free StdlibUnittest) not applied"; exit 1; }
 grep -q 'Mavericks: through a function that carries the same availability' swift/stdlib/public/core/FloatingPointParsing.swift.gyb || { echo "patch 0011 (float parsing delegation) not applied"; exit 1; }
+grep -q "Mavericks: follow the stdlib's 10.9" swift/stdlib/public/Concurrency/CMakeLists.txt || { echo "patch 0012 (Concurrency deployment floor) not applied"; exit 1; }
+grep -q 'mavericks_concurrency_link_flags UNIX_COMMAND "${MAVERGREEN_CONCURRENCY_LINK_FLAGS}"' swift/stdlib/public/Concurrency/CMakeLists.txt || { echo "patch 0013 (Concurrency extra link flags) not applied"; exit 1; }
+grep -q 'mav_globalQueueIdentifier' swift/stdlib/public/Concurrency/DispatchGlobalExecutor.cpp || { echo "patch 0014 (Concurrency legacy dispatch priority) not applied"; exit 1; }
+grep -q 'ENSURE_LOGS();  // Mavericks: the one trace call without it' swift/stdlib/public/Concurrency/TracingSignpost.h || { echo "patch 0015 (Concurrency task_resume tracing guard) not applied"; exit 1; }
+grep -q 'Mavericks: OS X 10.9.s libdispatch does not know the bit-63 encoding' swift/stdlib/public/Concurrency/DispatchGlobalExecutor.cpp || { echo "patch 0016 (Concurrency continuous deadline as uptime) not applied"; exit 1; }
 # de-instrumented: no debug logging must ship
 ! grep -rq 'getenv("MAV_' swift/stdlib/public/runtime/ || { echo "MAV debug logging leaked into patches"; exit 1; }
 
@@ -216,7 +254,7 @@ LINK="-fuse-ld=lld --ld-path=$LLD"
 # change (a toolchain update, say, or a pin moved to an older commit, whose tarball's files all carry that
 # commit's date), and would keep the objects the previous ones built; and a configured tree keeps its
 # first CMAKE_AR. The overlays' trees are stamped too: step 5b writes into this tree.
-STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS" "$X/llvm-ar" "$LIBCXX" "$CXXINC/__config" "$RECAULK_A" && source_stamp swift swift-6.2 swift-5.4)" || { echo "FAIL: could not stamp the host inputs and the swift sources"; exit 1; }
+STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS" "$X/llvm-ar" "$LIBCXX" "$CXXINC/__config" "$RECAULK_A" "$RECAULK_CONC_A" && source_stamp swift swift-6.2 swift-5.4)" || { echo "FAIL: could not stamp the host inputs and the swift sources"; exit 1; }
 reuse_build_dir "$ROOT/stdlib-build" "$STAMP" || exit 1
 # LLVM_BUILD_* are build-tree-only variables that an install tree does not define, but
 # SwiftSharedCMakeConfig.cmake preconditions on them. LLVM_BUILD_MAIN_SRC_DIR only needs to be
@@ -248,6 +286,8 @@ shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
   -DLLVM_BUILD_BINARY_DIR="$LLVMB/bin" \
   -DLLVM_BUILD_MAIN_SRC_DIR="$LLVMB" \
   -DSWIFT_INCLUDE_TOOLS=OFF \
+  -DSWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY=ON \
+  "-DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$RECAULK_CONC_A -Wl,-unexported_symbols_list,$RECAULK_CONC_UNX" \
   -DSWIFT_BUILD_STDLIB=ON -DSWIFT_BUILD_DYNAMIC_STDLIB=ON -DSWIFT_BUILD_STATIC_STDLIB=OFF \
   -DSWIFT_BUILD_SDK_OVERLAY=OFF -DSWIFT_BUILD_DYNAMIC_SDK_OVERLAY=OFF -DSWIFT_BUILD_STATIC_SDK_OVERLAY=OFF \
   -DSWIFT_BUILD_REMOTE_MIRROR=OFF -DSWIFT_BUILD_SOURCEKIT=OFF -DSWIFT_BUILD_SWIFT_SYNTAX=OFF \
@@ -265,8 +305,8 @@ printf '%s\n' "$STAMP" > "$ROOT/stdlib-build/mavergreen-inputs.stamp"
 PY="$(sed -n 's/^_Python3_EXECUTABLE:INTERNAL=//p' "$ROOT/stdlib-build/CMakeCache.txt")"
 if [ -n "$PY" ]; then echo "    gyb runs $PY: $("$PY" --version 2>&1 || :)"; else echo "    CMake's cache names no python for gyb"; fi
 
-echo "==> 5. build libswiftCore (+ SwiftOnoneSupport)"
-ninja -C "$ROOT/stdlib-build" swiftCore-macosx-$ARCH swiftSwiftOnoneSupport-macosx-$ARCH
+echo "==> 5. build libswiftCore (+ SwiftOnoneSupport, and _Concurrency)"
+ninja -C "$ROOT/stdlib-build" swiftCore-macosx-$ARCH swiftSwiftOnoneSupport-macosx-$ARCH swift_Concurrency-macosx-$ARCH
 
 echo "==> 5b. the Darwin and ObjectiveC overlays, beside libswiftCore (against the 10.9 SDK)"
 # spec: "The overlays" -- written into the stdlib build's tree beside Core (lib/swift/macosx/<M>.swiftmodule,
@@ -383,10 +423,11 @@ PYTHON="${PY:-python3}" sh "$HERE/scripts/stage-selftest-support.sh" "$ROOT/stdl
   || { echo "FAIL: could not stage the self-test's support in $SELFTEST_SUPPORT_OUT"; exit 1; }
 
 echo "==> 7. self pre-flight (must show minOS 10.9 and NO os_unfair_lock)"
-# Every dylib that ships: the staged runtime's two, and the overlays, read from the stdlib build's tree
-# where step 5b wrote them (space-free paths: lib.sh refuses a root with whitespace).
-SHIPPED_DYLIBS="$CORE $(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib $RES/macosx/$ARCH/libswiftDarwin.dylib $RES/macosx/$ARCH/libswiftObjectiveC.dylib"
+# Every dylib that ships: the staged runtime's two, and the overlays and libswift_Concurrency, read from the
+# stdlib build's tree where steps 5 and 5b wrote them (space-free paths: lib.sh refuses a root with whitespace).
 DARWIN="$RES/macosx/$ARCH/libswiftDarwin.dylib"
+CONCURRENCY="$RES/macosx/$ARCH/libswift_Concurrency.dylib"
+SHIPPED_DYLIBS="$CORE $(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib $DARWIN $RES/macosx/$ARCH/libswiftObjectiveC.dylib $CONCURRENCY"
 for lib in $SHIPPED_DYLIBS; do [ -f "$lib" ] || { echo "FAIL: no $lib to check"; exit 1; }; done
 # platform: dyld_info reads an x86_64 Mach-O natively on an arm64 host. `arch -x86_64 dyld_info`
 #           needs Rosetta AND an x86_64 slice in dyld_info, and Command Line Tools 27 ships it arm64-only.
@@ -421,15 +462,18 @@ recaulk_hidden() {
 # shellcheck disable=SC2086  # space-free symbol names
 recaulk_hidden "$CORE" "$RECAULK_UNX" $RECAULK_RUNTIME_SYMBOLS
 recaulk_hidden "$DARWIN" "$RECAULK_DARWIN_UNX" $RECAULK_DARWIN_SYMBOLS
+# shellcheck disable=SC2086  # space-free symbol names
+recaulk_hidden "$CONCURRENCY" "$RECAULK_CONC_UNX" $RECAULK_CONCURRENCY_SYMBOLS
 # spec: INGREDIENTS.md "Recaulk" -- APSL 2.0 section 2.3 wants the "source is available" notice in the code
 #       itself and in the documentation. Recaulk embeds it in each Apple-derived member and lists it in
-#       share/recaulk/notices.tsv: every dylib that links a Recaulk subset (libswiftCore and libswiftDarwin;
-#       the other two link none) must still carry the notice of each APSL member it links after our link
+#       share/recaulk/notices.tsv: every dylib that links a Recaulk subset (libswiftCore, libswiftDarwin and
+#       libswift_Concurrency; the other two link none) must still carry the notice of each APSL member it links after our link
 #       (dead-stripping, -S, the unexported list), and NOTICE must carry it too (lib.sh's recaulk_notices).
 #       The tsv lists only APSL members, so a linked MacPorts mp-* member without a row passes only when
 #       named here, its licence read and carried in NOTICE: pthread_chdir.c is under legacy-support's MIT
-#       LICENSE (tests/notice-test.sh holds NOTICE to each name).
-RECAULK_NOTICES_REVIEWED="mp-pthread_chdir.o"
+#       LICENSE, and time.c (Concurrency's clock_gettime) under its own ISC-style grant
+#       (tests/notice-test.sh holds NOTICE to each name).
+RECAULK_NOTICES_REVIEWED="mp-pthread_chdir.o mp-time.o"
 # recaulk_notices_in <dylib> <subset.a>
 recaulk_notices_in() {
   _rni="$(AR="$X/llvm-ar"; recaulk_notices "$RECAULK_PREFIX/share/recaulk/notices.tsv" "$2" "$1" "$HERE/NOTICE")" \
@@ -438,11 +482,20 @@ recaulk_notices_in() {
 }
 recaulk_notices_in "$CORE" "$RECAULK_A"
 recaulk_notices_in "$DARWIN" "$RECAULK_DARWIN_A"
+recaulk_notices_in "$CONCURRENCY" "$RECAULK_CONC_A"
 #       The weak imports whose presence the runtime reads as the OS's answer stay the OS's (a
 #       whole-archive link would bind them, and os_signpost_enabled would turn tracing on over NULLs).
 for s in objc_realizeClassFromSwift os_signpost_enabled os_signpost_emit_with_name_impl availability_version_check; do
   printf '%s\n' "$IMPORTS_OUT" | grep "$s" | grep -q '\[weak-import\]' \
     || { echo "FAIL: $s is not a weak import of the OS's (a Recaulk definition bound it?)"; exit 1; }
+done
+#       libswift_Concurrency's tracing reads them the same way (TracingCommon.h's weak check, then each
+#       call's ENSURE_LOGS, patch 0015 adding task_resume's), so they stay weak imports of the OS's too.
+CONC_IMPORTS="$(DYLDINFO="$DYLDINFO" macho_imports "$CONCURRENCY")" || { echo "FAIL: could not read $CONCURRENCY's imports"; exit 1; }
+[ -n "$CONC_IMPORTS" ] || { echo "FAIL: read no imports from $CONCURRENCY"; exit 1; }
+for s in _os_signpost_enabled __os_signpost_emit_with_name_impl __os_log_create _os_signpost_id_generate _os_signpost_id_make_with_pointer; do
+  printf '%s\n' "$CONC_IMPORTS" | awk -v s="$s" '$1 == s && $2 == "[weak-import]" { f = 1 } END { exit !f }' \
+    || { echo "FAIL: $s is not a weak import of the OS's in $CONCURRENCY (a Recaulk definition bound it?)"; exit 1; }
 done
 # spec: INGREDIENTS.md "Recaulk" -- an import the OS lacks fails in dyld on a real 10.9 box, not at link
 #       time against the 11.3 SDK. Every symbol the shipped dylibs import from /usr/lib or a framework is
@@ -485,9 +538,18 @@ for lib in $SHIPPED_DYLIBS; do
   printf '%s\n' "$DEPS" | grep -qx '/usr/lib/libSystem\.B\.dylib' \
     || { printf '%s\n' "$DEPS"; echo "FAIL: ${OTOOL:-otool} read no libSystem from $lib, so it read nothing $lib links (listed above)"; exit 1; }
   case "${lib##*/}" in
-    libswiftCore.dylib|libswiftSwiftOnoneSupport.dylib)
+    libswiftCore.dylib|libswiftSwiftOnoneSupport.dylib|libswift_Concurrency.dylib)
       printf '%s\n' "$DEPS" | grep -qx '/usr/local/mavergreen/libcxx22/lib/libc++\.1\.dylib' \
-        || { printf '%s\n' "$DEPS"; echo "FAIL: $lib does not link libcxx22's libc++ (listed above)"; exit 1; } ;;
+        || { printf '%s\n' "$DEPS"; echo "FAIL: $lib does not link libcxx22's libc++ (listed above)"; exit 1; }
+      # Concurrency is a stdlib dylib, named as Core is (/usr/lib/swift/<name>, with an $ld$previous that
+      # makes a 10.9 client record @rpath/<name>); through _Builtin_float, whose $ld$previous below 10.14.4
+      # names libswiftDarwin, it loads libswiftDarwin, and does not load on 10.9 without it.
+      if [ "${lib##*/}" = libswift_Concurrency.dylib ]; then
+        printf '%s\n' "$DEPS" | grep -qx '@rpath/libswiftDarwin\.dylib' \
+          || { printf '%s\n' "$DEPS"; echo "FAIL: $lib does not link @rpath/libswiftDarwin.dylib (listed above)"; exit 1; }
+        "${NM:-nm}" -gU "$lib" | awk '{ print $NF }' | grep -Fq '$ld$previous$@rpath/libswift_Concurrency.dylib$$1$10.9$' \
+          || { echo "FAIL: $lib has no \$ld\$previous naming @rpath/libswift_Concurrency.dylib for a 10.9 client"; exit 1; }
+      fi ;;
     *)
       # Global Constraints: every new library is @rpath/<name>, as the Swift libraries reach each other.
       ID="$("${OTOOL:-otool}" -D "$lib" | sed 1d)"
@@ -518,4 +580,4 @@ IMPORTS_SUP="$(DYLDINFO="$DYLDINFO" NM="${NM:-nm}" OTOOL="${OTOOL:-otool}" sh "$
   "$HERE/scripts/resources/weak-absent-on-10.9.txt" $SUPPORT_DYLIBS)" \
   || { printf '%s\n' "$IMPORTS_SUP"; echo "FAIL: a test-support library imports what OS X 10.9 lacks (listed above)"; exit 1; }
 printf '%s\n' "$IMPORTS_SUP"
-echo "OK: minOS $DEPLOYMENT; no os_unfair_lock; Recaulk's $RECAULK_RUNTIME_SYMBOLS (libswiftCore) and $RECAULK_DARWIN_SYMBOLS (libswiftDarwin) defined and hidden; Recaulk's APSL notices in the code and NOTICE; no debug strings; no build paths; checked $(for lib in $SHIPPED_DYLIBS; do printf '%s ' "${lib##*/}"; done); staged in $OUT; no test support in it"
+echo "OK: minOS $DEPLOYMENT; no os_unfair_lock; Recaulk's $RECAULK_RUNTIME_SYMBOLS (libswiftCore), $RECAULK_DARWIN_SYMBOLS (libswiftDarwin) and $RECAULK_CONCURRENCY_SYMBOLS (libswift_Concurrency) defined and hidden; Recaulk's APSL notices in the code and NOTICE; no debug strings; no build paths; checked $(for lib in $SHIPPED_DYLIBS; do printf '%s ' "${lib##*/}"; done); staged in $OUT; no test support in it"
