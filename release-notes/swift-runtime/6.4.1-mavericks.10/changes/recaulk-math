@@ -1,0 +1,1 @@
+Programs built with either toolchain now get correct results on 10.9 from Double.addingProduct, Float80.addingProduct and Float80.rounded(.towardZero), which the OS's own math library gets wrong.

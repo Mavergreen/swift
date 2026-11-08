@@ -1,0 +1,1 @@
+Both toolchains now link Recaulk into every program; a program calling openat or a similar call built from Apple's code carries its license notice, which its documentation should repeat.

@@ -29,7 +29,7 @@ exclude test/Concurrency/Runtime/startImmediately.swift -- a Concurrency test: t
 exclude test/stdlib/DarwinAPI.swift -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/ErrorBridged.swift -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/FloatConstants.swift -- RUN uses %target-typecheck-verify-swift
-exclude test/stdlib/FloatingPoint.swift.gyb -- 10.9's libm: fma returns the wrong sign (Double.addingProduct at -Onone) and truncl(-0) returns +0 (Float80.round); the test binary calls libSystem's itself, as the stdlib's inlined code does, so libswiftCore's Recaulk copies do not reach it
+include test/stdlib/FloatingPoint.swift.gyb
 exclude test/stdlib/FloatingPointDiagnostics.swift -- RUN uses %target-typecheck-verify-swift
 exclude test/stdlib/FloatingPointIR.swift -- needs FileCheck, which no 10.9 pkg ships
 exclude test/stdlib/FloatingPointIR_FP80.swift -- needs FileCheck, which no 10.9 pkg ships
