@@ -3,7 +3,9 @@
 # usage: sh tests/stage-and-package-test.sh   (from the repo root, as run-repo-tests.sh runs it)
 #   Stages a fake build with scripts/stage-runtime.sh, packages it with package.sh, and checks the
 #   payload is exactly the runtime prefix and its manifest (plus, when an updater is staged, the
-#   updater and LaunchAgent the registry derives), and passes artifact conformance with no deviation.
+#   updater and LaunchAgent the registry derives), and passes artifact conformance with no deviation; and that
+#   the compat guard, run over the staged lib/swift/*.dylib as release.yml runs it, passes, the
+#   libswiftCompatibilitySpan.dylib link (libswiftCore, sdk 11.3) excused by its own sdk-pin entry.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
@@ -18,8 +20,9 @@ P=usr/local/mavergreen/swift-runtime
 
 mkdir -p "$T/built"
 printf 'int f(void){return 0;}\n' > "$T/f.c"
+# Core and OnoneSupport record the pinned modern SDK, 11.3, as the real build's do (INGREDIENTS.md's sdk-pin deviations).
 for lib in libswiftCore libswiftSwiftOnoneSupport; do
-  cc -dynamiclib -arch x86_64 -mmacosx-version-min=10.9 -install_name "@rpath/$lib.dylib" \
+  cc -dynamiclib -arch x86_64 -mmacosx-version-min=10.9 -Wl,-platform_version,macos,10.9,11.3 -install_name "@rpath/$lib.dylib" \
     -o "$T/built/$lib.dylib" "$T/f.c"
 done
 # The overlays record the 10.9 SDK, as the real build's do: INGREDIENTS.md exempts only Core and OnoneSupport, so
@@ -32,7 +35,8 @@ done
 # libswift_Concurrency records sdk 11.3 as Core does (INGREDIENTS.md's sdk-pin deviation); the stdlib build
 # leaves libswift_Builtin_float.dylib beside it in the built dir, a stub of symbols libswiftDarwin defines.
 for lib in libswift_Concurrency libswift_Builtin_float; do
-  cc -dynamiclib -arch x86_64 -mmacosx-version-min=10.9 -install_name "@rpath/$lib.dylib" -o "$T/built/$lib.dylib" "$T/f.c"
+  cc -dynamiclib -arch x86_64 -mmacosx-version-min=10.9 -Wl,-platform_version,macos,10.9,11.3 -install_name "@rpath/$lib.dylib" \
+    -o "$T/built/$lib.dylib" "$T/f.c"
 done
 
 echo "-- staging refuses a build missing any of the five dylibs, naming it"
@@ -104,6 +108,16 @@ $want"
 [ ! -e "$T/out/$P/lib/swift/libswift_Builtin_float.dylib" ] || fail "staged libswift_Builtin_float.dylib, a stub no pkg ships"
 cmp -s LICENSE "$T/out/$P/share/doc/LICENSE.txt" || fail "staged LICENSE.txt is not this repo's LICENSE"
 cmp -s NOTICE "$T/out/$P/share/doc/NOTICE" || fail "staged NOTICE is not this repo's NOTICE"
+
+echo "-- the compat guard, as release.yml runs it over the staged lib/swift/*.dylib, passes: the Span link reads as"
+echo "   libswiftCore.dylib, sdk 11.3, and needs its own sdk-pin entry, without which the guard fails"
+sh scripts/guard.sh "$T/out/$P/lib/swift"/*.dylib > "$T/guard.log" 2>&1 || fail "the compat guard failed on the staged runtime: $(cat "$T/guard.log")"
+grep -q "libswiftCompatibilitySpan.dylib is excused from sdk-pin" "$T/guard.log" || fail "the guard did not read the Span link: $(cat "$T/guard.log")"
+mkdir -p "$T/devs"; grep -v '^- sdk-pin:\*/swift-runtime/lib/swift/libswiftCompatibilitySpan\.dylib:' INGREDIENTS.md > "$T/devs/INGREDIENTS.md"
+if MAVERICKS_DEVIATIONS_ROOT="$T/devs" sh scripts/guard.sh "$T/out/$P/lib/swift"/*.dylib > "$T/guard.log" 2>&1; then
+  fail "the compat guard passed the Span link with no sdk-pin entry for it"
+fi
+grep -q 'libswiftCompatibilitySpan.dylib: x86_64 records' "$T/guard.log" || fail "the guard failed, but not on the Span link: $(cat "$T/guard.log")"
 
 expand_pkg() {
   rm -rf "$2"; pkgutil --expand "$1" "$2" || fail "pkgutil --expand $1 failed"

@@ -328,14 +328,16 @@ believing a release is good; it is not the bar for publishing one.
 
 `check-artifact-conformance.sh` holds a release's artifacts to the family's schemes, and the compat
 guard (`scripts/guard.sh`) reads the `sdk-pin` entries too. These departures are deliberate, and
-each is scoped to the artifact it concerns: the first nine to the stdlib dylibs (libswiftCore,
-libswiftSwiftOnoneSupport and libswift_Concurrency: the runtime pkg's, and the same bytes in both toolchain pkgs), the next to the cross toolchain pkg's install floor, the
+each is scoped to the artifact it concerns: the first ten to the stdlib dylibs (libswiftCore,
+libswiftSwiftOnoneSupport and libswift_Concurrency: the runtime pkg's, with the libswiftCompatibilitySpan.dylib link to
+Core, and the same bytes in both toolchain pkgs), the next to the cross toolchain pkg's install floor, the
 next to vm-test's upgrade from the newest release, and the last ones to the swift.org mirror attached to
 `-mavericks.1` releases.
 
 - sdk-pin:*/swift-runtime/lib/swift/libswiftCore.dylib: the Swift runtime cannot be built against the 10.9 SDK, which has no libc++ headers at all (only libstdc++ 4.2.1) while Swift 6.4 requires C++17, and which lacks declarations of post-10.9 APIs the runtime calls behind availability checks. Its build uses a modern SDK, pinned: MacOSX11.3.sdk, shipyard's arm64 pin (`fetch_sdk.sh --arch arm64`), the same in CI and on 10.9, so a runtime built on 10.9 is byte-identical to CI's. These two record sdk 11.3 (the Darwin and ObjectiveC overlays beside them compile against the 10.9 SDK, record sdk 10.9, and take no exemption); their libc++ is libcxx22's, not the SDK's ("One C++ runtime", above). minos stays 10.9, and the real-10.9 gate is its acceptance. Revisit if the gate gains per-product pins.
 - sdk-pin:*/swift-runtime/lib/swift/libswiftSwiftOnoneSupport.dylib: the same stdlib build and the same reason as libswiftCore.dylib's, above.
 - sdk-pin:*/swift-runtime/lib/swift/libswift_Concurrency.dylib: the same stdlib build and the same reason as libswiftCore.dylib's, above: Concurrency's runtime is C++17 as Core's is, and records sdk 11.3 and minos 10.9 (runtime patch 0012 lowers the 10.15 its build forced).
+- sdk-pin:*/swift-runtime/lib/swift/libswiftCompatibilitySpan.dylib: a link to libswiftCore.dylib in the same directory (scripts/stage-runtime.sh; "The compiler's runtime table", above), so it is libswiftCore's bytes, and the compat guard, given the runtime's lib/swift/*.dylib, follows it and reads Core's sdk 11.3: libswiftCore.dylib's reason, above, verbatim. The toolchains ship no such link (a program's link reaches the name through Core's $ld$previous, not a file).
 - sdk-pin:*/swift-toolchain/lib/swift/macosx/libswiftCore.dylib: the toolchain's stdlib dylibs are the runtime's own bytes, staged from the one stdlib build (scripts/stage-toolchain.sh), so the runtime's reason above applies verbatim. The compiler, lld and clang beside them record the pinned 10.9 SDK and take no exemption.
 - sdk-pin:*/swift-toolchain/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib: the same stdlib build and the same reason as libswiftCore.dylib's, above.
 - sdk-pin:*/swift-toolchain/lib/swift/macosx/libswift_Concurrency.dylib: the runtime's own bytes too, from the same stdlib build, and the same reason as libswiftCore.dylib's, above; the toolchain ships it so a program's link finds it, as it ships Core's.
