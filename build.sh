@@ -250,7 +250,8 @@ PM_C="$(prefix_map_flags c "$ROOT")"
 PM_SWIFT="$(prefix_map_flags swift "$ROOT")"
 LINK="-fuse-ld=lld --ld-path=$LLD"
 # A reused stdlib-build is kept only while the host compiler, clang, clang's cfgs, builtins archive and
-# archiver are the bytes it was configured with, and swift the source it compiled: ninja cannot see them
+# archiver are the bytes it was configured with, and swift the source it compiled, with the same patches
+# (a file a patch stops touching is extracted again with the tarball's old date): ninja cannot see them
 # change (a toolchain update, say, or a pin moved to an older commit, whose tarball's files all carry that
 # commit's date), and would keep the objects the previous ones built; and a configured tree keeps its
 # first CMAKE_AR. The overlays' trees are stamped too: step 5b writes into this tree.

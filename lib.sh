@@ -124,14 +124,18 @@ source_commit() {
 
 # source_stamp <dir>... -- one line per source tree, `source <name> <repo> <commit> <sha256>`, from the
 # .mavergreen-source fetch_source left in <dir>: the identity of each tree a build dir compiles, for its
-# reuse_build_dir stamp. GitHub's tarball dates every file at its commit's time, so after a pin moves to
-# an older commit every input is older than the outputs a reused dir holds, and ninja rebuilds nothing;
-# the dir is started afresh instead. Fails, naming it, for a tree fetch_source did not complete.
+# reuse_build_dir stamp, then `patch <name> <patch> <sha256>` for each patch patch_source applied to it, in
+# order (its .mavergreen-patches). GitHub's tarball dates every file at its commit's time, so after a pin
+# moves to an older commit every input is older than the outputs a reused dir holds, and ninja rebuilds
+# nothing; and a file a changed patch set stops touching is extracted again with that old date, so the
+# objects built from the patched file are kept. The dir is started afresh instead. Fails, naming it, for a
+# tree fetch_source did not complete.
 source_stamp() {
   for _ss_d in "$@"; do
     _ss_l="$(sed -n 1p "$_ss_d/.mavergreen-source" 2>/dev/null)" || _ss_l=""
     [ -n "$_ss_l" ] || { echo "source_stamp: no $_ss_d/.mavergreen-source -- a source tree fetch_source did not complete" >&2; return 1; }
     printf 'source %s %s\n' "${_ss_d##*/}" "$_ss_l"
+    [ ! -f "$_ss_d/.mavergreen-patches" ] || sed "s|^|patch ${_ss_d##*/} |" "$_ss_d/.mavergreen-patches"
   done
 }
 
@@ -143,7 +147,8 @@ source_stamp() {
 # still accepted, as it was, except that GNU patch then holds a hunk with less context before than after
 # to the start of the file, a shape diff -U3 makes only there); --no-backup-if-mismatch stops both from
 # leaving a backup beside a file a hunk reached at an offset. Fails, too, when a .orig, .rej or ~ backup
-# is left anywhere in <dir>.
+# is left anywhere in <dir>. Each one applied is recorded, `<file name> <sha256>`, in <dir>/.mavergreen-patches,
+# which source_stamp reads (fetch_source's fresh extraction has none).
 patch_source() {
   _ps_dir="$1"; shift
   [ -d "$_ps_dir" ] || { echo "FAIL: no source tree at $_ps_dir to patch" >&2; return 1; }
@@ -154,6 +159,9 @@ patch_source() {
     _ps_out="$(cd "$_ps_dir" && patch -p0 -N -F 0 --no-backup-if-mismatch --dry-run -i "$_ps_p" < /dev/null 2>&1)" || {
       printf '%s\n' "$_ps_out" >&2; echo "FAIL: patch did not apply: $_ps_p" >&2; return 1; }
     ( cd "$_ps_dir" && patch -p0 -N -F 0 --no-backup-if-mismatch -s -i "$_ps_p" < /dev/null ) || { echo "FAIL: patch did not apply: $_ps_p" >&2; return 1; }
+    _ps_s="$(shasum -a 256 < "$_ps_p" | awk '{ print $1 }')"
+    [ "${#_ps_s}" -eq 64 ] || { echo "FAIL: patch_source: could not hash $_ps_p" >&2; return 1; }
+    printf '%s %s\n' "${_ps_p##*/}" "$_ps_s" >> "$_ps_dir/.mavergreen-patches"
   done
   _ps_left="$(cd "$_ps_dir" && find . \( -name '*.orig' -o -name '*.rej' -o -name '*~' \) -print)"
   [ -z "$_ps_left" ] || { printf '%s\n' "$_ps_left" >&2; echo "FAIL: patching left the files above in $_ps_dir" >&2; return 1; }

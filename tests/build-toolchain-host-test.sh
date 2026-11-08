@@ -240,6 +240,11 @@ C_LINE="source cmark $CMARK_REPO_URL $CMARK_SHA $CMARK_TARBALL_SHA256"
 S_LINE="source swift-compiler $SWIFT_REPO_URL $SWIFT_SHA $SWIFT_TARBALL_SHA256"
 [ "$(cat "$W/llvm-x86/mavergreen-inputs.stamp")" = "$L_LINE" ] || fail "llvm-x86's stamp: $(cat "$W/llvm-x86/mavergreen-inputs.stamp")"
 [ "$(cat "$W/cmark-x86/mavergreen-inputs.stamp")" = "$C_LINE" ] || fail "cmark-x86's stamp: $(cat "$W/cmark-x86/mavergreen-inputs.stamp")"
+# The compiler's source line is followed by each compiler patch the x86_64 build applied to it, in order.
+for p in "$REPO"/patches/compiler/*.patch; do
+  S_LINE="$S_LINE
+patch swift-compiler ${p##*/} $(shasum -a 256 < "$p" | awk '{ print $1 }')"
+done
 [ "$(cat "$W/swift-x86/mavergreen-inputs.stamp")" = "$S_LINE
 $L_LINE
 $C_LINE" ] || fail "swift-x86's stamp: $(cat "$W/swift-x86/mavergreen-inputs.stamp")"

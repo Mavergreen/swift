@@ -71,8 +71,9 @@ NATIVE="$W/llvm-build"; TC="$W/toolchain/usr"
 grep -q "swiftlang's fork refuses every Apple-platform input" llvm-project/lld/MachO/InputFiles.cpp \
   || { echo "FAIL: llvm-project lacks patches/llvm -- run ./build-llvm.sh"; exit 1; }
 # Each build dir below is kept only while the source trees it compiles are the ones it was built from
-# (lib.sh's source_stamp and reuse_build_dir): a tarball's files carry its commit's date, so ninja, given
-# an older commit's tree, would keep the newer one's objects. llvm-project is build-llvm.sh's.
+# (lib.sh's source_stamp and reuse_build_dir), with the same patches: a tarball's files carry its commit's
+# date, so ninja, given an older commit's tree, or a file a patch no longer touches, would keep the objects
+# built before. llvm-project is build-llvm.sh's.
 LLVM_SRC="$(source_stamp llvm-project)" || { echo "FAIL: llvm-project is no source tree build-llvm.sh extracted -- run ./build-llvm.sh"; exit 1; }
 if [ "$MODE" = cross ]; then
   [ -x "$NATIVE/bin/llvm-tblgen" ] || { echo "FAIL: no native TableGen -- run ./build-llvm.sh"; exit 1; }

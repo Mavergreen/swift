@@ -16,7 +16,7 @@
 #   for, CMake's Apple probes answered and check_language(Swift)'s probe not run (its sub-configure names no
 #   SDK and asks xcrun for one), and never run git or xcrun (OS X 10.9 has neither without the Command Line
 #   Tools). A stdlib-build is kept while the swift source is the same commit's, and started afresh when it
-#   is another's (its stamp records the source, lib.sh's source_stamp).
+#   is another's (its stamp records the source and the patches applied to it, lib.sh's source_stamp).
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -232,6 +232,9 @@ grep -q '^archiver ' "$SB/mavergreen-inputs.stamp" \
 # libcxx22's dylib and headers and the two Recaulk subsets (Core's, Concurrency's): four further inputs.
 [ "$(grep -c '^input ' "$SB/mavergreen-inputs.stamp")" -eq 4 ] \
   || fail "the stdlib-build's stamp does not record libcxx22 and Recaulk: $(cat "$SB/mavergreen-inputs.stamp")"
+# The runtime patches applied, in order (lib.sh's source_stamp): a changed patch set starts it afresh.
+[ "$(sed -n 's/^patch swift \([0-9]*\)-[^ ]*\.patch [0-9a-f]\{64\}$/\1/p' "$SB/mavergreen-inputs.stamp" | tr '\n' ' ')" = "0004 0005 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016 " ] \
+  || fail "the stdlib-build's stamp does not record the runtime patches: $(cat "$SB/mavergreen-inputs.stamp")"
 
 echo "-- the stdlib-build's stamp records the swift source: the same commit keeps it, another commit's starts it afresh"
 grep -qxF "source swift https://github.com/swiftlang/swift.git $SWIFT_SHA $SWIFT_TARBALL_SHA256" "$SB/mavergreen-inputs.stamp" \

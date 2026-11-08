@@ -159,6 +159,34 @@ reuse_build_dir "$T/lb" "$(source_stamp "$T/src/llvm-project" "$T/src/cmark")" >
 [ ! -d "$T/lb" ] || fail "a build dir stamped with another commit's source was kept"
 grep -q 'removing' "$T/out" || fail "removed the build dir without saying so"
 
+echo "-- source_stamp: each patch patch_source applied, by name and sha256, in order; another patch set, or a"
+echo "   patch's bytes changed, starts the build dir afresh (a file a patch stops touching keeps its old date)"
+ps_tree() {  # a fresh extraction of one commit, as fetch_source leaves it
+  rm -rf "$T/src/sw"; mkdir -p "$T/src/sw"; printf 'one\ntwo\n' > "$T/src/sw/a.txt"; printf 'x\ny\n' > "$T/src/sw/b.txt"
+  echo "https://x/swift.git dddd 4444" > "$T/src/sw/.mavergreen-source"
+}
+mkdir -p "$T/pa"
+printf -- '--- a.txt\n+++ a.txt\n@@ -1,2 +1,2 @@\n one\n-two\n+TWO\n' > "$T/pa/0001-a.patch"
+printf -- '--- b.txt\n+++ b.txt\n@@ -1,2 +1,2 @@\n x\n-y\n+Y\n' > "$T/pa/0002-b.patch"
+ps_tree; patch_source "$T/src/sw" "$T/pa/0001-a.patch" "$T/pa/0002-b.patch" > /dev/null 2>&1 || fail "patch_source failed"
+got="$(source_stamp "$T/src/sw")" || fail "source_stamp failed on a patched tree"
+s_a="$(shasum -a 256 < "$T/pa/0001-a.patch" | awk '{ print $1 }')"; s_b="$(shasum -a 256 < "$T/pa/0002-b.patch" | awk '{ print $1 }')"
+[ "$got" = "source sw https://x/swift.git dddd 4444
+patch sw 0001-a.patch $s_a
+patch sw 0002-b.patch $s_b" ] || fail "source_stamp of a patched tree: $got"
+mkdir -p "$T/pb"; : > "$T/pb/obj.o"; printf '%s\n' "$got" > "$T/pb/mavergreen-inputs.stamp"
+ps_tree; patch_source "$T/src/sw" "$T/pa/0001-a.patch" "$T/pa/0002-b.patch" > /dev/null 2>&1 || fail "patch_source failed"
+reuse_build_dir "$T/pb" "$(source_stamp "$T/src/sw")" > /dev/null || fail "reuse_build_dir failed"
+[ -f "$T/pb/obj.o" ] || fail "the same patches applied again removed the build dir"
+ps_tree; patch_source "$T/src/sw" "$T/pa/0001-a.patch" > /dev/null 2>&1 || fail "patch_source failed"
+reuse_build_dir "$T/pb" "$(source_stamp "$T/src/sw")" > "$T/out" || fail "reuse_build_dir failed"
+[ ! -d "$T/pb" ] || fail "a build dir stamped with another patch set was kept"
+mkdir -p "$T/pb"; : > "$T/pb/obj.o"; printf '%s\n' "$got" > "$T/pb/mavergreen-inputs.stamp"
+printf -- '--- b.txt\n+++ b.txt\n@@ -1,2 +1,2 @@\n x\n-y\n+YY\n' > "$T/pa/0002-b.patch"
+ps_tree; patch_source "$T/src/sw" "$T/pa/0001-a.patch" "$T/pa/0002-b.patch" > /dev/null 2>&1 || fail "patch_source failed"
+reuse_build_dir "$T/pb" "$(source_stamp "$T/src/sw")" > /dev/null || fail "reuse_build_dir failed"
+[ ! -d "$T/pb" ] || fail "a build dir stamped with a patch whose bytes changed was kept"
+
 echo "-- macho_links_none_under: fails on a library under the dir, and on an otool that read nothing"
 mkdir -p "$T/fakebin"
 printf '#!/bin/sh\nprintf "%%s" "$FAKE_OTOOL_OUT"\nexit "${FAKE_OTOOL_RC:-0}"\n' > "$T/fakebin/otool"; chmod +x "$T/fakebin/otool"
