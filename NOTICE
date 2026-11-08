@@ -240,6 +240,21 @@ build: it passes extra compiler flags to the Darwin builtins (whose build
 otherwise drops them), so that the archive, and the runtime that links part of
 it, carry no path from the machine that built them.
 
+swift-frontend is modified: it is built with the patches in ./patches/compiler
+(full diffs there; patches/compiler/0003-AUDIT.md explains 0003 site by site):
+  0001  accept a 10.9 SDK — the driver no longer refuses a macOS SDK older than
+        10.15, so the toolchains compile against the OS X 10.9 SDK.
+  0002  host tools' rpath — the 10.9 toolchain's own programs load the Swift
+        runtime bundled in the toolchain, not /usr/lib/swift, which 10.9 lacks
+        (the cross toolchain is built without it).
+  0003  the 10.9 runtime is the packages' — for a macOS deployment target below
+        10.14.4, whose programs load this project's runtime by @rpath, every
+        released Swift runtime version, and the declarations of the modules the
+        runtime package ships Swift code for (Swift, _Concurrency,
+        SwiftOnoneSupport, _Builtin_float) introduced at one, count as available
+        from 10.9, while features that need the OS's own libobjc stay closed; at
+        10.14.4 and later the compiler is upstream's.
+
 The cross toolchain package (swift-toolchain-cross-*.pkg) contains the same
 components under the same licenses, built from the same sources and patches
 (compiler patch 0002 aside) to run on an Apple-silicon Mac; its standard

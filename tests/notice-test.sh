@@ -2,7 +2,8 @@
 # platform: host-agnostic
 # usage: sh tests/notice-test.sh
 #   NOTICE ships in every pkg (stage-runtime.sh, stage-toolchain.sh) and must name what those pkgs hold:
-#   every patch in patches/runtime and patches/overlays by its number, the Darwin and ObjectiveC overlays'
+#   every patch in patches/runtime and patches/overlays by its number, swift-frontend's modification by
+#   patches/compiler (Apache-2.0 section 4(b)) with each of its patches by number, the Darwin and ObjectiveC overlays'
 #   sources, and each of Recaulk's members build.sh links statically. Three of those (libswiftDarwin's
 #   openat, libswift_Concurrency's clock_gettime) are MacPorts legacy-support's sources, which keep their
 #   own licences: atcalls.c's APSL 2.0 asks for its notices, its licence text and where its source is;
@@ -25,6 +26,17 @@ for d in runtime overlays; do
   done
 done
 grep -q "patches/overlays" "$N" || fail "NOTICE does not say where the overlay patches are"
+
+echo "-- the toolchains' swift-frontend: its modification statement (Apache-2.0 section 4(b)) names every compiler patch"
+grep -q "swift-frontend" "$N" && grep -q "built with the patches in ./patches/compiler" "$N" \
+  || fail "NOTICE does not say swift-frontend is modified, with the patches in ./patches/compiler"
+# Read from that statement to the next blank line: overlay patch 0001 shares compiler patch 0001's number.
+awk '/built with the patches in .\/patches\/compiler/{on=1} on&&/^$/{exit} on' "$N" > "${TMPDIR:-/tmp}/notice-compiler.$$"
+for p in "$REPO"/patches/compiler/*.patch; do
+  n="$(basename "$p" | cut -c1-4)"
+  grep -Eq "^ +$n  " "${TMPDIR:-/tmp}/notice-compiler.$$" || { rm -f "${TMPDIR:-/tmp}/notice-compiler.$$"; fail "NOTICE's statement lists no compiler patch $n ($(basename "$p"))"; }
+done
+rm -f "${TMPDIR:-/tmp}/notice-compiler.$$"
 
 echo "-- the overlays' sources: swift-6.2's Darwin, swift-5.4's ObjectiveC, Apache-2.0 with the Runtime Library Exception"
 grep -q "libswiftDarwin" "$N" && grep -q "swift-6.2" "$N" || fail "NOTICE does not name libswiftDarwin's swift-6.2 source"
