@@ -25,8 +25,9 @@
 #                             first line is `// selftest: needs this repo's compiler ...` is skipped,
 #                             saying so: it uses a feature only compiler patch 0003 opens for 10.9,
 #                             which the swift.org compiler refuses (typed_throws_test,
-#                             parameter_packs_test, stdlib_availability_test). SWIFTC= mode builds
-#                             every test.
+#                             parameter_packs_test, stdlib_availability_test); so, with SELFTEST_SUPPORT,
+#                             are upstream's concurrency tests, saying so: their async code for 10.9
+#                             needs patch 0003 too. SWIFTC= mode builds every test.
 #            SWIFTC=<swiftc>  exactly `$SWIFTC -O|-Onone <file> -o <out>`: this repo's own toolchain,
 #                             on 10.9, whose defaults supply target, SDK and rpath. With SWIFT_RUNTIME_PREFIX
 #                             also set (a staged, uninstalled runtime), each compile adds
@@ -111,6 +112,11 @@ if [ -n "${SELFTEST_SUPPORT:-}" ]; then
       echo "make-selftest: SELFTEST_SUPPORT=$SELFTEST_SUPPORT has no $d/ -- stage it with scripts/stage-selftest-support.sh" >&2; exit 1; }
   done
   UPSTREAM="$(upstream_tests)"
+  # The default mode's swift.org compiler refuses upstream's concurrency tests, 10.9 async code (see the usage).
+  if [ -n "$SKIP_MARK" ] && printf '%s\n' "$UPSTREAM" | grep -q '^[^ ]* [^ ]* concurrency-'; then
+    UPSTREAM="$(printf '%s\n' "$UPSTREAM" | grep -v '^[^ ]* [^ ]* concurrency-' || :)"
+    echo "skipped: upstream's concurrency tests (they need this repo's compiler, not the swift.org one)" >&2
+  fi
   DUP="$(printf '%s\n' "$UPSTREAM" | awk '{ print $3 }' | LC_ALL=C sort | uniq -d)"
   [ -z "$DUP" ] || { echo "make-selftest: two upstream tests would be named $DUP" | tr '\n' ' ' >&2; echo >&2; exit 1; }
 fi

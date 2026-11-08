@@ -17,7 +17,9 @@
 #   libraries searched, into upstream/bin/<layer>-<name>[-Onone], whose rpath reaches the bundle's lib/
 #   (a test's further variants, <path>.<n>.args, into <layer>-<name>-v<n>[-Onone]),
 #   where <dir>/lib is copied; two tests of one name, or a <dir> without lib/, are refused before anything
-#   is compiled. A fake compiler and fake install_name_tools record their calls.
+#   is compiled. Upstream's concurrency layer is built in SWIFTC= mode and skipped, saying so, in the default
+#   mode, whose swift.org compiler refuses its 10.9 async code. A fake compiler and fake install_name_tools
+#   record their calls.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -148,6 +150,27 @@ for f in upstream/bin/darwin-Foo upstream/bin/darwin-Foo-Onone upstream/bin/darw
 done
 tarball="$(unset SWIFT_RUNTIME_PREFIX; PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" DIST="$T/dist" sh "$REPO/make-selftest.sh" | tail -1)"
 if tar -tzf "$tarball" | grep -q 'swift-runtime-selftest/upstream/\|swift-runtime-selftest/lib/'; then fail "a bundle without SELFTEST_SUPPORT has upstream/ or lib/"; fi
+
+echo "-- SELFTEST_SUPPORT: upstream's concurrency tests are built by SWIFTC= (this repo's compiler), and skipped,"
+echo "   saying why, by the default mode's swift.org compiler, which refuses their 10.9 async code"
+mkdir -p "$SUP/upstream/concurrency/test/Concurrency"
+: > "$SUP/upstream/concurrency/test/Concurrency/Baz.swift"
+printf '%s\n' -swift-version 5 -parse-as-library > "$SUP/upstream/concurrency/test/Concurrency/Baz.swift.args"
+rm -f "$T/calls"
+( unset SWIFT_RUNTIME_PREFIX; PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" SELFTEST_SUPPORT="$SUP" DIST="$T/dist" sh "$REPO/make-selftest.sh" ) > "$T/out" 2>&1 \
+  || fail "SWIFTC= mode failed with a concurrency layer: $(cat "$T/out")"
+grep -q -- "-O $SUP/upstream/concurrency/test/Concurrency/Baz.swift -o $U/concurrency-Baz " "$T/calls" || fail "SWIFTC= mode did not build concurrency's Baz: $(cat "$T/calls")"
+mkdir -p "$T/tc/bin" "$T/work/stdlib-build/lib/swift/macosx/x86_64" "$T/shipyard"
+cp "$T/fake-swiftc" "$T/tc/bin/swiftc"; : > "$T/work/stdlib-build/lib/swift/macosx/x86_64/libswiftCore.dylib"
+printf '#!/bin/sh\necho %s/MacOSX10.9.sdk\n' "$T" > "$T/shipyard/fetch_sdk.sh"
+rm -f "$T/calls"
+( unset SWIFT_RUNTIME_PREFIX SWIFTC; TC="$T/tc" SWIFT_WORK="$T/work" SHIPYARD_SCRIPTS="$T/shipyard" SELFTEST_SUPPORT="$SUP" DIST="$T/dist" \
+    sh "$REPO/make-selftest.sh" ) > "$T/out" 2>&1 || fail "the default mode failed with a concurrency layer: $(cat "$T/out")"
+grep -q -- "$SUP/upstream/darwin/test/stdlib/Foo.swift -o $U/darwin-Foo " "$T/calls" || fail "the default mode did not build darwin's Foo: $(cat "$T/calls")"
+if grep -q 'concurrency' "$T/calls"; then fail "the default mode built an upstream concurrency test: $(grep concurrency "$T/calls")"; fi
+grep -q "skipped: upstream's concurrency tests (they need this repo's compiler, not the swift.org one)" "$T/out" \
+  || fail "the default mode did not say it skips upstream's concurrency tests: $(cat "$T/out")"
+rm -r "$SUP/upstream/concurrency"
 
 echo "-- SELFTEST_SUPPORT: a dir without lib/, or two tests of one name, is refused before any compile"
 mkdir -p "$T/nolib/modules" "$T/nolib/upstream"
