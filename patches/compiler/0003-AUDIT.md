@@ -125,7 +125,8 @@ and is upstream's above it.
 The same split, for the library's own declarations (the maintainer's decision of 2026-11-08). Swift's
 `@available(SwiftStdlib N, *)` macros expand to the OS release that first shipped runtime N (`macOS 13.0`
 for 5.7, `anyAppleOS 26.0` for 6.2), and stay upstream's in the modules we ship, so a module serves every
-target. `ASTContext::getPkgsRuntimeIntroduced` (Availability.cpp), called by the deserializer for every
+target; `StdlibDeploymentTarget N` does too, since `build.sh` builds with
+`SWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY` (otherwise CMake writes the deployment target, 10.9, into it). `ASTContext::getPkgsRuntimeIntroduced` (Availability.cpp), called by the deserializer for every
 `@available` it reads (`readAvailable_DECL_ATTR`, Deserialization.cpp, before it makes the attribute),
 moves one version:
 

@@ -149,8 +149,11 @@ Recaulk's `objc_readClassPair` realization depend on), `ObjCGetClassHook`, `ObjC
 `ObjCIsUniquelyReferenced`, and three callers that read a Swift version directly for an OS need
 (`objc_opt_self`, `@objc @implementation`, ObjC protocol emission). The two `.def` files stay upstream's.
 The same rule covers the library's own declarations. Swift's `@available(SwiftStdlib N, *)` macros stay
-upstream's, so `Task.sleep(for:)` still reads macOS 13.0 and `InlineArray` 26.0 in every module we ship,
-for every target. Below 10.14.4 only, the compiler reads a declaration of a module the runtime pkg ships
+upstream's, so `Task.sleep(for:)` still reads macOS 13.0 and `InlineArray` 26.0 in the modules we ship, for
+every target; so do the declarations marked `StdlibDeploymentTarget N` (`Duration`, the clocks), which
+`build.sh` builds with `SWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY` (without it the stdlib's CMake writes the
+deployment target, 10.9, into them, and a client built for 10.15 could use `Duration`, which 10.15's own
+runtime lacks). Below 10.14.4 only, the compiler reads a declaration of a module the runtime pkg ships
 Swift code for (`Swift`, `_Concurrency`, `SwiftOnoneSupport`, `_Builtin_float`) as available from 10.9
 when its macOS version is a released runtime's (`RuntimeVersions.def`, 5.0 through 6.4): the deserializer
 moves that one `introduced:` version as it reads the attribute. `Darwin` and `ObjectiveC` stay as written,
@@ -159,7 +162,7 @@ since their availability is the OS's APIs'; deprecations, obsoletions and unavai
 `@rpath/libswiftCompatibilitySpan.dylib` for any client below macOS 26, and the runtime pkg ships that name
 as a link to `libswiftCore.dylib`, as upstream's own stdlib install does beside a Core that has Span. So a
 program built for 10.9 that uses Span needs a runtime pkg that has the link, as one using any other new API
-needs a runtime that has it, and an app that bundles our runtime bundles the link too.
+needs a runtime that has it, and an app that bundles our runtime must bundle the link with it.
 Every feature's class, with the symbol it needs and the compiler code that reads it, and the declaration
 rule, are in `patches/compiler/0003-AUDIT.md`, and `tests/compiler-patch-audit-test.sh` holds the patch to
 them. The proof programs are `tests/typed_throws_test.swift`, `tests/parameter_packs_test.swift` and

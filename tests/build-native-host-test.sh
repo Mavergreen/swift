@@ -208,6 +208,9 @@ grep -q -e "^  -DCMAKE_SHARED_LINKER_FLAGS=.* -nostdlib++ $LCX -Wl,-syslibroot,$
 # libswift_Concurrency: built, and its own subset reaches its link alone, through patch 0013's hook; the
 # dispatch member's block helper (___recaulk_-prefixed since Recaulk 20261108.3) is hidden with the rest.
 grep -qxF -e "  -DSWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY=ON" "$T/log" || fail "the stdlib configure does not turn Concurrency on: $(cat "$T/log")"
+# Strict availability: StdlibDeploymentTarget N keeps SwiftStdlib N's OS versions in the shipped modules,
+# not the deployment target's (AddSwiftStdlib.cmake), so a client from 10.14.4 gets upstream's diagnostics.
+grep -qxF -e "  -DSWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY=ON" "$T/log" || fail "the stdlib configure does not turn strict availability on: $(cat "$T/log")"
 grep -qxF -e "  -DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$R/swift/work/recaulk-concurrency.a -Wl,-unexported_symbols_list,$R/swift/work/recaulk-concurrency.unexported" "$T/log" \
   || fail "Concurrency's link does not take its Recaulk subset, hidden: $(grep MAVERGREEN_CONCURRENCY "$T/log")"
 [ "$(tr '\n' ' ' < "$R/swift/work/recaulk-concurrency.unexported")" = "___recaulk_copy_helper_block_8_32b ___recaulk_resolve _clock_getres _clock_gettime _dispatch_activate _os_release _qos_class_self _voucher_adopt _voucher_copy " ] \

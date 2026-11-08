@@ -79,24 +79,15 @@ printf '#!/bin/sh\nexec "%s" "$@"\n' "$LLD" > "$WORK/tools/ld" && chmod 755 "$WO
 # The stdlib's -define-availability list, as stdlib/cmake/modules/AddSwiftStdlib.cmake writes it into its
 # availability-macros-*.rsp from the definitions the top CMakeLists.txt reads out of
 # utils/availability-macros.def (blank and #-comment lines dropped): each definition, and for each
-# SwiftStdlib x.y a StdlibDeploymentTarget x.y whose version, when it is macOS's (or anyAppleOS's, failing
-# that) and not 9999 and newer than the deployment target, becomes "macOS <deployment target>" (CMake's
-# regex wants a dotted version, so "macOS 9999" is never matched and stays). Read from the .def, not a
-# build tree, so a patch to the .def moves the stdlib's list and this one together.
-awk -v dt="$DEPLOYMENT" '
-  function newer(a, b,   x, y, n, m, i) {   # CMake VERSION_GREATER for dotted versions
-    n = split(a, x, "."); m = split(b, y, "."); if (m > n) n = m
-    for (i = 1; i <= n; i++) { if ((x[i] + 0) > (y[i] + 0)) return 1; if ((x[i] + 0) < (y[i] + 0)) return 0 }
-    return 0 }
-  function ver(def, os,   s) {
-    if (match(def, os " [0-9]+(\\.[0-9]+)+")) { s = substr(def, RSTART, RLENGTH); sub(/^[^ ]+ /, "", s); return s }
-    return "" }
+# SwiftStdlib x.y a StdlibDeploymentTarget x.y with the same versions. That is the strict form
+# (build.sh's SWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY); without it CMake would clamp each to the deployment
+# target. Read from the .def, not a build tree, so a patch to the .def moves the stdlib's list and this
+# one together.
+awk '
   /^[ \t]*(#.*)?$/ { next }
   { printf "-Xfrontend -define-availability -Xfrontend \"%s\"\n", $0
     if ($0 !~ /SwiftStdlib /) next
     cur = $0; sub(/SwiftStdlib/, "StdlibDeploymentTarget", cur)
-    v = ver($0, "macOS"); if (v == "") v = ver($0, "anyAppleOS")
-    if (v != "" && v != "9999" && newer(v, dt)) sub(/:.*/, ":macOS " dt, cur)
     printf "-Xfrontend -define-availability -Xfrontend \"%s\"\n", cur }
 ' "$AVAIL" > "$WORK/availability-macros.rsp"
 [ -s "$WORK/availability-macros.rsp" ] || { echo "build-module.sh: $AVAIL defines no availability macro" >&2; exit 1; }

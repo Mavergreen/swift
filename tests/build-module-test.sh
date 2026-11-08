@@ -6,7 +6,8 @@
 #   lib.sh's native_host_shim, as build.sh runs it), its stdlib as the resource dir and the 10.9 SDK, a
 #   two-file module Tiny must come out as @rpath/libswiftTiny.dylib, compatibility version 1.0.0, minOS
 #   10.9, with its .swiftmodule; the stdlib's -define-availability list must be read from the .def it is
-#   given, with each StdlibDeploymentTarget clamped to 10.9 as the stdlib's CMake clamps it; a missing
+#   given, each StdlibDeploymentTarget its SwiftStdlib's versions, as the stdlib's CMake writes it with
+#   SWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY (build.sh); a missing
 #   source must fail naming the file; --flag must hand a word to the compile; and two build roots must give the same bytes (the prefix maps).
 #   SKIPs (77) without SWIFT_HOST_TOOLCHAIN, a shipyard, or a host that can run that toolchain. Reads with
 #   OTOOL, NM and STRINGS, else otool, nm and strings, unless those are the Command Line Tools' stubs (OS X
@@ -72,12 +73,12 @@ SY="$("$NM" -a "$D")" || fail "$NM could not read $D"
 [ ! -e "$T/r1/work/out/Tiny.swiftmodule/x86_64-apple-macos.swiftsourceinfo" ] || fail "a .swiftsourceinfo, which names the sources' paths"
 if "$OTOOL" -L "$D" | grep -q 'libc++'; then "$OTOOL" -L "$D"; fail "Tiny links a libc++ (listed above)"; fi
 
-echo "-- the availability list: the .def's SwiftStdlib lines, StdlibDeploymentTarget clamped to 10.9"
+echo "-- the availability list: the .def's SwiftStdlib lines, StdlibDeploymentTarget the same (strict)"
 RSP="$T/r1/work/tmp/availability-macros.rsp"
 [ -f "$RSP" ] || fail "no $RSP"
 grep -qxF -- '-Xfrontend -define-availability -Xfrontend "SwiftStdlib 5.1:macOS 10.15, iOS 13.0"' "$RSP" || fail "no SwiftStdlib 5.1: $(cat "$RSP")"
-grep -qxF -- '-Xfrontend -define-availability -Xfrontend "StdlibDeploymentTarget 5.1:macOS 10.9"' "$RSP" || fail "5.1 not clamped: $(cat "$RSP")"
-grep -qxF -- '-Xfrontend -define-availability -Xfrontend "StdlibDeploymentTarget 6.2:macOS 10.9"' "$RSP" || fail "6.2 not clamped: $(cat "$RSP")"
+grep -qxF -- '-Xfrontend -define-availability -Xfrontend "StdlibDeploymentTarget 5.1:macOS 10.15, iOS 13.0"' "$RSP" || fail "5.1 clamped, or not SwiftStdlib 5.1's: $(cat "$RSP")"
+grep -qxF -- '-Xfrontend -define-availability -Xfrontend "StdlibDeploymentTarget 6.2:anyAppleOS 26.0"' "$RSP" || fail "6.2 clamped, or not SwiftStdlib 6.2's: $(cat "$RSP")"
 grep -qxF -- '-Xfrontend -define-availability -Xfrontend "StdlibDeploymentTarget 9999:macOS 9999, iOS 9999"' "$RSP" || fail "9999 changed: $(cat "$RSP")"
 [ "$(grep -c . "$RSP")" -eq 6 ] || fail "not six definitions: $(cat "$RSP")"
 if grep -q 'disable-availability-checking' "$RSP" "$T/log1"; then fail "availability checking is off"; fi

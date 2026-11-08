@@ -267,6 +267,11 @@ reuse_build_dir "$ROOT/stdlib-build" "$STAMP" || exit 1
 # apple_probe_answers), and CMAKE_Swift_COMPILER named as what Swift's check_language(Swift) has always
 # found here (NOTFOUND: this build compiles Swift through SWIFT_NATIVE_SWIFT_TOOLS_PATH), so that check's
 # sub-configure, which names no SDK and asks xcrun for one, is not run.
+# SWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY: the declarations marked StdlibDeploymentTarget N (Duration, Clock,
+# the String views' newer members, ...) keep SwiftStdlib N's OS versions in the modules we ship, as every
+# other declaration does; without it AddSwiftStdlib.cmake clamps them to the deployment target, 10.9, for
+# every client, and a client built for 10.15 could use Duration, which 10.15's own runtime lacks. Below
+# 10.14.4 compiler patch 0003 opens them all the same (INGREDIENTS.md "The compiler's runtime table").
 # shellcheck disable=SC2046  # space-free words
 shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
   $(apple_probe_answers "$X") -DCMAKE_Swift_COMPILER=NOTFOUND \
@@ -298,6 +303,7 @@ shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
   -DSWIFT_PRIMARY_VARIANT_SDK=OSX -DSWIFT_PRIMARY_VARIANT_ARCH="$ARCH" \
   -DSWIFT_DARWIN_SUPPORTED_ARCHS="$ARCH" \
   -DSWIFT_DARWIN_DEPLOYMENT_VERSION_OSX="$DEPLOYMENT" \
+  -DSWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY=ON \
   -DSWIFT_THREADING_PACKAGE="OSX:pthreads" \
   -DSWIFT_NATIVE_SWIFT_TOOLS_PATH="$TC/bin" -DSWIFT_NATIVE_CLANG_TOOLS_PATH="$TC/bin" \
   -DSWIFT_EXPERIMENTAL_EXTRA_FLAGS="$PM_SWIFT;-Xfrontend;-disable-availability-checking"
