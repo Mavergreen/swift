@@ -633,7 +633,7 @@ jobs:
   vm-test:
     needs: [version, build-cross, build]
     runs-on: ubuntu-latest
-    timeout-minutes: 120   # sized in INGREDIENTS ("Every Swift bump merges on green"): Release 2's 82 upstream binaries fit, under an hour at worst
+    timeout-minutes: 120   # sized in INGREDIENTS ("Every Swift bump merges on green"): Release 2's 86 upstream binaries fit, about an hour at worst
     permissions:
       contents: read
       packages: write

@@ -15,7 +15,8 @@
 #                       (test support) from this bundle's lib/ or the OS's own (/usr/lib, /System). The one mode that sets a DYLD
 #                       variable, and only on the test's own command.
 #          The default and --loads run upstream/bin/* too, once each, after bin/*.
-#          Every run is killed after SELFTEST_TIMEOUT seconds (default 60) and reported as a timeout:
+#          Every run is killed after SELFTEST_TIMEOUT seconds (default 60; upstream/bin/*, SELFTEST_UPSTREAM_TIMEOUT)
+#          and reported as a timeout:
 #          a hang must fail the gate, not stall it. That needs perl (10.9 has /usr/bin/perl); without
 #          one this refuses to run, rather than run without a timeout.
 #          SWIFT_RUNTIME_PREFIX  default /usr/local/mavergreen/swift-runtime; must match the rpath the
@@ -23,6 +24,10 @@
 #          SELFTEST_GMALLOC      default /usr/lib/libgmalloc.dylib
 #          SELFTEST_TIMEOUT      seconds per run, default 60
 #          SELFTEST_UPSTREAM_RUNS  --gate's runs of each upstream/bin/* test, default 20
+#          SELFTEST_UPSTREAM_TIMEOUT  seconds per run of an upstream/bin/* test, default 180: some of upstream's
+#                                suites are long, clock's -Onone Guard Malloc run 45 s on ultimate-hat and
+#                                cancellation_handler_concurrent's 65 s, and a slower VM must not time them
+#                                out; a hang still fails, three minutes later (INGREDIENTS' gate paragraph)
 #          SELFTEST_PERL         the perl to time runs with; default /usr/bin/perl, else perl on PATH
 #          Exit 0 all pass, 1 any failure or any DYLD_* variable set, 2 any other argument, 77 no
 #          runtime installed (the family SKIP code: a CI runner never has one) or no bin/ here (the
@@ -41,6 +46,7 @@ GMALLOC="${SELFTEST_GMALLOC:-/usr/lib/libgmalloc.dylib}"
 RUNS="${SELFTEST_RUNS:-500}"
 UPRUNS="${SELFTEST_UPSTREAM_RUNS:-20}"
 TIMEOUT="${SELFTEST_TIMEOUT:-60}"
+UPTIMEOUT="${SELFTEST_UPSTREAM_TIMEOUT:-180}"
 GMALLOC_RUNS=10
 
 [ -f "$CORE" ] || {
@@ -66,6 +72,9 @@ esac
 
 case "$TIMEOUT" in
   ''|*[!0-9]*|0) echo "SELFTEST_TIMEOUT must be a positive integer (got '$TIMEOUT')" >&2; exit 1 ;;
+esac
+case "$UPTIMEOUT" in
+  ''|*[!0-9]*|0) echo "SELFTEST_UPSTREAM_TIMEOUT must be a positive integer (got '$UPTIMEOUT')" >&2; exit 1 ;;
 esac
 if [ -n "${SELFTEST_PERL:-}" ]; then PERL="$SELFTEST_PERL"
 elif [ -x /usr/bin/perl ]; then PERL=/usr/bin/perl
@@ -167,6 +176,7 @@ for t in bin/*; do
 done
 # Upstream's own tests (make-selftest.sh's SELFTEST_SUPPORT), after this repo's: fewer runs each, as
 # there are many more of them and each runs a whole suite (INGREDIENTS.md's gate paragraph sizes it).
+TIMEOUT="$UPTIMEOUT"   # (limited and reason read it)
 for t in upstream/bin/*; do
   [ -f "$t" ] && [ -x "$t" ] || continue
   name="$t"

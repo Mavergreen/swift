@@ -5,7 +5,8 @@
 #   one whose heap overrun only Guard Malloc catches, one that outlives SELFTEST_TIMEOUT, and
 #   (--loads) programs that load the runtime's libswift*.dylib from the prefix or from elsewhere, or none (most
 #   print the dyld lines they model, so the host's own Swift cannot leak in);
-#   and a bundle's upstream/bin/, which runs after bin/, SELFTEST_UPSTREAM_RUNS times plus one Guard Malloc run.
+#   and a bundle's upstream/bin/, which runs after bin/, SELFTEST_UPSTREAM_RUNS times plus one Guard Malloc run,
+#   each run under SELFTEST_UPSTREAM_TIMEOUT instead of SELFTEST_TIMEOUT.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 command -v cc >/dev/null 2>&1 || { echo "no cc -- skipping"; exit 77; }
@@ -185,6 +186,23 @@ out="$(SELFTEST_PIDFILE="$T/pid" SWIFT_RUNTIME_PREFIX="$T/prefix" sh "$b/run-sel
 case "$out" in *'exited non-zero'*) ;; *) fail "crasher: exit not reported as before: $out" ;; esac
 kid="$(cat "$T/pid")"; [ -n "$kid" ] || fail "crasher wrote no pid"
 if kill -0 "$kid" 2>/dev/null; then kill -9 "$kid"; fail "the crashed run's child $kid outlived it"; fi
+
+echo "-- upstream/bin/ runs under SELFTEST_UPSTREAM_TIMEOUT, bin/ under SELFTEST_TIMEOUT"
+b="$(bundle ok up:sleeper)"; rc=0
+out="$(SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_TIMEOUT=1 SELFTEST_UPSTREAM_TIMEOUT=10 sh "$b/run-selftest.sh" 2>&1)" || rc=$?
+[ "$rc" = 0 ] || fail "an upstream run within SELFTEST_UPSTREAM_TIMEOUT but past SELFTEST_TIMEOUT failed: rc=$rc: $out"
+rc=0; out="$(SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_TIMEOUT=10 SELFTEST_UPSTREAM_TIMEOUT=1 sh "$b/run-selftest.sh" 2>&1)" || rc=$?
+[ "$rc" = 1 ] || fail "an upstream run past SELFTEST_UPSTREAM_TIMEOUT passed: rc=$rc: $out"
+case "$out" in *'FAIL: upstream/bin/sleeper -- run 1 of 1 timed out after 1 s'*) ;; *) fail "upstream timeout: not named: $out" ;; esac
+b="$(bundle sleeper)"; rc=0
+out="$(SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_TIMEOUT=1 SELFTEST_UPSTREAM_TIMEOUT=10 sh "$b/run-selftest.sh" 2>&1)" || rc=$?
+[ "$rc" = 1 ] || fail "SELFTEST_UPSTREAM_TIMEOUT reached bin/: rc=$rc: $out"
+for v in abc 0 -5; do
+  b="$(bundle ok)"; rc=0
+  out="$(SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_UPSTREAM_TIMEOUT="$v" sh "$b/run-selftest.sh" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || fail "SELFTEST_UPSTREAM_TIMEOUT='$v': rc=$rc: $out"
+  case "$out" in *SELFTEST_UPSTREAM_TIMEOUT*) ;; *) fail "SELFTEST_UPSTREAM_TIMEOUT='$v': not named: $out" ;; esac
+done
 
 echo "-- a SELFTEST_TIMEOUT that is not a positive integer is refused"
 for v in abc 0 -5; do

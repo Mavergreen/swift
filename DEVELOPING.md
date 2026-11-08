@@ -123,7 +123,7 @@ from the bundle's `lib/`. Of `objectivec.list`, two are included and neither exe
 overlay (its excluded tests say why), so the overlay's acceptance is `tests/objc_overlay_test.swift` beside
 our other ObjC tests. A test `concurrency.list` includes is built once per `%target-run-simple-*` line
 (`upstream/bin/concurrency-<name>-v2` is the second); `--gate` runs each `SELFTEST_UPSTREAM_RUNS` times, then once
-under Guard Malloc. `make-selftest.sh` skips a test whose first line is `// selftest: skip: <reason>`
+under Guard Malloc, each run within `SELFTEST_UPSTREAM_TIMEOUT` (180 s; ours, `SELFTEST_TIMEOUT`, 60 s). `make-selftest.sh` skips a test whose first line is `// selftest: skip: <reason>`
 (`concurrency_isolation_test`, until Recaulk has `dispatch_assert_queue$V2`). The staged modules are binary: build the bundle with the toolchain that ran `build.sh`.
 
 ### The toolchain: self-hosting

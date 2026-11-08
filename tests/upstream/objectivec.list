@@ -43,7 +43,7 @@ exclude test/stdlib/NSEnumeratorAPI.swift -- imports Foundation, which no 10.9 p
 exclude test/stdlib/NSError.swift -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/NSItemProvider.swift -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/NSKeyedArchival.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/NSObject-hashing.swift -- RUN uses %target-typecheck-verify-swift
+exclude test/stdlib/NSObject-hashing.swift -- RUN uses %target-swift-frontend
 exclude test/stdlib/NSObject.swift -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/NSSetAPI.swift -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/NSSlowString.swift -- imports Foundation, which no 10.9 pkg ships
@@ -51,7 +51,7 @@ exclude test/stdlib/NSSlowTaggedLocalizedString.swift -- upstream disables it (R
 exclude test/stdlib/NSValueBridging.swift.gyb -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/NewString.swift -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/Nil.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/NoFoundation.swift -- imports Dispatch, which this release does not ship
+exclude test/stdlib/NoFoundation.swift -- uses DispatchQueue (line 38), of the Dispatch Swift overlay, which this release does not ship
 exclude test/stdlib/ObjCEvilClassInitialization.swift -- RUN uses %target-clang
 exclude test/stdlib/OptionalBridge.swift -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/ParseFloat64-bridging.swift -- imports Foundation, which no 10.9 pkg ships
@@ -87,7 +87,7 @@ exclude validation-test/stdlib/StringGraphemeBreaking.swift -- imports Foundatio
 exclude validation-test/stdlib/StringNormalization.swift -- RUN uses %target-clang
 exclude validation-test/stdlib/StringWordBreaking.swift -- imports Foundation, which no 10.9 pkg ships
 exclude validation-test/stdlib/SwiftNativeNSBase.swift -- imports Foundation, which no 10.9 pkg ships
-exclude validation-test/stdlib/UnicodeScalarProperties.swift -- RUN hands the test arguments (%S/../../utils/gen-unicode-data/Data/17/)
+exclude validation-test/stdlib/UnicodeScalarProperties.swift -- REQUIRES: long_test does not hold on 10.9
 exclude validation-test/stdlib/UnicodeUTFEncoders.swift -- imports Foundation, which no 10.9 pkg ships
 include validation-test/stdlib/UnicodeWordRecognizer.swift
 exclude validation-test/stdlib/ValidationNSNumberBridging.swift -- imports Foundation, which no 10.9 pkg ships

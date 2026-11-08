@@ -46,7 +46,7 @@ exclude test/stdlib/mmap.swift -- RUN hands the test arguments (%t)
 exclude test/stdlib/tgmath.swift.gyb -- upstream disables it (REQUIRES: rdar94452524)
 include test/stdlib/tgmath_optimized.swift
 exclude validation-test/stdlib/ArraysObjc.swift.gyb -- imports Foundation, which no 10.9 pkg ships
-exclude validation-test/stdlib/Glibc.swift -- not for macOS (UNSUPPORTED: OS=macosx)
+exclude validation-test/stdlib/Glibc.swift -- REQUIRES: OS=linux-gnu does not hold on 10.9
 include validation-test/stdlib/POSIXErrorCode.swift
 exclude validation-test/stdlib/String.swift -- imports Foundation, which no 10.9 pkg ships
 include validation-test/stdlib/StringSlicesConcurrentAppend.swift

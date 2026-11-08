@@ -254,16 +254,31 @@ The gate is sized, so that upstream's tests can grow. `run-selftest.sh --gate` r
 500x plus 10x under Guard Malloc (24 with Release 2's concurrency_test; concurrency_isolation_test is skipped
 until Recaulk has `dispatch_assert_queue$V2`) and upstream's, each included test at -O and -Onone and once per
 variant (`SELFTEST_UPSTREAM_RUNS`, default 20, plus 1 under Guard Malloc), after a `--loads` run. Release 2's
-lists include 6 Darwin, 2 ObjectiveC and 18 Concurrency tests (most of those built twice: lit runs them again in
-Swift 5 mode with NonisolatedNonsendingByDefault), 41 builds, 82 upstream binaries. Measured on the real box
-(ultimate-hat, 12 cores, shared: load 4 to 5.5 during the run): 1028 s for all 106 binaries, about 157 s
-for ours and 870 s for upstream's (82 x 21 runs, 0.5 s a run on average; a few suites dominate: basic_future 91
-s per binary, clock 65 to 79 s). A first run with cancellation_handler_concurrent took 1116 s; its -Onone
-Guard Malloc run alone took 65 s, past the 60 s limit, which is why it is excluded. Release 1's VM-to-box
-ratio was 0.42 (run 40272925587), so the VM gate is about 7 min; at the box's own pace it is 17 min. Compiling in the VM is the larger cost: 106 binaries at a pessimistic 15
-s each is 27 min. Install, compiles, gate and smoke total under an hour at that worst, so `vm-test`'s
-`timeout-minutes` stays 120, under GitHub's 360, and 20 runs stay: 20 plus 1 under Guard Malloc is a short,
-deterministic-test budget, and halving it would save about 7 min on the box.
+lists include 6 Darwin, 2 ObjectiveC and 19 Concurrency tests (most of those built twice: lit runs them again in
+Swift 5 mode with NonisolatedNonsendingByDefault), 43 builds, 86 upstream binaries.
+
+Measured on the real box (ultimate-hat, 12 cores, shared: load 3 to 5.5): 1116 s for all 110 binaries, about
+157 s for ours and 958 s for upstream's. That run timed out one guarded run at the then-uniform 60 s, so
+upstream's runs now have their own limit, `SELFTEST_UPSTREAM_TIMEOUT`, 180 s. Every binary's slowest single run on
+the box: clock's Guard Malloc runs take 40 to 45 s (its unguarded runs 1.3 to 1.8 s), and
+cancellation_handler_concurrent's -Onone Guard Malloc run takes 65 s (100,000 tasks; 16 s at -O). Everything else
+is under 5 s, ours included. So 180 s is three to four times the box's worst. A hang still fails, three minutes
+later.
+
+The VM estimate has to tell sleeping from computing, because a VM is no faster at sleeping. Two suites are
+sleep-bound: basic_future (4 binaries x 21 runs x 4.4 s, about 370 s) and clock's unguarded runs (4 x 20 x 1.55 s,
+about 125 s), so about 495 s. The rest is CPU-bound: about 465 s of upstream's and 157 s of ours. At Release 1's
+VM-to-box CPU ratio of 0.42 (run 40272925587), that rest takes about 260 s. The VM gate is then about 495 + 260
+= 755 s, 13 min, and at the box's own pace 19 min. Compiling in the VM is the larger cost: 110 binaries at a
+pessimistic 15 s each is 28 min. Install, compiles, gate and smoke total about an hour at the worst, so
+`vm-test`'s `timeout-minutes` stays 120, under GitHub's 360. 20 runs stay: 20 plus 1 under Guard Malloc is a
+short, deterministic-test budget, and halving it would save about 7 min on the box.
+
+The 120 minutes must be re-sized when the next excluded groups come in. Those are the 67 FileCheck tests (once
+output is checked), the 14 that set an environment variable, the 7 that need the Dispatch overlay, and
+concurrency_isolation_test (once Recaulk has `dispatch_assert_queue$V2`). Together that is about 90 tests and,
+most having two variants, up to about 330 binaries at -O and -Onone: some 80 min of compiles at 15 s each before
+their gate time, which would by itself pass today's budget.
 
 Owed: upstream tests the gate excludes because 10.9 or this release lacks something, each owed
 until its blocker goes (the reasons are in `tests/upstream/*.list`):
@@ -283,8 +298,6 @@ until its blocker goes (the reasons are in `tests/upstream/*.list`):
   overrides and `SWIFT_DEBUG_VALIDATE_UNCHECKED_CONTINUATIONS` among them): the gate sets no variable.
 - `test/Concurrency/Runtime/actor_dynamic_subclass.swift`: the 10.9 SDK has no nullability, so it does not compile
   (line 32).
-- `test/Concurrency/Runtime/cancellation_handler_concurrent.swift`: 100,000 tasks; its -Onone Guard Malloc run takes
-  65 s on the box, past the gate's 60 s a run (it passes, as do its -O runs).
 
 ## Why LLVM is pinned by release tag, and checked against the Swift pin
 

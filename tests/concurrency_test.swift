@@ -101,20 +101,22 @@ enum Context { static let name = TaskLocal(wrappedValue: "none") }
     }
     sleeper.cancel()
     expect(await sleeper.value, "a cancelled sleep did not throw CancellationError")
-    let handled = Counter()
-    let withHandler = Task { () -> Bool in
-      await withTaskCancellationHandler {
-        while !Task.isCancelled { await Task.yield() }
-        return true
-      } onCancel: {
-        Task { await handled.add() }
+    // The handler resumes a continuation, so this waits for onCancel itself, however slowly it runs (a
+    // single-core VM under Guard Malloc); if it never ran, the runner's timeout fails the test.
+    var withHandler: Task<Bool, Never>? = nil
+    await withCheckedContinuation { (handled: CheckedContinuation<Void, Never>) in
+      let t = Task { () -> Bool in
+        await withTaskCancellationHandler {
+          while !Task.isCancelled { await Task.yield() }
+          return true
+        } onCancel: {
+          handled.resume()
+        }
       }
+      withHandler = t
+      t.cancel()
     }
-    withHandler.cancel()
-    expect(await withHandler.value, "the task under a cancellation handler never saw Task.isCancelled")
-    var waited = 0
-    while await handled.get() == 0 && waited < 1000 { await Task.yield(); waited += 1 }
-    expect(await handled.get() == 1, "withTaskCancellationHandler's onCancel did not run")
+    expect(await withHandler!.value, "the task under a cancellation handler never saw Task.isCancelled")
     expect((try? Task.checkCancellation()) != nil, "the main task reads as cancelled")
 
     // Core's folded #available(SwiftStdlib 6.4) sites: TaskCancellation.swift:252 and Task.swift:877.

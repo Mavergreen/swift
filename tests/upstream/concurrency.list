@@ -96,7 +96,7 @@ exclude test/Concurrency/Runtime/async_taskgroup_throw_recover.swift -- needs Fi
 exclude test/Concurrency/Runtime/async_taskgroup_throw_rethrow.swift -- needs FileCheck, which no 10.9 pkg ships
 include test/Concurrency/Runtime/basic_future.swift
 include test/Concurrency/Runtime/cancellation_handler.swift
-exclude test/Concurrency/Runtime/cancellation_handler_concurrent.swift -- its -Onone build failed on 10.9 under Guard Malloc: it starts 100,000 tasks, and the guarded run took 65 s on ultimate-hat (rc 0; 0.6 s unguarded), past the gate's 60 s a run
+include test/Concurrency/Runtime/cancellation_handler_concurrent.swift
 exclude test/Concurrency/Runtime/cancellation_handler_only_once.swift -- needs FileCheck, which no 10.9 pkg ships
 include test/Concurrency/Runtime/checked_continuation.swift
 exclude test/Concurrency/Runtime/class_resilience.swift -- RUN uses %target-build-swift-dylib
