@@ -3,6 +3,14 @@
 #   usage: make-selftest.sh
 #          Compiles every tests/*.swift at -O and -Onone into a self-test bundle for a 10.9 box --
 #          bin/<name> and bin/<name>-Onone, plus run-selftest.sh -- and prints the tarball's path last.
+#          A test's leading comment lines may hold `// swiftc: <flags>`, flags its compiles take after the
+#          compiler's own: only -parse-as-library (for @main in a one-file program), as anything else
+#          (-disable-availability-checking, say) would test another program than its users compile; any
+#          other flag fails the bundle. A test whose first line is `// selftest: skip: <reason>` is built
+#          in neither mode, saying why. The one so marked: concurrency_isolation_test, whose
+#          MainActor.assumeIsolated and preconditionIsolated call dispatch_assert_queue$V2, which 10.9's
+#          libdispatch lacks and Recaulk does not provide yet (requested: INGREDIENTS.md's Owed list);
+#          its marker goes when Recaulk ships it.
 #          Two compilers:
 #            default          the swift.org toolchain build.sh expanded, for x86_64-apple-macosx10.9,
 #                             -no-stdlib-rpath and one rpath, $SWIFT_RUNTIME_PREFIX/lib/swift
@@ -32,7 +40,9 @@
 #          <dir>/upstream/<layer>/<path>.args, compiled from <path> (for a .gyb, gyb's output beside it) at
 #          -O and -Onone with the arguments that file lists, one per line (its compile-line), and
 #          `-I <dir>/modules -L <dir>/lib -Xlinker -rpath -Xlinker @executable_path/../../lib`, into
-#          upstream/bin/<layer>-<name> and <layer>-<name>-Onone; and <dir>/lib, the test-support dylibs,
+#          upstream/bin/<layer>-<name> and <layer>-<name>-Onone, and each further variant of it (lit
+#          builds it again with other flags), <path>.<n>.args, into <layer>-<name>-v<n> and
+#          <layer>-<name>-v<n>-Onone; and <dir>/lib, the test-support dylibs,
 #          is copied to the bundle's lib/, which that rpath reaches from upstream/bin/. The support
 #          modules are binary .swiftmodule files: the compiler here must be the release that built them.
 #          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, TC (toolchain usr/), DIST (output dir),
@@ -85,12 +95,14 @@ else
   }
 fi
 
-# upstream_tests -- one line per upstream test of $SELFTEST_SUPPORT: <args file> <source> <binary name>,
-# sorted; fails, naming them, on two of one name (a test of one name in two directories of a layer).
+# upstream_tests -- one line per upstream test variant of $SELFTEST_SUPPORT: <args file> <source> <binary
+# name>, sorted; fails, naming them, on two of one name (a test of one name in two directories of a layer).
 upstream_tests() {
   find "$SELFTEST_SUPPORT/upstream" -name '*.args' | LC_ALL=C sort | while IFS= read -r _u_a; do
-    _u_r="${_u_a#"$SELFTEST_SUPPORT/upstream/"}"; _u_s="${_u_a%.args}"; _u_s="${_u_s%.gyb}"
-    _u_n="${_u_s##*/}"; printf '%s %s %s-%s\n' "$_u_a" "$_u_s" "${_u_r%%/*}" "${_u_n%.swift}"
+    _u_r="${_u_a#"$SELFTEST_SUPPORT/upstream/"}"; _u_s="${_u_a%.args}"; _u_v=""
+    case "$_u_s" in *.[0-9]|*.[0-9][0-9]) _u_v="-v${_u_s##*.}"; _u_s="${_u_s%.*}" ;; esac
+    _u_s="${_u_s%.gyb}"
+    _u_n="${_u_s##*/}"; printf '%s %s %s-%s%s\n' "$_u_a" "$_u_s" "${_u_r%%/*}" "${_u_n%.swift}" "$_u_v"
   done
 }
 if [ -n "${SELFTEST_SUPPORT:-}" ]; then
@@ -108,13 +120,23 @@ B="$DIST/$NAME"; rm -rf "$B"; mkdir -p "$B/bin"
 for src in "${SELFTEST_SRC:-$REPO/tests}"/*.swift; do
   [ -f "$src" ] || continue
   n="$(basename "$src" .swift)"
+  first="$(sed -n 1p "$src")"
+  case "$first" in "// selftest: skip: "*) echo "skipped: $n (${first#"// selftest: skip: "})" >&2; continue ;; esac
   if [ -n "$SKIP_MARK" ]; then
     case "$(sed -n 1p "$src")" in
       "$SKIP_MARK"*) echo "skipped: $n (needs this repo's compiler, not the swift.org one)" >&2; continue ;;
     esac
   fi
-  compile O "$src" "$B/bin/$n"; echo "built: $n" >&2
-  compile Onone "$src" "$B/bin/$n-Onone"; echo "built: $n-Onone" >&2
+  # shellcheck disable=SC2046  # the // swiftc: line's flags, one word apiece (each checked below)
+  set -- $(sed -n '/^\/\//!q; s/^\/\/ swiftc: //p' "$src")
+  for w in "$@"; do
+    case "$w" in
+      -parse-as-library) ;;
+      *) echo "make-selftest: $n's // swiftc: line asks for $w; only -parse-as-library is allowed (see the usage)" >&2; exit 1 ;;
+    esac
+  done
+  compile O "$src" "$B/bin/$n" "$@"; echo "built: $n" >&2
+  compile Onone "$src" "$B/bin/$n-Onone" "$@"; echo "built: $n-Onone" >&2
 done
 [ -n "$(ls -A "$B/bin")" ] || { echo "make-selftest: nothing was built" >&2; exit 1; }
 if [ -n "${SELFTEST_SUPPORT:-}" ]; then

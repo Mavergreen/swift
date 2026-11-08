@@ -351,15 +351,19 @@ build_overlay Darwin swiftDarwin --link "$RECAULK_DARWIN_A" --unexported "$RECAU
 # ObjectiveC imports Darwin, found in --out, where Darwin was just written.
 build_overlay ObjectiveC swiftObjectiveC --I "$OVS/ObjectiveC/shims" -- "$OVS/ObjectiveC/ObjectiveC.swift"
 
-# spec: "Upstream tests" -- upstream's own Darwin and ObjectiveC tests run on the 10.9 gate, and most import
+# spec: "Upstream tests" -- upstream's own Darwin, ObjectiveC and Concurrency tests run on the 10.9 gate; most import
 #       StdlibUnittest: it, and the three modules it imports, are built here with build-module.sh, as their
-#       6.4.1 CMakeLists.txt lists their sources and flags, against the Darwin and ObjectiveC just built. Test
+#       6.4.1 CMakeLists.txt lists their sources and flags, against the Darwin and ObjectiveC just built, with
+#       build-module.sh's --runtime-floor: they run only on this runtime, so every released SwiftStdlib version
+#       is 10.9 for them (upstream's tests, built for 10.9, call StdlibUnittest's runAllTestsAsync, which says
+#       SwiftStdlib 5.1; lit builds them for a newer OS). Test
 #       support, never shipped: they go to their own dir, $SUP, not lib/swift/macosx, so no pkg's staging
 #       (stage-runtime.sh, stage-toolchain.sh) and no toolchain_digest sees them; step 6 stages them for the
 #       self-test bundle and step 7 holds the runtime's payload to none of them. StdlibUnittest is patch
-#       0010's, -D MAVERICKS_NO_FOUNDATION. Release 1 ships no _Concurrency, so it is built without
-#       -D SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY, which compiles out its async entry points (runAllTestsAsync,
-#       the async `code`): Release 2 passes it. Not built: stdlib/linker-support's
+#       0010's, -D MAVERICKS_NO_FOUNDATION, and -D SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY, as the stdlib's
+#       CMake passes it with Concurrency on (SwiftSource.cmake): it imports _Concurrency (step 5 built it) for
+#       its async entry points, runAllTestsAsync and the async `code`, which upstream's Concurrency tests
+#       call; it is the one of the four that reads the define. Not built: stdlib/linker-support's
 #       magic-symbols-for-install-name.c, which only names the OS's own earlier install names of a library.
 #       Their C and C++ (Subprocess.c; InspectValue, InterceptTraps and OpaqueIdentityFunctions.cpp) are
 #       compiled by the host clang against the 10.9 SDK, with the runtime's threading package (pthreads) and
@@ -389,7 +393,7 @@ build_support() {
   _bs_m="$1"; shift
   SWIFT_WORK="$ROOT" SWIFTC="$TC/bin/swiftc" LLD="$LLD" sh "$HERE/scripts/build-module.sh" \
     --name "$_bs_m" --link-name "swift$_bs_m" --sdk "$SDK_OVERLAYS" --resource-dir "$RES" \
-    --availability "$ROOT/swift/utils/availability-macros.def" --work "$SUW/work/$_bs_m" --out "$SUP" "$@" \
+    --availability "$ROOT/swift/utils/availability-macros.def" --work "$SUW/work/$_bs_m" --out "$SUP" --runtime-floor "$@" \
     || { echo "FAIL: could not build the test-support module $_bs_m"; exit 1; }
 }
 P="$PRIV/SwiftPrivate"
@@ -401,7 +405,8 @@ build_support SwiftPrivateLibcExtras --flag -D --flag SWIFT_STDLIB_HAS_COMMANDLI
 P="$PRIV/SwiftPrivateThreadExtras"
 build_support SwiftPrivateThreadExtras -- "$P/SwiftPrivateThreadExtras.swift" "$P/ThreadBarriers.swift"
 P="$PRIV/StdlibUnittest"
-build_support StdlibUnittest --flag -enable-experimental-feature --flag Lifetimes --flag -D --flag MAVERICKS_NO_FOUNDATION \
+build_support StdlibUnittest --flag -D --flag SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY --flag -D --flag MAVERICKS_NO_FOUNDATION \
+  --flag -enable-experimental-feature --flag Lifetimes \
   --link "$SUW/obj/InspectValue.cpp.o" --link "$SUW/obj/InterceptTraps.cpp.o" --link "$SUW/obj/OpaqueIdentityFunctions.cpp.o" -- \
   "$P/StdlibUnittest.swift" "$P/CheckStrideable.swift" "$P/InspectValue.swift" "$P/LifetimeTracked.swift" "$P/MinimalTypes.swift" \
   "$P/OpaqueIdentityFunctions.swift" "$P/RaceTest.swift" "$P/Statistics.swift" "$P/StdlibCoreExtras.swift" \

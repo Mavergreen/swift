@@ -215,6 +215,16 @@ grep -qxF -e "  -DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$R/swift/work/recaulk-concur
   || fail "Concurrency's link does not take its Recaulk subset, hidden: $(grep MAVERGREEN_CONCURRENCY "$T/log")"
 [ "$(tr '\n' ' ' < "$R/swift/work/recaulk-concurrency.unexported")" = "___recaulk_copy_helper_block_8_32b ___recaulk_resolve _clock_getres _clock_gettime _dispatch_activate _os_release _qos_class_self _voucher_adopt _voucher_copy " ] \
   || fail "Recaulk's subset for Concurrency: $(cat "$R/swift/work/recaulk-concurrency.unexported")"
+# Step 5b's StdlibUnittest is built as the stdlib's CMake builds it with Concurrency on (SwiftSource.cmake's
+# -D SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY), so upstream's async tests find runAllTestsAsync and the async `code`.
+# (Step 5b is past the fake ninja: read off build.sh's own StdlibUnittest line.)
+grep '^build_support StdlibUnittest ' "$REPO/build.sh" | grep -qF -e '--flag -D --flag SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY' \
+  || fail "step 5b builds StdlibUnittest without -D SWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY: $(grep '^build_support StdlibUnittest ' "$REPO/build.sh")"
+# Test support only runs on this runtime: build_support asks build-module.sh for --runtime-floor (every released
+# SwiftStdlib version is 10.9 there), and the shipped overlays' build_overlay never does.
+awk '/^build_support\(\) \{/,/^}/' "$REPO/build.sh" | grep -q -e '--runtime-floor' || fail "build_support does not pass --runtime-floor"
+if awk '/^build_overlay\(\) \{/,/^}/' "$REPO/build.sh" | grep -q -e '--runtime-floor'; then fail "build_overlay passes --runtime-floor: a shipped module's availability would be 10.9"; fi
+awk '/^build_overlay\(\) \{/,/^}/' "$REPO/build.sh" | grep -q 'build-module.sh' || fail "no build_overlay calling build-module.sh in build.sh"
 if grep -q '^git \|^xcrun ' "$T/log"; then fail "ran $(grep '^git \|^xcrun ' "$T/log" | head -1)"; fi
 SB="$R/swift/work/stdlib-build"
 grep -q '^archiver ' "$SB/mavergreen-inputs.stamp" \

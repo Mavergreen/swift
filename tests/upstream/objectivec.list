@@ -4,13 +4,14 @@
 # compile-line and run by run-selftest.sh --gate, or `exclude <path> -- <reason>`, a reason a reviewer
 # can check against the test (it imports Foundation, which no 10.9 pkg ships; it needs a library this
 # release does not ship; its RUN: line is one compile-line refuses, quoted as it says; upstream disables
-# it; or it failed on 10.9, with the failure). build.sh's step 5b checks this list against the tree, so a
+# it; it is a Concurrency test, which tests/upstream/concurrency.list decides, so it is built once; or it
+# failed on 10.9, with the failure). build.sh's step 5b checks this list against the tree, so a
 # Swift bump that adds a test, or gives an included one a RUN: form, compiler flag or REQUIRES:/UNSUPPORTED:
 # the script does not know, stops the build until the list is reviewed (a changed source does not; the gate runs it).
-exclude test/Concurrency/Runtime/actor_dynamic_subclass.swift -- needs _Concurrency, which this release does not ship
-exclude test/Concurrency/Runtime/actor_init_abi.swift -- needs _Concurrency, which this release does not ship
-exclude test/Concurrency/Runtime/async_task_executor_nsobject.swift -- needs _Concurrency, which this release does not ship
-exclude test/Concurrency/Runtime/objc_async.swift -- needs _Concurrency, which this release does not ship
+exclude test/Concurrency/Runtime/actor_dynamic_subclass.swift -- a Concurrency test: tests/upstream/concurrency.list decides it
+exclude test/Concurrency/Runtime/actor_init_abi.swift -- a Concurrency test: tests/upstream/concurrency.list decides it
+exclude test/Concurrency/Runtime/async_task_executor_nsobject.swift -- a Concurrency test: tests/upstream/concurrency.list decides it
+exclude test/Concurrency/Runtime/objc_async.swift -- a Concurrency test: tests/upstream/concurrency.list decides it
 exclude test/stdlib/ArrayBridge.swift.gyb -- imports Foundation, which no 10.9 pkg ships
 include test/stdlib/AutoreleasingUnsafeMutablePointer.swift
 exclude test/stdlib/AutoreleasingUnsafeMutablePointerDiagnostics.swift -- RUN uses %target-typecheck-verify-swift

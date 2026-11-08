@@ -121,8 +121,10 @@ it). `--gate` runs each 500 times, then 10 more under Guard Malloc. `SELFTEST_SU
 tests `tests/upstream/*.list` includes, which `build.sh` stages with the test-support libraries they load
 from the bundle's `lib/`. Of `objectivec.list`, two are included and neither exercises the ObjectiveC
 overlay (its excluded tests say why), so the overlay's acceptance is `tests/objc_overlay_test.swift` beside
-our other ObjC tests; `--gate` runs each `SELFTEST_UPSTREAM_RUNS` times, then once
-under Guard Malloc. The staged modules are binary: build the bundle with the toolchain that ran `build.sh`.
+our other ObjC tests. A test `concurrency.list` includes is built once per `%target-run-simple-*` line
+(`upstream/bin/concurrency-<name>-v2` is the second); `--gate` runs each `SELFTEST_UPSTREAM_RUNS` times, then once
+under Guard Malloc. `make-selftest.sh` skips a test whose first line is `// selftest: skip: <reason>`
+(`concurrency_isolation_test`, until Recaulk has `dispatch_assert_queue$V2`). The staged modules are binary: build the bundle with the toolchain that ran `build.sh`.
 
 ### The toolchain: self-hosting
 

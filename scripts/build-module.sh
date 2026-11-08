@@ -2,7 +2,8 @@
 # platform: macOS-only -- runs a Mavergreen host toolchain's Swift driver and ld64.lld (a modern Mac or OS X 10.9)
 #   usage: build-module.sh --name <Module> --link-name <swiftX> --sdk <sdk> --resource-dir <stdlib lib/swift>
 #            --availability <availability-macros.def> --work <dir> --out <dir>
-#            [--I <dir>]... [--link <file>]... [--unexported <list>] [--flag <word>]... -- <source.swift>...
+#            [--I <dir>]... [--link <file>]... [--unexported <list>] [--flag <word>]... [--runtime-floor]
+#            -- <source.swift>...
 #          Compiles one Swift module beside the stdlib, as the stdlib's CMake compiles its own libraries,
 #          for x86_64-apple-macosx$DEPLOYMENT (pins.env): <out>/<Module>.swiftmodule/x86_64-apple-macos.swiftmodule
 #          and <out>/x86_64/lib<swiftX>.dylib, whose install name is @rpath/lib<swiftX>.dylib and whose
@@ -13,7 +14,12 @@
 #          clang importer reads. --I adds an import path (a clang module map's directory, say); --link
 #          names a file the link takes (an archive); --unexported, the -unexported_symbols_list that hides
 #          its globals; --flag, one more word for the compile (a module's own flags, as its
-#          CMakeLists.txt's SWIFT_COMPILE_FLAGS: the test-support modules' -parse-stdlib, -D, ...). <out> itself is an import path and <out>/x86_64 a library path, so a module built
+#          CMakeLists.txt's SWIFT_COMPILE_FLAGS: the test-support modules' -parse-stdlib, -D, ...);
+#          --runtime-floor, for test support only (never a shipped module): every released SwiftStdlib
+#          version, and its StdlibDeploymentTarget, means macOS $DEPLOYMENT, as compiler patch 0003 reads
+#          the runtime pkg's own modules below 10.14.4, because test support runs only on this runtime,
+#          which has them all from 10.9 (StdlibUnittest's @available(SwiftStdlib 5.1) runAllTestsAsync is
+#          then callable from upstream's tests built for 10.9); 9999 (unreleased) stays as it is. <out> itself is an import path and <out>/x86_64 a library path, so a module built
 #          into the same <out> earlier (Darwin, for ObjectiveC) is found. <work> holds the module cache and
 #          the availability list, afresh on every run.
 #          The flags are the stdlib's (its build.ninja: library evolution, -library-level api, no implicit
@@ -29,8 +35,8 @@
 #        MAVERICKS_BUILD_ROOT, SWIFT_WORK.
 set -eu
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-usage() { sed -n '3,5p' "$0" | sed 's/^#   *//' >&2; exit 2; }
-NAME=""; LINKNAME=""; SDK=""; RES=""; AVAIL=""; WORK=""; OUT=""; INCS=""; LINKS=""; UNX=""; FLAGS=""
+usage() { sed -n '3,6p' "$0" | sed 's/^#   *//' >&2; exit 2; }
+NAME=""; LINKNAME=""; SDK=""; RES=""; AVAIL=""; WORK=""; OUT=""; INCS=""; LINKS=""; UNX=""; FLAGS=""; FLOOR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --name) NAME="$2"; shift 2 ;;
@@ -44,6 +50,7 @@ while [ $# -gt 0 ]; do
     --link) LINKS="$LINKS -Xlinker $2"; shift 2 ;;
     --unexported) UNX="$2"; shift 2 ;;
     --flag) FLAGS="$FLAGS $2"; shift 2 ;;
+    --runtime-floor) FLOOR=1; shift ;;
     --) shift; break ;;
     *) echo "build-module.sh: unknown argument '$1'" >&2; usage ;;
   esac
@@ -83,11 +90,14 @@ printf '#!/bin/sh\nexec "%s" "$@"\n' "$LLD" > "$WORK/tools/ld" && chmod 755 "$WO
 # (build.sh's SWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY); without it CMake would clamp each to the deployment
 # target. Read from the .def, not a build tree, so a patch to the .def moves the stdlib's list and this
 # one together.
-awk '
+# (--runtime-floor: a SwiftStdlib line whose versions are not 9999 becomes "SwiftStdlib N:macOS $DEPLOYMENT".)
+awk -v floor="$FLOOR" -v dep="$DEPLOYMENT" '
   /^[ \t]*(#.*)?$/ { next }
-  { printf "-Xfrontend -define-availability -Xfrontend \"%s\"\n", $0
-    if ($0 !~ /SwiftStdlib /) next
-    cur = $0; sub(/SwiftStdlib/, "StdlibDeploymentTarget", cur)
+  { def = $0
+    if (floor != "" && def ~ /^[ \t]*SwiftStdlib / && def !~ /9999/) { split(def, p, ":"); sub(/[ \t]+$/, "", p[1]); def = p[1] ":macOS " dep }
+    printf "-Xfrontend -define-availability -Xfrontend \"%s\"\n", def
+    if (def !~ /SwiftStdlib /) next
+    cur = def; sub(/SwiftStdlib/, "StdlibDeploymentTarget", cur)
     printf "-Xfrontend -define-availability -Xfrontend \"%s\"\n", cur }
 ' "$AVAIL" > "$WORK/availability-macros.rsp"
 [ -s "$WORK/availability-macros.rsp" ] || { echo "build-module.sh: $AVAIL defines no availability macro" >&2; exit 1; }

@@ -2,8 +2,11 @@
 # platform: host-agnostic
 # usage: sh tests/make-selftest-swiftc-mode-test.sh
 #   make-selftest.sh with SWIFTC= must invoke that compiler with nothing but -O|-Onone, the source and
-#   -o, for every tests/*.swift (this repo's toolchain has the Darwin and ObjectiveC overlays, so none is
-#   skipped). With SWIFT_RUNTIME_PREFIX set too, each
+#   -o, for every tests/*.swift (this repo's toolchain has the Darwin and ObjectiveC overlays), and after
+#   them the flags of a `// swiftc: <flags>` line among the test's leading comment lines, which may name
+#   only -parse-as-library (any other flag fails the bundle); a test whose first line is
+#   `// selftest: skip: <reason>` is not built, in any mode, and the reason is printed. With
+#   SWIFT_RUNTIME_PREFIX set too, each
 #   compile must also ask for header padding, and each binary's installed-runtime rpath must be replaced
 #   by the prefix's; a replacement that fails must fail the bundle, and a prefix that is relative or holds
 #   no libswiftCore.dylib is refused before anything is compiled. The replacement is INSTALL_NAME_TOOL's,
@@ -11,7 +14,8 @@
 #   Command Line Tools stub), else install_name_tool's from PATH. With SELFTEST_SUPPORT=<dir> too
 #   (scripts/stage-selftest-support.sh's layout), each upstream/<layer>/<path>.args test must also be built,
 #   at -O and -Onone, with its compile-line's arguments kept one apiece and the support modules and
-#   libraries searched, into upstream/bin/<layer>-<name>[-Onone], whose rpath reaches the bundle's lib/,
+#   libraries searched, into upstream/bin/<layer>-<name>[-Onone], whose rpath reaches the bundle's lib/
+#   (a test's further variants, <path>.<n>.args, into <layer>-<name>-v<n>[-Onone]),
 #   where <dir>/lib is copied; two tests of one name, or a <dir> without lib/, are refused before anything
 #   is compiled. A fake compiler and fake install_name_tools record their calls.
 set -eu
@@ -36,16 +40,30 @@ CLANG22_PREFIX="$T/no-clang22"; export CLANG22_PREFIX; unset INSTALL_NAME_TOOL
 B="$T/dist/swift-runtime-selftest/bin"
 # The corpus.
 mkdir -p "$T/src"; cp "$REPO"/tests/*.swift "$T/src/"
+printf '%s\n' '// zz_flags_test.swift -- a fixture' '// swiftc: -parse-as-library' '' '@main struct M { static func main() {} }' \
+  > "$T/src/zz_flags_test.swift"
+printf '%s\n' '// selftest: skip: waits for a fixture library' 'print(1)' > "$T/src/zz_skip_test.swift"
 SELFTEST_SRC="$T/src"; export SELFTEST_SRC
+# flags_of <src> -- what its `// swiftc:` line asks for, among its leading comment lines
+flags_of() { sed -n '/^\/\//!q; s/^\/\/ swiftc: //p' "$1"; }
+skipped() { sed -n 1p "$1" | grep -q '^// selftest: skip: '; }
 
 echo "-- SWIFTC alone: exactly -O|-Onone <file> -o <out>, no rpath rewrite"
 tarball="$(unset SWIFT_RUNTIME_PREFIX; PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" DIST="$T/dist" sh "$REPO/make-selftest.sh" | tail -1)"
 [ -f "$tarball" ] || fail "no tarball (got '$tarball')"
 for src in "$T/src"/*.swift; do
-  n="$(basename "$src" .swift)"
-  grep -qx -- "-O $src -o $B/$n" "$T/calls" || fail "no exact -O call for $n: $(cat "$T/calls")"
-  grep -qx -- "-Onone $src -o $B/$n-Onone" "$T/calls" || fail "no exact -Onone call for $n"
+  n="$(basename "$src" .swift)"; f="$(flags_of "$src")"
+  if skipped "$src"; then
+    if grep -q -- " $src " "$T/calls"; then fail "built $n, whose first line skips it: $(grep -- " $src " "$T/calls")"; fi
+    continue
+  fi
+  grep -qx -- "-O $src -o $B/$n${f:+ $f}" "$T/calls" || fail "no exact -O call for $n: $(cat "$T/calls")"
+  grep -qx -- "-Onone $src -o $B/$n-Onone${f:+ $f}" "$T/calls" || fail "no exact -Onone call for $n"
 done
+grep -qx -- "-O $T/src/zz_flags_test.swift -o $B/zz_flags_test -parse-as-library" "$T/calls" || fail "the // swiftc: line's flag was not passed"
+tarball_err="$(unset SWIFT_RUNTIME_PREFIX; PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" DIST="$T/dist" sh "$REPO/make-selftest.sh" 2>&1 >/dev/null)"
+printf '%s\n' "$tarball_err" | grep -qxF 'skipped: zz_skip_test (waits for a fixture library)' || fail "did not say why zz_skip_test was skipped: $tarball_err"
+if tar -tzf "$tarball" | grep -q 'bin/zz_skip_test'; then fail "the bundle has the skipped test"; fi
 [ ! -f "$T/int-calls" ] || fail "rewrote an rpath without SWIFT_RUNTIME_PREFIX: $(cat "$T/int-calls")"
 tar -tzf "$tarball" | grep -q 'swift-runtime-selftest/run-selftest.sh' || fail "bundle lacks run-selftest.sh"
 for n in objc_interop_test darwin_overlay_test objc_overlay_test; do
@@ -58,10 +76,11 @@ P="$T/staged/usr/local/mavergreen/swift-runtime"
 mkdir -p "$P/lib/swift"; : > "$P/lib/swift/libswiftCore.dylib"
 PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFIX="$P" DIST="$T/dist" sh "$REPO/make-selftest.sh" > /dev/null
 for src in "$T/src"/*.swift; do
-  n="$(basename "$src" .swift)"
+  n="$(basename "$src" .swift)"; f="$(flags_of "$src")"
+  ! skipped "$src" || continue
   for o in O Onone; do
     out="$B/$n"; [ "$o" = O ] || out="$B/$n-Onone"
-    grep -qx -- "-$o -Xlinker -headerpad_max_install_names $src -o $out" "$T/calls" || fail "no padded -$o call for $n: $(cat "$T/calls")"
+    grep -qx -- "-$o -Xlinker -headerpad_max_install_names $src -o $out${f:+ $f}" "$T/calls" || fail "no padded -$o call for $n: $(cat "$T/calls")"
     grep -qx -- "-rpath /usr/local/mavergreen/swift-runtime/lib/swift $P/lib/swift $out" "$T/int-calls" \
       || fail "no rpath replacement for $out: $(cat "$T/int-calls" 2>/dev/null)"
   done
@@ -75,6 +94,12 @@ rm -f "$T/int-calls"
 PATH="$T/bin:$PATH" CLANG22_PREFIX="$T/c22" INSTALL_NAME_TOOL="$T/named-int" SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFIX="$P" DIST="$T/dist" \
   sh "$REPO/make-selftest.sh" > /dev/null
 [ "$(cut -d' ' -f1 "$T/int-calls" | sort -u)" = named ] || fail "did not rewrite with INSTALL_NAME_TOOL: $(cat "$T/int-calls")"
+
+echo "-- a // swiftc: line naming any flag but -parse-as-library fails the bundle"
+mkdir -p "$T/src2"; printf '%s\n' '// swiftc: -Xfrontend -disable-availability-checking' 'print(1)' > "$T/src2/bad_test.swift"
+if ( unset SWIFT_RUNTIME_PREFIX; PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" SELFTEST_SRC="$T/src2" DIST="$T/dist" \
+     sh "$REPO/make-selftest.sh" > /dev/null 2> "$T/err" ); then fail "made a bundle whose test asks for -disable-availability-checking"; fi
+grep -q 'bad_test.*-Xfrontend' "$T/err" || fail "did not name the refused flag: $(cat "$T/err")"
 
 echo "-- a replacement that fails fails the bundle"
 if PATH="$T/bin:$PATH" FAKE_INT_RC=1 SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFIX="$P" DIST="$T/dist" \
@@ -101,6 +126,7 @@ printf '%s\n' -swift-version 4 -Xfrontend -define-availability -Xfrontend 'Swift
   > "$SUP/upstream/darwin/test/stdlib/Foo.swift.args"
 : > "$SUP/upstream/objectivec/validation-test/stdlib/Bar.swift.gyb"; : > "$SUP/upstream/objectivec/validation-test/stdlib/Bar.swift"
 printf '%s\n' -swift-version 4 -parse-stdlib > "$SUP/upstream/objectivec/validation-test/stdlib/Bar.swift.gyb.args"
+printf '%s\n' -swift-version 5 -module-name main > "$SUP/upstream/darwin/test/stdlib/Foo.swift.2.args"
 rm -f "$T/calls" "$T/argv"
 tarball="$(unset SWIFT_RUNTIME_PREFIX; PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" SELFTEST_SUPPORT="$SUP" DIST="$T/dist" sh "$REPO/make-selftest.sh" | tail -1)"
 [ -f "$tarball" ] || fail "no tarball with SELFTEST_SUPPORT (got '$tarball')"
@@ -112,9 +138,11 @@ for o in O Onone; do
     || fail "no -$o call for darwin's Foo: $(cat "$T/calls")"
   grep -qxF -- "-$o $SUP/upstream/objectivec/validation-test/stdlib/Bar.swift -o $U/objectivec-Bar$sfx -swift-version 4 -parse-stdlib $TAIL" "$T/calls" \
     || fail "no -$o call for objectivec's Bar (its gyb output): $(cat "$T/calls")"
+  grep -qxF -- "-$o $SUP/upstream/darwin/test/stdlib/Foo.swift -o $U/darwin-Foo-v2$sfx -swift-version 5 -module-name main $TAIL" "$T/calls" \
+    || fail "no -$o call for darwin's Foo, variant 2: $(cat "$T/calls")"
 done
 grep -qF '<-define-availability><-Xfrontend><SwiftStdlib 5.1:macOS 10.15><-module-name>' "$T/argv" || fail "an argument with spaces was split: $(cat "$T/argv")"
-for f in upstream/bin/darwin-Foo upstream/bin/darwin-Foo-Onone upstream/bin/objectivec-Bar upstream/bin/objectivec-Bar-Onone \
+for f in upstream/bin/darwin-Foo upstream/bin/darwin-Foo-Onone upstream/bin/darwin-Foo-v2 upstream/bin/darwin-Foo-v2-Onone upstream/bin/objectivec-Bar upstream/bin/objectivec-Bar-Onone \
          lib/libswiftStdlibUnittest.dylib lib/libswiftSwiftPrivate.dylib; do
   tar -tzf "$tarball" | grep -q "swift-runtime-selftest/$f\$" || fail "bundle lacks $f: $(tar -tzf "$tarball")"
 done

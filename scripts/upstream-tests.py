@@ -2,7 +2,8 @@
 # platform: host-agnostic -- python3, standard library only (run as python3 -I)
 #   usage: upstream-tests.py survey <tree> <layer>
 #          upstream-tests.py check <tree> <layer> <list>
-#          upstream-tests.py compile-line <tree> <path>
+#          upstream-tests.py variants <tree> <path>
+#          upstream-tests.py compile-line <tree> <path> [<variant>]
 #          Upstream Swift's own tests for a layer of the API stack, as the 10.9 gate runs them (spec: "Upstream
 #          tests"; the spike's 50-survey-tests.py, productized). <tree> is the pinned swift source; <layer> is
 #          darwin, objectivec or concurrency.
@@ -18,24 +19,37 @@
 #                          so a Swift bump that adds a test, or gives an included test a RUN: form, flag or
 #                          REQUIRES:/UNSUPPORTED: this script does not know, stops the build. (A change
 #                          to a flag's value it allows, or to the test's source, does not: the gate runs it.)
+#            variants      prints how many builds of the test lit runs: one per %target-run-simple-* line
+#                          (upstream's Concurrency tests run each twice, the second in Swift 5 mode with
+#                          -strict-concurrency=complete and NonisolatedNonsendingByDefault, which changes where
+#                          nonisolated async code runs), else 1; fails as compile-line does.
 #            compile-line  prints, one argument per line, the swiftc arguments lit would compile the test
 #                          with, less the source, -o, -target/-sdk (the toolchain's defaults) and the
 #                          optimization level (make-selftest.sh builds each test at -O and at -Onone): lit's
 #                          -swift-version 4 and -define-availability list (utils/availability-macros.def,
 #                          each StdlibDeploymentTarget clamped to 10.9, as lit clamps it to the OS it runs
 #                          on), then the RUN: line's own flags, then lit's -module-name main for the
-#                          %target-run-simple-* forms. It knows %target-run-simple-swift[(<flags>)],
+#                          %target-run-simple-* forms; of <variant> (default 1), the nth of its several
+#                          %target-run-simple-* lines. It knows %target-run-simple-swift[(<flags>)],
 #                          %target-run-simple-swiftgyb[(<flags>)], %target-run-stdlib-swift[(<flags>)] (lit's
 #                          simple form plus -disable-access-control), and the explicit %empty-directory /
 #                          [%gyb %s -o] / %target-build-swift / %target-codesign / %target-run sequence (each
-#                          optionally behind %line-directive), and %target-swift-<x.y>-abi-triple. It refuses,
+#                          optionally behind %line-directive), %target-swift-<x.y>-abi-triple (lit's first
+#                          OS whose runtime has that Swift's ABI: for this gate 10.9, as the runtime pkg brings
+#                          every released one there, compiler patch 0003's table below 10.14.4; lit's own
+#                          10.15 and up would build a program for the OS's runtime, not this one), and
+#                          %import-libdispatch, empty on Darwin (lit gives it a value only for
+#                          swift-corelibs-libdispatch). Beside an executable step it passes over a
+#                          %target-typecheck-verify-swift step: that runs no code, only the compiler's
+#                          diagnostics on the build host, which no 10.9 run can add to. It refuses,
 #                          saying why, anything else: FileCheck (no 10.9 pkg ships it), another substitution,
-#                          another command, arguments or input or a redirection handed to the test (but for
-#                          upstream's stray -strict-concurrency=complete, which the test ignores), more than
-#                          one executable step or build, a second source, a compiler flag outside an explicit
-#                          allowlist (PLAIN_FLAGS, VALUED_FLAGS), a REQUIRES: that does not hold on 10.9 or an
-#                          UNSUPPORTED: that does (FEATURES; macosx and back-deployment count as true); so the
-#                          list must exclude that test.
+#                          another command (env among them: the gate sets no variable), arguments or input
+#                          or a redirection handed to the test (but for upstream's stray
+#                          -strict-concurrency=complete, which the test ignores), more than one executable
+#                          step or build but for several %target-run-simple-* lines, a second source, a
+#                          compiler flag outside an explicit allowlist (PLAIN_FLAGS, VALUED_FLAGS), a
+#                          REQUIRES: that does not hold on 10.9 or an UNSUPPORTED: that does (FEATURES, each
+#                          comma-separated term as lit reads it); so the list must exclude that test.
 #          Exit 0, 1 (check failed, or compile-line refused), 2 usage.
 import os
 import re
@@ -145,25 +159,30 @@ def availability(tree):
 # The compiler flags a RUN: line may carry, and no others: what the included tests use today, and the brief's
 # known forms. A flag outside it is refused, so a Swift bump that gives an included test -enable-experimental-
 # feature <something else>, -Xllvm, -sanitize=... or -D... stops `check` until a reviewer extends the list.
-PLAIN_FLAGS = {"-parse-as-library", "-parse-stdlib", "-O", "-Onone", "-Ounchecked", "-g"}
+# (-strict-concurrency=complete and NonisolatedNonsendingByDefault: the second variant of upstream's Concurrency
+# tests; -sil-verify-all: a compile-time check of the optimizer, actor_counters'.)
+PLAIN_FLAGS = {"-parse-as-library", "-parse-stdlib", "-O", "-Onone", "-Ounchecked", "-g", "-strict-concurrency=complete"}
 VALUED_FLAGS = {   # flag -> what its value must match
     "-swift-version": r"[0-9]+(\.[0-9]+)?",
     "-module-name": r"[A-Za-z_][A-Za-z0-9_]*",
     "-enable-experimental-feature": r"Extern",
-    "-Xfrontend": r"-disable-availability-checking",
-    "-target": r"x86_64-apple-macosx[0-9.]+",   # only reachable through %target-swift-<x.y>-abi-triple
+    "-enable-upcoming-feature": r"NonisolatedNonsendingByDefault",
+    "-Xfrontend": r"-disable-availability-checking|-sil-verify-all",
+    "-target": r"x86_64-apple-macosx10\.9",   # only reachable through %target-swift-<x.y>-abi-triple
 }
 
 
 def translate(words, abi):
     sub = []
     for w in words:
-        m = re.fullmatch(r"%target-swift-([0-9]+\.[0-9]+)-abi-triple", w)
+        if w == "%import-libdispatch":   # lit's value on Darwin: empty (see the usage)
+            continue
+        m = re.fullmatch(r"%target-swift-([0-9]+(?:\.[0-9]+)*)-abi-triple", w)
         if m:
             v = abi.get(m.group(1))
             if v is None or v == "9999":
                 raise Refused("RUN uses %s, which names no macOS release" % w)
-            sub.append("x86_64-apple-macosx%s" % v)
+            sub.append("x86_64-apple-macosx%s" % DEPLOYMENT)   # (see the usage)
             continue
         s = re.search(r"%[\w.-]+", w)
         if s:
@@ -185,12 +204,16 @@ def translate(words, abi):
     return out
 
 
-# lit's feature set for this gate (10.9 x86_64, a Release 1 stdlib built -O with reflection and the Extern
-# feature on): REQUIRES/UNSUPPORTED expressions are evaluated against it. A name it does not list is false.
+# lit's feature set for this gate (10.9 x86_64, a stdlib built -O with reflection, the Extern feature and
+# Concurrency on, on an OS with libdispatch; a compiler that knows the upcoming feature
+# NonisolatedNonsendingByDefault, as lit.swift-features.cfg.inc adds every upcoming feature, and is built
+# without asserts): REQUIRES/UNSUPPORTED expressions are evaluated against it. A name it does not list is
+# false. The gate runs the tests against the runtime it installs, not against an OS's runtime or an older
+# back-deployment library: lit's default configuration, "the just-built libraries", where
+# back_deployment_runtime, back_deploy_concurrency and use_os_stdlib are false and concurrency_runtime true.
 FEATURES = {"executable_test", "objc_interop", "OS=macosx", "VENDOR=apple", "CPU=x86_64", "optimized_stdlib",
-            "reflection", "swift_feature_Extern", "stress_test"}
-# UNSUPPORTED terms that are true of any back-deployed runtime: this runtime is one.
-BACKDEPLOY = re.compile(r"back[-_]?deploy", re.I)
+            "reflection", "swift_feature_Extern", "stress_test", "concurrency", "concurrency_runtime",
+            "libdispatch", "swift_feature_NonisolatedNonsendingByDefault"}
 
 
 def lit_eval(expr, true_names, what):
@@ -234,7 +257,7 @@ def lit_eval(expr, true_names, what):
             return v
         if re.fullmatch(r"[-+=._a-zA-Z0-9]+", t):
             take()
-            return t in true_names or bool(what == "UNSUPPORTED" and BACKDEPLOY.search(t))
+            return t in true_names
         raise Refused("%s: does not parse (%s)" % (what, expr))
     v = expr_()
     if pos[0] != len(toks):
@@ -242,14 +265,19 @@ def lit_eval(expr, true_names, what):
     return v
 
 
+def terms(kind, text):
+    """Each expression of every `// <kind>:` line: lit reads a line as a comma-separated list of them."""
+    return [e.strip() for line in re.findall(r"^\s*//\s*%s:\s*(.*)$" % kind, text, re.M) for e in line.split(",")]
+
+
 def conditions(text):
-    """REQUIRES: every line must hold on 10.9; UNSUPPORTED: none may (lit's meaning, at this gate's features)."""
-    for e in re.findall(r"^\s*//\s*REQUIRES:\s*(.*)$", text, re.M):
+    """REQUIRES: every term must hold on 10.9; UNSUPPORTED: none may (lit's meaning, at this gate's features)."""
+    for e in terms("REQUIRES", text):
         if not lit_eval(e, FEATURES, "REQUIRES"):
-            raise Refused("REQUIRES: %s does not hold on 10.9" % e.strip())
-    for e in re.findall(r"^\s*//\s*UNSUPPORTED:\s*(.*)$", text, re.M):
+            raise Refused("REQUIRES: %s does not hold on 10.9" % e)
+    for e in terms("UNSUPPORTED", text):
         if lit_eval(e, FEATURES, "UNSUPPORTED"):
-            raise Refused("UNSUPPORTED: %s holds on 10.9" % e.strip())
+            raise Refused("UNSUPPORTED: %s holds on 10.9" % e)
 
 
 def split(s):
@@ -274,7 +302,8 @@ def tail_refusal(rest):
     return "RUN hands the test arguments (%s)" % rest
 
 
-def compile_line(tree, path):
+def compile_lines(tree, path):
+    """Every variant's compile-line, in RUN: order (see the usage's variants)."""
     text = read(os.path.join(tree, path))
     cmds = run_commands(text)
     if not cmds:
@@ -284,7 +313,7 @@ def compile_line(tree, path):
         raise Refused("needs FileCheck, which no 10.9 pkg ships")
     base, abi = availability(tree)
     base = ["-swift-version", "4"] + base
-    runs, builds, flags, gyb_out, built = 0, 0, None, None, None
+    runs, builds, flags, gyb_out, built, simple, verify = 0, 0, None, None, None, [], False
     for c in cmds:
         m = re.match(r"^%line-directive\s+\S+\s+--\s+(.*)$", c)
         if m:
@@ -307,11 +336,10 @@ def compile_line(tree, path):
                 raise Refused(why)
             if m.group(2) and not path.endswith(".gyb"):
                 raise Refused("RUN gybs a file that is no .gyb")
-            flags = translate(split(inner), abi) + ["-module-name", "main"]
+            f = translate(split(inner), abi) + ["-module-name", "main"]
             if m.group(1) == "stdlib":
-                flags += ["-Xfrontend", "-disable-access-control"]
-            runs += 1
-            builds += 1
+                f += ["-Xfrontend", "-disable-access-control"]
+            simple.append(f)
             continue
         if re.fullmatch(r"%empty-directory\(%t\)|mkdir -p %t", c):
             continue
@@ -320,6 +348,9 @@ def compile_line(tree, path):
             gyb_out = m.group(1)
             continue
         w = split(c)
+        if w[0] == "%target-typecheck-verify-swift":
+            verify = True
+            continue
         if w[0] == "%target-build-swift":
             builds += 1
             rest, out, sources = [], None, []
@@ -355,13 +386,26 @@ def compile_line(tree, path):
         if w[0].startswith("%"):
             raise Refused("RUN uses %s" % re.match(r"%[\w-]+", w[0]).group(0))
         raise Refused("RUN runs %s" % w[0])
+    if simple and (runs or builds):
+        raise Refused("more than one executable step")
+    if simple:
+        return [base + f for f in simple]
     if runs > 1:
         raise Refused("more than one executable step")
     if builds > 1:
         raise Refused("RUN builds more than one product")
     if runs == 0 or flags is None:
+        if verify:
+            raise Refused("RUN uses %target-typecheck-verify-swift, and runs no executable")
         raise Refused("RUN runs no executable")
-    return base + flags
+    return [base + flags]
+
+
+def compile_line(tree, path, variant=1):
+    lines = compile_lines(tree, path)
+    if not 1 <= variant <= len(lines):
+        raise Refused("has %d variants, not a variant %d" % (len(lines), variant))
+    return lines[variant - 1]
 
 
 def check(tree, layer, listfile):
@@ -388,7 +432,7 @@ def check(tree, layer, listfile):
             if m.group(3) is not None:
                 errs.append("%s: an include takes no reason" % p)
             try:
-                compile_line(tree, p)
+                compile_lines(tree, p)
             except Refused as e:
                 errs.append("%s: an include whose compile-line refuses: %s" % (p, e))
     for p in sorted(cands - set(seen)):
@@ -404,8 +448,8 @@ def check(tree, layer, listfile):
 
 
 def usage():
-    print("usage: upstream-tests.py survey <tree> <layer> | check <tree> <layer> <list> | compile-line <tree> <path>",
-          file=sys.stderr)
+    print("usage: upstream-tests.py survey <tree> <layer> | check <tree> <layer> <list> | variants <tree> <path>"
+          " | compile-line <tree> <path> [<variant>]", file=sys.stderr)
     return 2
 
 
@@ -424,9 +468,19 @@ def main(argv):
                 print(p)
             return 0
         return check(tree, argv[3], argv[4])
-    if cmd == "compile-line" and len(argv) == 4:
+    if cmd == "variants" and len(argv) == 4:
         try:
-            for a in compile_line(tree, argv[3]):
+            print(len(compile_lines(tree, argv[3])))
+        except Refused as e:
+            print("upstream-tests.py: %s: %s" % (argv[3], e), file=sys.stderr)
+            return 1
+        return 0
+    if cmd == "compile-line" and len(argv) in (4, 5):
+        if len(argv) == 5 and not re.fullmatch(r"[0-9]+", argv[4]):
+            print("upstream-tests.py: %s: a variant is a number, not %s" % (argv[3], argv[4]), file=sys.stderr)
+            return 1
+        try:
+            for a in compile_line(tree, argv[3], int(argv[4]) if len(argv) == 5 else 1):
                 print(a)
         except Refused as e:
             print("upstream-tests.py: %s: %s" % (argv[3], e), file=sys.stderr)

@@ -10,6 +10,8 @@
 #            upstream/<layer>/<path>       each test <lists-dir>/<layer>.list includes, copied from <tree>;
 #                                          for a .gyb, beside it, gyb's output: <path> less its .gyb
 #            upstream/<layer>/<path>.args  its compile-line (scripts/upstream-tests.py), one argument per line
+#            upstream/<layer>/<path>.<n>.args  the compile-line of its variant n, from 2 up, where lit builds
+#                                          it more than once (upstream-tests.py variants)
 #          The modules are binary .swiftmodule files, which only the compiler that wrote them reads: the one
 #          that built this release's stdlib. In CI that is the same run's cross toolchain (build-cross), the
 #          same Swift and the same release as the native toolchain vm-test installs and builds the bundle
@@ -35,7 +37,7 @@ for m in $MODS; do
   cp "$SUP/$ARCH/libswift$m.dylib" "$OUT/lib/"
   cp -R "$SUP/$m.swiftmodule" "$OUT/modules/"
 done
-n=0
+n=0; builds=0
 for list in "$@"; do
   layer="$(basename "$list" .list)"
   "$PY" -I "$HERE/scripts/upstream-tests.py" check "$TREE" "$layer" "$list" >/dev/null \
@@ -49,9 +51,16 @@ for list in "$@"; do
         PYTHONHASHSEED=0 "$PY" "$TREE/utils/gyb" --line-directive '' -o "${d%.gyb}" "$d" \
           || { echo "stage-selftest-support.sh: gyb failed on $p" >&2; exit 1; } ;;
     esac
-    "$PY" -I "$HERE/scripts/upstream-tests.py" compile-line "$TREE" "$p" > "$d.args" \
+    nv="$("$PY" -I "$HERE/scripts/upstream-tests.py" variants "$TREE" "$p")" \
       || { echo "stage-selftest-support.sh: no compile-line for $p" >&2; exit 1; }
-    n=$((n + 1))
+    v=1
+    while [ "$v" -le "$nv" ]; do
+      a="$d.args"; [ "$v" = 1 ] || a="$d.$v.args"
+      "$PY" -I "$HERE/scripts/upstream-tests.py" compile-line "$TREE" "$p" "$v" > "$a" \
+        || { echo "stage-selftest-support.sh: no compile-line for $p's variant $v" >&2; exit 1; }
+      v=$((v + 1))
+    done
+    n=$((n + 1)); builds=$((builds + nv))
   done
 done
-echo "staged test support in $OUT: $(ls "$OUT/lib" | tr '\n' ' ')and $n upstream tests"
+echo "staged test support in $OUT: $(ls "$OUT/lib" | tr '\n' ' ')and $n upstream tests ($builds builds)"

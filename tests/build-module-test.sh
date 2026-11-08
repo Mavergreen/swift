@@ -7,7 +7,9 @@
 #   two-file module Tiny must come out as @rpath/libswiftTiny.dylib, compatibility version 1.0.0, minOS
 #   10.9, with its .swiftmodule; the stdlib's -define-availability list must be read from the .def it is
 #   given, each StdlibDeploymentTarget its SwiftStdlib's versions, as the stdlib's CMake writes it with
-#   SWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY (build.sh); a missing
+#   SWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY (build.sh); with --runtime-floor (test support, which runs only
+#   on this runtime) every released SwiftStdlib version, and its StdlibDeploymentTarget, is macOS 10.9, so a
+#   10.9 client may call its @available(SwiftStdlib 5.1) declarations, and 9999 stays as it is; a missing
 #   source must fail naming the file; --flag must hand a word to the compile; and two build roots must give the same bytes (the prefix maps).
 #   SKIPs (77) without SWIFT_HOST_TOOLCHAIN, a shipyard, or a host that can run that toolchain. Reads with
 #   OTOOL, NM and STRINGS, else otool, nm and strings, unless those are the Command Line Tools' stubs (OS X
@@ -82,6 +84,24 @@ grep -qxF -- '-Xfrontend -define-availability -Xfrontend "StdlibDeploymentTarget
 grep -qxF -- '-Xfrontend -define-availability -Xfrontend "StdlibDeploymentTarget 9999:macOS 9999, iOS 9999"' "$RSP" || fail "9999 changed: $(cat "$RSP")"
 [ "$(grep -c . "$RSP")" -eq 6 ] || fail "not six definitions: $(cat "$RSP")"
 if grep -q 'disable-availability-checking' "$RSP" "$T/log1"; then fail "availability checking is off"; fi
+
+echo "-- --runtime-floor: every released SwiftStdlib version is 10.9 (test support); 9999 is not"
+cat > "$T/client.swift" <<'EOF2'
+import Tiny
+print(tinyNew())
+EOF2
+client() { "$HTC/bin/swiftc" -typecheck -sdk "$SDK" -target x86_64-apple-macosx10.9 -resource-dir "$HTC/lib/swift" -I "$T/r1/work/out" "$T/client.swift"; }
+if client > "$T/log5" 2>&1; then fail "a 10.9 client called a strict Tiny's SwiftStdlib 5.1 declaration"; fi
+MAVERICKS_BUILD_ROOT="$T/r1" SWIFT_WORK="$T/r1/work" sh "$BM" --name Tiny --link-name swiftTiny --sdk "$SDK" \
+  --resource-dir "$HTC/lib/swift" --availability "$T/r1/work/avail.def" --work "$T/r1/work/tmp" --out "$T/r1/work/out" \
+  --runtime-floor -- "$T/r1/work/src/Tiny.swift" "$T/r1/work/src/Helper.swift" > "$T/log5" 2>&1 \
+  || { cat "$T/log5"; fail "build-module.sh --runtime-floor failed"; }
+for d in 'SwiftStdlib 5.1:macOS 10.9' 'StdlibDeploymentTarget 5.1:macOS 10.9' 'SwiftStdlib 6.2:macOS 10.9' \
+         'StdlibDeploymentTarget 6.2:macOS 10.9' 'SwiftStdlib 9999:macOS 9999, iOS 9999' 'StdlibDeploymentTarget 9999:macOS 9999, iOS 9999'; do
+  grep -qxF -- "-Xfrontend -define-availability -Xfrontend \"$d\"" "$RSP" || fail "--runtime-floor: no \"$d\": $(cat "$RSP")"
+done
+[ "$(grep -c . "$RSP")" -eq 6 ] || fail "--runtime-floor: not six definitions: $(cat "$RSP")"
+client > "$T/log5" 2>&1 || { cat "$T/log5"; fail "a 10.9 client could not call a --runtime-floor Tiny's SwiftStdlib 5.1 declaration"; }
 
 echo "-- a missing source fails, naming it"
 if build "$T/r1" "$T/r1/work/src/Absent.swift" > "$T/log2" 2>&1; then fail "built with a missing source"; fi

@@ -1,0 +1,160 @@
+# tests/upstream/concurrency.list -- upstream Swift's own tests for the concurrency layer, as the 10.9 gate runs them.
+# Every candidate scripts/upstream-tests.py's survey finds in the pinned tree (a test with a RUN: line in
+# test/Concurrency/Runtime, or one that REQUIRES concurrency) appears once: `include <path>`, built by
+# make-selftest.sh with its compile-line, once per variant (most run twice: the second in Swift 5 mode with
+# -strict-concurrency=complete and NonisolatedNonsendingByDefault), and run by run-selftest.sh --gate, or
+# `exclude <path> -- <reason>`, a reason a reviewer can check against the test (its RUN: line or a
+# REQUIRES:/UNSUPPORTED: is one compile-line refuses, quoted as it says; it uses the Dispatch Swift overlay
+# (DispatchQueue and the like), which this release does not ship; it does not compile for 10.9, with the
+# error; or it failed on 10.9, with the failure). Tests that are also Darwin or ObjectiveC candidates are
+# decided here; those lists point here. build.sh's step 5b checks this list against the tree, so a Swift
+# bump that adds a test, or gives an included one a RUN: form, compiler flag or REQUIRES:/UNSUPPORTED: the
+# script does not know, stops the build until the list is reviewed (a changed source does not; the gate runs it).
+exclude test/Concurrency/Runtime/RuntimeDemangle.swift -- REQUIRES: runtime_module does not hold on 10.9
+exclude test/Concurrency/Runtime/actor_assert_precondition_executor.swift -- RUN runs env
+exclude test/Concurrency/Runtime/actor_assert_precondition_executor_checkIsolated_bincompat_crash_swift_6_mode.swift -- RUN runs env
+exclude test/Concurrency/Runtime/actor_assert_precondition_executor_checkIsolated_bincompat_nocrash_legacy_mode.swift -- RUN runs env
+exclude test/Concurrency/Runtime/actor_assert_precondition_executor_checkIsolated_dispatch_dispatchMain_swift_6_mode.swift -- RUN runs env
+exclude test/Concurrency/Runtime/actor_assert_precondition_executor_checkIsolated_dispatch_swift6_mode.swift -- RUN runs env
+exclude test/Concurrency/Runtime/actor_assert_precondition_executor_checkIsolated_main_customExecutorOnMain_swift6_mode.swift -- RUN runs env
+exclude test/Concurrency/Runtime/actor_assert_precondition_executor_checkIsolated_swift6_mode.swift -- RUN runs env
+exclude test/Concurrency/Runtime/actor_assert_precondition_executor_isIsolatingCurrentContext_swift62_mode.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/actor_assert_precondition_executor_not_implemented_isIsolatingCurrentContext_swift62_mode.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/actor_assume_executor.swift -- RUN runs env
+include test/Concurrency/Runtime/actor_counters.swift
+exclude test/Concurrency/Runtime/actor_counters_freestanding.swift -- REQUIRES: freestanding does not hold on 10.9
+exclude test/Concurrency/Runtime/actor_deinit_escaping_self.swift -- RUN uses %target-future-triple
+exclude test/Concurrency/Runtime/actor_detach.swift -- REQUIRES: foundation does not hold on 10.9
+exclude test/Concurrency/Runtime/actor_dynamic_subclass.swift -- does not compile against the 10.9 SDK, which has no nullability annotations: line 32, "value of optional type 'Foo?' must be unwrapped to refer to member 'doit'"
+exclude test/Concurrency/Runtime/actor_init.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/actor_init_abi.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/actor_isIsolatingCurrentContext.swift -- needs FileCheck, which no 10.9 pkg ships
+include test/Concurrency/Runtime/actor_keypaths.swift
+exclude test/Concurrency/Runtime/actor_recursive_deinit.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async.swift -- uses DispatchQueue, of the Dispatch Swift overlay, which this release does not ship
+exclude test/Concurrency/Runtime/async_initializer.swift -- needs FileCheck, which no 10.9 pkg ships
+include test/Concurrency/Runtime/async_let_fibonacci.swift
+exclude test/Concurrency/Runtime/async_let_throw_completion_order.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_let_throws.swift -- needs FileCheck, which no 10.9 pkg ships
+include test/Concurrency/Runtime/async_parameter_pack.swift
+exclude test/Concurrency/Runtime/async_properties_actor.swift -- needs FileCheck, which no 10.9 pkg ships
+include test/Concurrency/Runtime/async_sequence.swift
+include test/Concurrency/Runtime/async_stream.swift
+exclude test/Concurrency/Runtime/async_task_async_let_child_cancel.swift -- REQUIRES: rdar_77671328 does not hold on 10.9
+exclude test/Concurrency/Runtime/async_task_cancellation_early.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_cancellation_shield.swift -- REQUIRES: rdar170452940 does not hold on 10.9
+exclude test/Concurrency/Runtime/async_task_cancellation_taskGroup.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_cancellation_while_running.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_detach.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_executor_and_serial_executor_both_executor.swift -- RUN runs env
+exclude test/Concurrency/Runtime/async_task_executor_and_serial_executor_nonisolated_async_func_legacy.swift -- RUN runs env
+exclude test/Concurrency/Runtime/async_task_executor_and_serial_executor_nonisolated_async_func_swift6.swift -- RUN runs env
+exclude test/Concurrency/Runtime/async_task_executor_default_actor_funcs.swift -- uses DispatchQueue, of the Dispatch Swift overlay, which this release does not ship
+exclude test/Concurrency/Runtime/async_task_executor_nonisolated_async_func.swift -- uses DispatchQueue, of the Dispatch Swift overlay, which this release does not ship
+exclude test/Concurrency/Runtime/async_task_executor_nsobject.swift -- uses DispatchQueue and DispatchTime, of the Dispatch Swift overlay, which this release does not ship
+exclude test/Concurrency/Runtime/async_task_executor_structured_concurrency.swift -- uses DispatchQueue, of the Dispatch Swift overlay, which this release does not ship
+exclude test/Concurrency/Runtime/async_task_executor_unstructured_task_ownership.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_executor_withExecutor.swift -- uses DispatchQueue, of the Dispatch Swift overlay, which this release does not ship
+exclude test/Concurrency/Runtime/async_task_handle_cancellation.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_locals_async_let.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_locals_basic.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_locals_copy_to_async.swift -- REQUIRES: rdar80824152 does not hold on 10.9
+exclude test/Concurrency/Runtime/async_task_locals_copy_to_sync.swift -- REQUIRES: rdar80824152 does not hold on 10.9
+exclude test/Concurrency/Runtime/async_task_locals_function_value_release.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_locals_groups.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_locals_in_task_group_may_need_to_copy.swift -- REQUIRES: swift_test_mode_optimize_none does not hold on 10.9
+exclude test/Concurrency/Runtime/async_task_locals_isolated_deinit.swift -- RUN uses %swift-plugin-dir
+exclude test/Concurrency/Runtime/async_task_locals_isolated_deinit_freestanding.swift -- REQUIRES: freestanding does not hold on 10.9
+exclude test/Concurrency/Runtime/async_task_locals_prevent_illegal_use_but_specific_case_is_ok.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_locals_synchronous_bind.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_locals_wrapper.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_naming.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_priority_current.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_sleep.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_sleep_cancel.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_withUnsafeCurrentTask.swift -- REQUIRES: swift_task_debug_log does not hold on 10.9
+include test/Concurrency/Runtime/async_task_yield.swift
+exclude test/Concurrency/Runtime/async_taskgroup_addUnlessCancelled.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_asynciterator_semantics.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_cancelAll_only_specific_group.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_cancel_parent_affects_group.swift -- REQUIRES: swift_test_mode_optimize_none does not hold on 10.9
+exclude test/Concurrency/Runtime/async_taskgroup_cancel_then_completions.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_cancel_then_spawn.swift -- needs FileCheck, which no 10.9 pkg ships
+include test/Concurrency/Runtime/async_taskgroup_cancellation_race.swift
+exclude test/Concurrency/Runtime/async_taskgroup_discarding.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_discarding_dontLeak.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_discarding_dontLeak_class_error.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_discarding_neverConsumingTasks.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_dontLeakTasks.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_is_asyncsequence.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_is_empty.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_next_not_invoked_cancelAll.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_next_not_invoked_without_cancelAll.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_next_on_completed.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_next_on_pending.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_throw_recover.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_taskgroup_throw_rethrow.swift -- needs FileCheck, which no 10.9 pkg ships
+include test/Concurrency/Runtime/basic_future.swift
+include test/Concurrency/Runtime/cancellation_handler.swift
+exclude test/Concurrency/Runtime/cancellation_handler_concurrent.swift -- its -Onone build failed on 10.9 under Guard Malloc: it starts 100,000 tasks, and the guarded run took 65 s on ultimate-hat (rc 0; 0.6 s unguarded), past the gate's 60 s a run
+exclude test/Concurrency/Runtime/cancellation_handler_only_once.swift -- needs FileCheck, which no 10.9 pkg ships
+include test/Concurrency/Runtime/checked_continuation.swift
+exclude test/Concurrency/Runtime/class_resilience.swift -- RUN uses %target-build-swift-dylib
+include test/Concurrency/Runtime/clock.swift
+exclude test/Concurrency/Runtime/continuation_validation.swift -- RUN runs env
+exclude test/Concurrency/Runtime/custom_executors.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/custom_executors_complex_equality.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/custom_executors_complex_equality_crash.swift -- RUN runs env
+exclude test/Concurrency/Runtime/custom_executors_complex_equality_subclass.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/custom_executors_default.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/custom_executors_globalActor.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/custom_executors_moveOnly_job.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/custom_executors_priority.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/custom_executors_protocol.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/custom_executors_sdk_with_consuming_param_but_impl_owned.swift -- RUN uses %target-swift-frontend
+exclude test/Concurrency/Runtime/custom_executors_sdk_with_owned_param_but_impl_consuming.swift -- RUN uses %target-swift-frontend
+exclude test/Concurrency/Runtime/custom_executors_tryDiagnoseExecutorConformance_with_sdk_missing_job_type.swift -- RUN uses %target-swift-frontend
+exclude test/Concurrency/Runtime/custom_executors_tryDiagnoseExecutorConformance_with_sdk_typealias_struct_job_types.swift -- RUN uses %target-swift-frontend
+exclude test/Concurrency/Runtime/custom_main_executor.swift -- REQUIRES: synchronization does not hold on 10.9
+exclude test/Concurrency/Runtime/custom_task_executor_fast_path.swift -- REQUIRES: synchronization does not hold on 10.9
+exclude test/Concurrency/Runtime/data_race_detection_crash.swift -- RUN uses the flag -enable-actor-data-race-checks, which no included test is known to need
+exclude test/Concurrency/Runtime/data_race_detection_legacy_warning.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/effectful_properties.swift -- needs FileCheck, which no 10.9 pkg ships
+include test/Concurrency/Runtime/exclusivity.swift
+include test/Concurrency/Runtime/exclusivity_custom_executors.swift
+exclude test/Concurrency/Runtime/executor_deinit1.swift -- REQUIRES: rdar114644156 does not hold on 10.9
+exclude test/Concurrency/Runtime/executor_deinit2.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/executor_deinit3.swift -- REQUIRES: rdar78576626 does not hold on 10.9
+include test/Concurrency/Runtime/future_fibonacci.swift
+exclude test/Concurrency/Runtime/isolated_conformance.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/isolated_deinit_main_sync.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/isolated_macro_in_nonisolated_nonsending_func.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/mainactor.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/must_not_hop_withContinuation.swift -- REQUIRES: synchronization does not hold on 10.9
+exclude test/Concurrency/Runtime/noncopyable_continuation.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/nonisolated_inherits_isolation.swift -- REQUIRES: asserts does not hold on 10.9
+exclude test/Concurrency/Runtime/nonisolated_nonsending_hop_to_executor_throws.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/objc_async.swift -- REQUIRES: rdar77934626 does not hold on 10.9
+exclude test/Concurrency/Runtime/protocol_resilience.swift -- RUN uses %target-build-swift-dylib
+exclude test/Concurrency/Runtime/reasync.swift -- RUN uses %target-swift-frontend
+exclude test/Concurrency/Runtime/signpost_tracing_test.swift -- RUN runs env
+exclude test/Concurrency/Runtime/sleep_executor.swift -- uses DispatchQueue and DispatchTime, of the Dispatch Swift overlay, which this release does not ship
+exclude test/Concurrency/Runtime/startImmediately.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/startImmediately_order.swift -- needs FileCheck, which no 10.9 pkg ships
+include test/Concurrency/Runtime/startOnMainActor.swift
+include test/Concurrency/Runtime/task_creation.swift
+exclude test/Concurrency/Runtime/task_destruction.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/task_immediate_mainactor_isolation.swift -- REQUIRES: foundation does not hold on 10.9
+exclude test/Concurrency/Runtime/taskgroup_cancelAll_cancellationHandler.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/unspecified_is_main_actor.swift -- REQUIRES: asserts does not hold on 10.9
+exclude test/stdlib/CaseIterableTests.swift -- RUN hands the test arguments (%t)
+exclude test/stdlib/Concurrency.swift -- RUN uses %target-typecheck-verify-swift, and runs no executable
+exclude test/stdlib/Observation/Macros/observation_macro_expansion_observable.swift -- REQUIRES: swift_swift_parser does not hold on 10.9
+exclude test/stdlib/Observation/Observable.swift -- REQUIRES: swift_swift_parser does not hold on 10.9
+exclude test/stdlib/Observation/ObservableAvailabilityCycle.swift -- REQUIRES: swift_swift_parser does not hold on 10.9
+exclude test/stdlib/Observation/ObservableAvailabilityCycle2.swift -- REQUIRES: swift_swift_parser does not hold on 10.9
+exclude test/stdlib/Observation/ObservableDiagnostics.swift -- REQUIRES: swift_swift_parser does not hold on 10.9
+exclude test/stdlib/Observation/ObservableDidSetWillSet.swift -- REQUIRES: swift_swift_parser does not hold on 10.9
+include test/stdlib/Result+asyncInit.swift
+exclude test/stdlib/run_inline.swift -- REQUIRES: freestanding does not hold on 10.9
+exclude test/stdlib/run_inline_die.swift -- REQUIRES: freestanding does not hold on 10.9
