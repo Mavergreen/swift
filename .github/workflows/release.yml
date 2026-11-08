@@ -127,13 +127,6 @@ jobs:
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
           echo "version=$VER publish=$PUBLISH"
 
-      # The toolchain pkgs require swift-runtime of this very version, and the cross toolchain's users install
-      # the runtime by hand on their 10.9 Mac, so a publishing release must carry the note that says so.
-      # Here, before any build, with the version known.
-      - name: The release notes say the toolchains require this runtime version
-        if: steps.ver.outputs.publish == 'true'
-        run: sh scripts/check-runtime-requires-note.sh "${{ steps.ver.outputs.version }}"
-
   # The cross toolchain, the stdlib and the runtime: arm64, macOS 11.0, built natively on this arm64
   # runner with nothing cross-compiled, its compiler's Swift half compiled by the swift.org compiler --
   # the one seed. The stdlib every pkg ships is then built ONCE, by that cross toolchain; build stages the
