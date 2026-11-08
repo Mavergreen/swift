@@ -1,258 +1,135 @@
-diff --git include/swift/AST/FeatureAvailability.def include/swift/AST/FeatureAvailability.def
---- include/swift/AST/FeatureAvailability.def
-+++ include/swift/AST/FeatureAvailability.def
-@@ -36,11 +36,17 @@
- #define FUTURE (99, 99)
- #endif
+diff --git include/swift/AST/ASTContext.h include/swift/AST/ASTContext.h
+--- include/swift/AST/ASTContext.h
++++ include/swift/AST/ASTContext.h
+@@ -927,6 +927,16 @@ public:
+   /// of the Swift compiler for the target platform.
+   AvailabilityRange getSwiftAvailability(unsigned major, unsigned minor) const;
  
--FEATURE(ObjCMetadataUpdateCallback,                     (5, 0))
--FEATURE(ObjCGetClassHook,                               (5, 0))
-+// Mavergreen: the 10.9 runtime is the pkgs'. RuntimeVersions.def maps every released Swift
-+// version to OS X 10.9, where the runtime is the swift-runtime pkg's; these four need 10.9's own
-+// libobjc instead, which has none of them, so they read FUTURE, as a 10.9 target saw them before:
-+// ObjCMetadataUpdateCallback (_objc_realizeClassFromSwift; it also keeps the legacy-layout path),
-+// ObjCGetClassHook (objc_setHook_getClass), ObjCClassStubs (objc_loadClassref) and
-+// ObjCIsUniquelyReferenced (objc_isUniquelyReferenced). Every feature: patches/compiler/0003-AUDIT.md.
-+FEATURE(ObjCMetadataUpdateCallback,                     FUTURE)
-+FEATURE(ObjCGetClassHook,                               FUTURE)
- 
- FEATURE(OpaqueType,                                     (5, 1))
--FEATURE(ObjCClassStubs,                                 (5, 1))
-+FEATURE(ObjCClassStubs,                                 FUTURE)
- FEATURE(BackDeployedConcurrency,                        (5, 1))
- 
- FEATURE(TypesInAbstractMetadataState,                   (5, 2))
-@@ -53,7 +59,7 @@ FEATURE(IntermodulePrespecializedGenericMetadata,       (5, 4))
- FEATURE(Concurrency,                                    (5, 5))
- 
- FEATURE(MultiPayloadEnumTagSinglePayload,               (5, 6))
--FEATURE(ObjCIsUniquelyReferenced,                       (5, 6))
-+FEATURE(ObjCIsUniquelyReferenced,                       FUTURE)
- 
- // Metadata and casting support for parameterized existential types
- FEATURE(ParameterizedExistential,                       (5, 7))
-diff --git include/swift/AST/RuntimeVersions.def include/swift/AST/RuntimeVersions.def
---- include/swift/AST/RuntimeVersions.def
-+++ include/swift/AST/RuntimeVersions.def
-@@ -56,83 +56,88 @@
- #define FUTURE
- #endif
- 
-+// Mavergreen: the 10.9 runtime is the pkgs'. A Mavergreen OS X 10.9 runs the Swift runtime its
-+// swift-runtime pkg ships (6.4), not one that came with the OS, so every released version's macOS
-+// entry reads 10.9: what a version's runtime provides is there on 10.9. What 10.9's own OS lacks
-+// (its libobjc's hooks) stays closed in FeatureAvailability.def; patches/compiler/0003-AUDIT.md.
++  /// Mavergreen: the 10.9 runtime is the pkgs'. The availability upstream's
++  /// table gives a Swift version on the target OS, which is where the OS's own
++  /// runtime and libobjc provide it. getSwiftAvailability() differs from it only
++  /// for a macOS target below 10.14.4 (lib/AST/Availability.cpp).
++  AvailabilityRange getOSSwiftAvailability(unsigned major, unsigned minor) const;
 +
- // .. Swift 5 ............................................................... //
++  /// Mavergreen: whether a FeatureAvailability.def feature needs the OS's own
++  /// libobjc, not the Swift runtime, and so takes getOSSwiftAvailability().
++  static bool isOSRuntimeFeature(StringRef feature);
++
+   // For each feature defined in FeatureAvailability, define two functions;
+   // the latter, with the suffix RuntimeAvailability, is for use with
+   // AvailabilityRange::forRuntimeTarget(), and only looks at the Swift
+@@ -935,6 +945,9 @@ public:
+   inline AvailabilityRange get##N##Availability() const {                      \
+     if (LangOpts.hasFeature(Feature::Embedded))                                \
+       return AvailabilityRange::alwaysAvailable();                             \
++    /* Mavergreen: the 10.9 runtime is the pkgs' (isOSRuntimeFeature). */      \
++    if (isOSRuntimeFeature(#N))                                                \
++      return getOSSwiftAvailability V;                                         \
+     return getSwiftAvailability V;                                             \
+   }                                                                            \
+   inline AvailabilityRange get##N##RuntimeAvailability() const {               \
+diff --git lib/AST/Availability.cpp lib/AST/Availability.cpp
+--- lib/AST/Availability.cpp
++++ lib/AST/Availability.cpp
+@@ -33,6 +33,7 @@
+ #include "swift/Basic/Assertions.h"
+ #include "swift/Basic/Platform.h"
+ #include "swift/ClangImporter/ClangModule.h"
++#include "llvm/ADT/StringSwitch.h"
+ #include <map>
  
- MAJOR_VERSION(5)
+ using namespace swift;
+@@ -909,8 +910,41 @@ AvailabilityRange ASTContext::getSwiftFutureAvailability() const {
+   }
+ }
  
- RUNTIME_VERSION(
-   (5, 0),
--  PLATFORM(macOS,   (10, 14, 4))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (12, 2))
-   PLATFORM(watchOS, (5, 2))
- )
++// Mavergreen: the 10.9 runtime is the pkgs'. A client built for a macOS older
++// than 10.14.4, the first with a Swift runtime of its own, records
++// @rpath/libswiftCore.dylib (Core's $ld$previous), and on a Mavergreen OS X 10.9
++// loads the Swift runtime the swift-runtime pkg ships (6.4). For such a target
++// every released Swift version (upstream's table, short of FUTURE) is therefore
++// available from 10.9 on. From 10.14.4 a client loads the OS's
++// /usr/lib/swift, and upstream's table holds exactly. What the OS's libobjc
++// provides is never the pkgs': isOSRuntimeFeature()'s features, and the callers
++// that ask getOSSwiftAvailability() themselves, keep upstream's table on every
++// target. Every feature's class: patches/compiler/0003-AUDIT.md.
++static bool isMacOSTargetBeforeSwiftInTheOS(const llvm::Triple &target) {
++  return target.isMacOSX() && target.isMacOSXVersionLT(10, 14, 4);
++}
++
++bool ASTContext::isOSRuntimeFeature(StringRef feature) {
++  return llvm::StringSwitch<bool>(feature)
++      .Case("ObjCMetadataUpdateCallback", true) // _objc_realizeClassFromSwift
++      .Case("ObjCGetClassHook", true)           // objc_setHook_getClass
++      .Case("ObjCClassStubs", true)             // objc_loadClassref
++      .Case("ObjCIsUniquelyReferenced", true)   // objc_isUniquelyReferenced
++      .Default(false);
++}
++
+ AvailabilityRange ASTContext::getSwiftAvailability(unsigned major,
+                                                    unsigned minor) const {
++  auto upstream = getOSSwiftAvailability(major, minor);
++  if (isMacOSTargetBeforeSwiftInTheOS(LangOpts.Target) &&
++      upstream.hasMinimumVersion() &&
++      upstream.getRawMinimumVersion() < llvm::VersionTuple(99, 99))
++    return AvailabilityRange(VersionRange::allGTE(llvm::VersionTuple(10, 9, 0)));
++  return upstream;
++}
++
++AvailabilityRange ASTContext::getOSSwiftAvailability(unsigned major,
++                                                     unsigned minor) const {
+   auto target = LangOpts.Target;
  
- RUNTIME_VERSION(
-   (5, 1),
--  PLATFORM(macOS,   (10, 15, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (13, 0, 0))
-   PLATFORM(watchOS, (6, 0, 0))
- )
- 
- RUNTIME_VERSION(
-   (5, 2),
--  PLATFORM(macOS,   (10, 15, 4))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (13, 4, 0))
-   PLATFORM(watchOS, (6, 2, 0))
- )
- 
- RUNTIME_VERSION(
-   (5, 3),
--  PLATFORM(macOS,   (10, 16, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (14, 0, 0))
-   PLATFORM(watchOS, (7, 0, 0))
- )
- 
- RUNTIME_VERSION(
-   (5, 4),
--  PLATFORM(macOS,   (11, 3, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (14, 5, 0))
-   PLATFORM(watchOS, (7, 4, 0))
- )
- 
- RUNTIME_VERSION(
-   (5, 5),
--  PLATFORM(macOS,   (12, 0, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (15, 0, 0))
-   PLATFORM(watchOS, (8, 0, 0))
- )
- 
- RUNTIME_VERSION(
-   (5, 6),
--  PLATFORM(macOS,   (12, 3, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (15, 4, 0))
-   PLATFORM(watchOS, (8, 5, 0))
- )
- 
- RUNTIME_VERSION(
-   (5, 7),
--  PLATFORM(macOS,   (13, 0, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (16, 0, 0))
-   PLATFORM(watchOS, (9, 0, 0))
- )
- 
- RUNTIME_VERSION(
-   (5, 8),
--  PLATFORM(macOS,   (13, 3, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (16, 4, 0))
-   PLATFORM(watchOS, (9, 4, 0))
- )
- 
- RUNTIME_VERSION(
-   (5, 9),
--  PLATFORM(macOS,   (14, 0, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (17, 0, 0))
-   PLATFORM(watchOS, (10, 0, 0))
- )
- 
- RUNTIME_VERSION(
-   (5, 10),
--  PLATFORM(macOS,   (14, 4, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (17, 4, 0))
-   PLATFORM(watchOS, (10, 4, 0))
-   PLATFORM(visionOS,(1, 0, 0))
-@@ -144,7 +149,7 @@ MAJOR_VERSION(6)
- 
- RUNTIME_VERSION(
-   (6, 0),
--  PLATFORM(macOS,   (15, 0, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (18, 0, 0))
-   PLATFORM(watchOS, (11, 0, 0))
-   PLATFORM(visionOS,(2, 0, 0))
-@@ -152,7 +157,7 @@ RUNTIME_VERSION(
- 
- RUNTIME_VERSION(
-   (6, 1),
--  PLATFORM(macOS,   (15, 4, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (18, 4, 0))
-   PLATFORM(watchOS, (11, 4, 0))
-   PLATFORM(visionOS,(2, 4, 0))
-@@ -160,7 +165,7 @@ RUNTIME_VERSION(
- 
- RUNTIME_VERSION(
-   (6, 2),
--  PLATFORM(macOS,   (26, 0, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (26, 0, 0))
-   PLATFORM(watchOS, (26, 0, 0))
-   PLATFORM(visionOS,(26, 0, 0))
-@@ -168,7 +173,7 @@ RUNTIME_VERSION(
- 
- RUNTIME_VERSION(
-   (6, 3),
--  PLATFORM(macOS,   (26, 4, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (26, 4, 0))
-   PLATFORM(watchOS, (26, 4, 0))
-   PLATFORM(visionOS,(26, 4, 0))
-@@ -176,7 +181,7 @@ RUNTIME_VERSION(
- 
- RUNTIME_VERSION(
-   (6, 4),
--  PLATFORM(macOS,   (27, 0, 0))
-+  PLATFORM(macOS,   (10, 9, 0))
-   PLATFORM(iOS,     (27, 0, 0))
-   PLATFORM(watchOS, (27, 0, 0))
-   PLATFORM(visionOS,(27, 0, 0))
-diff --git lib/Basic/Platform.cpp lib/Basic/Platform.cpp
---- lib/Basic/Platform.cpp
-+++ lib/Basic/Platform.cpp
-@@ -710,9 +710,12 @@ struct StaticPlatformSwiftReleaseStrictlyDescend<
-     StaticPlatformSwiftRelease<FirstSwift, FirstPlatform>,
-     StaticPlatformSwiftRelease<SecondSwift, SecondPlatform>
-   > {
-+  // Mavergreen: the 10.9 runtime is the pkgs'. Every released Swift version's macOS entry reads
-+  // 10.9 (RuntimeVersions.def), so on macOS the platform versions descend but not strictly: one
-+  // platform release provides them all, and the newest of them is found first.
-   static constexpr bool value =
-     StaticVersionGT<FirstSwift, SecondSwift>::value &&
--    StaticVersionGT<FirstPlatform, SecondPlatform>::value;
-+    !StaticVersionGT<SecondPlatform, FirstPlatform>::value;
- };
- 
- /// A helper template for BuildPlatformSwiftReleaseArray, below.
+   // Deal with special cases for Swift 5.3 and lower
 diff --git lib/IRGen/GenClass.cpp lib/IRGen/GenClass.cpp
 --- lib/IRGen/GenClass.cpp
 +++ lib/IRGen/GenClass.cpp
-@@ -2793,10 +2793,14 @@ llvm::Constant *irgen::emitObjCProtocolData(IRGenModule &IGM,
+@@ -2793,10 +2793,12 @@ llvm::Constant *irgen::emitObjCProtocolData(IRGenModule &IGM,
    // The linker on older deployment targets does not gracefully handle the
    // situation when both an objective c object and a swift object define the
    // protocol under the same symbol name.
-+  // Mavergreen: the 10.9 runtime is the pkgs', but the linker and loader meant here are the OS's
-+  // (macOS 13.3, Swift 5.8's), not the runtime pkg's: on macOS this asks for 13.3 itself, as before.
++  // Mavergreen: the 10.9 runtime is the pkgs', but the linker and loader meant
++  // here are the OS's, so this asks upstream's table (getOSSwiftAvailability).
    auto deploymentAvailability =
        AvailabilityRange::forDeploymentTarget(IGM.Context);
    bool canUseClangEmission = deploymentAvailability.isContainedIn(
 -    IGM.Context.getSwift58Availability());
-+    IGM.Context.LangOpts.Target.isMacOSX()
-+        ? AvailabilityRange(llvm::VersionTuple(13, 3, 0))
-+        : IGM.Context.getSwift58Availability());
++    IGM.Context.getOSSwiftAvailability(5, 8));
  
    if (llvm::Triple(IGM.Module.getTargetTriple()).isOSDarwin() &&
        canUseClangEmission) {
 diff --git lib/IRGen/GenHeap.cpp lib/IRGen/GenHeap.cpp
 --- lib/IRGen/GenHeap.cpp
 +++ lib/IRGen/GenHeap.cpp
-@@ -1352,8 +1352,11 @@ FunctionPointer IRGenModule::getFixedClassInitializationFn() {
+@@ -1352,8 +1352,10 @@ FunctionPointer IRGenModule::getFixedClassInitializationFn() {
    if (ObjCInterop) {
      // In new enough ObjC runtimes, objc_opt_self provides a direct fast path
      // to realize a class.
-+    // Mavergreen: the 10.9 runtime is the pkgs', but objc_opt_self is the OS's libobjc's (macOS
-+    // 10.15, Swift 5.1's), which 10.9's lacks: on macOS this asks for 10.15 itself, as before.
++    // Mavergreen: the 10.9 runtime is the pkgs', but objc_opt_self is the OS's
++    // libobjc's, so this asks upstream's table (getOSSwiftAvailability).
      if (getAvailabilityRange().isContainedIn(
 -            Context.getSwift51Availability())) {
-+            Triple.isMacOSX() ? AvailabilityRange(llvm::VersionTuple(10, 15, 0))
-+                              : Context.getSwift51Availability())) {
++            Context.getOSSwiftAvailability(5, 1))) {
        fn = getObjCOptSelfFunctionPointer();
      }
      // Otherwise, the Swift runtime always provides a `get
 diff --git lib/Sema/TypeCheckAttr.cpp lib/Sema/TypeCheckAttr.cpp
 --- lib/Sema/TypeCheckAttr.cpp
 +++ lib/Sema/TypeCheckAttr.cpp
-@@ -1878,12 +1878,19 @@ visitObjCImplementationAttr(ObjCImplementationAttr *attr) {
+@@ -1878,12 +1878,14 @@ visitObjCImplementationAttr(ObjCImplementationAttr *attr) {
      // While it's possible that @objc @implementation would function with
      // pre-stable runtimes, this isn't a configuration that's been tested or
      // supported.
-+    // Mavergreen: the 10.9 runtime is the pkgs', but the stable ObjC runtime meant here is the
-+    // OS's libobjc (macOS 10.14.4, Swift 5.0's), which 10.9's predates: on macOS this asks for
-+    // 10.14.4 itself, as before.
++    // Mavergreen: the 10.9 runtime is the pkgs', but the stable ObjC runtime
++    // meant here is the OS's libobjc, so this asks upstream's table.
      auto deploymentAvailability = AvailabilityRange::forDeploymentTarget(Ctx);
 -    if (!deploymentAvailability.isContainedIn(Ctx.getSwift50Availability())) {
-+    auto stableObjCAvailability =
-+        Ctx.LangOpts.Target.isMacOSX()
-+            ? AvailabilityRange(llvm::VersionTuple(10, 14, 4))
-+            : Ctx.getSwift50Availability();
-+    if (!deploymentAvailability.isContainedIn(stableObjCAvailability)) {
++    if (!deploymentAvailability.isContainedIn(Ctx.getOSSwiftAvailability(5, 0))) {
        auto diag = diagnose(
            attr->getLocation(),
            diag::attr_objc_implementation_raise_minimum_deployment_target,
 -          Ctx.getTargetAvailabilityDomain(), Ctx.getSwift50Availability());
-+          Ctx.getTargetAvailabilityDomain(), stableObjCAvailability);
++          Ctx.getTargetAvailabilityDomain(), Ctx.getOSSwiftAvailability(5, 0));
        if (attr->isEarlyAdopter()) {
          diag.wrapIn(diag::wrap_objc_implementation_will_become_error);
        }
