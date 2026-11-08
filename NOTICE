@@ -254,6 +254,10 @@ swift-frontend is modified: it is built with the patches in ./patches/compiler
         SwiftOnoneSupport, _Builtin_float) introduced at one, count as available
         from 10.9, while features that need the OS's own libobjc stay closed; at
         10.14.4 and later the compiler is upstream's.
+  0004  escaping-closure check's file name length — an optimized build passes
+        the runtime an empty file name, and now its length, 0, not that of the
+        source's full path, which put the build directory's length into the
+        binary.
 
 The cross toolchain package (swift-toolchain-cross-*.pkg) contains the same
 components under the same licenses, built from the same sources and patches

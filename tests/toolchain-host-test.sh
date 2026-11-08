@@ -27,9 +27,9 @@ grep -q "not 'x86'" "$T/err" || fail "did not name the bad host: $(cat "$T/err")
 
 echo "-- compiler_patches: the repo's patches/compiler, per host"
 got="$(compiler_patches x86_64 "$REPO/patches/compiler" | sed 's|.*/||' | tr '\n' ' ')"
-[ "$got" = "0001-accept-10.9-sdk.patch 0002-hosttools-rpath-loader-path.patch 0003-runtime-versions-macos-10.9.patch " ] || fail "x86_64 takes [$got]"
+[ "$got" = "0001-accept-10.9-sdk.patch 0002-hosttools-rpath-loader-path.patch 0003-runtime-versions-macos-10.9.patch 0004-escaping-closure-check-filename-length.patch " ] || fail "x86_64 takes [$got]"
 got="$(compiler_patches arm64 "$REPO/patches/compiler" | sed 's|.*/||' | tr '\n' ' ')"
-[ "$got" = "0001-accept-10.9-sdk.patch 0003-runtime-versions-macos-10.9.patch " ] || fail "arm64 takes [$got]"
+[ "$got" = "0001-accept-10.9-sdk.patch 0003-runtime-versions-macos-10.9.patch 0004-escaping-closure-check-filename-length.patch " ] || fail "arm64 takes [$got]"
 mkdir -p "$T/p"; for n in 0001-a 0002-b 0003-c; do : > "$T/p/$n.patch"; done
 got="$(compiler_patches arm64 "$T/p" | sed 's|.*/||' | tr '\n' ' ')"
 [ "$got" = "0001-a.patch 0003-c.patch " ] || fail "arm64 takes [$got] of 0001-0003: a later patch is both hosts'"

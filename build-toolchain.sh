@@ -202,6 +202,8 @@ grep -q 'any macOS SDK back to 10.9 is accepted' "$SC/lib/Driver/Driver.cpp" || 
 for f in lib/AST/Availability.cpp include/swift/AST/ASTContext.h lib/Serialization/Deserialization.cpp; do
   grep -q "Mavergreen: the 10.9 runtime is the pkgs'" "$SC/$f" || { echo "FAIL: compiler patch 0003 not applied ($f)"; exit 1; }
 done
+grep -q 'Mavergreen: the length of the string passed, which is empty when optimizing' "$SC/lib/IRGen/GenHeap.cpp" \
+  || { echo "FAIL: compiler patch 0004 not applied"; exit 1; }
 if [ "$HOST" = x86_64 ]; then
   grep -q "host tools run on the toolchain's own bundled runtime" "$SC/cmake/modules/AddSwift.cmake" || { echo "FAIL: compiler patch 0002 not applied"; exit 1; }
 elif grep -q "host tools run on the toolchain's own bundled runtime" "$SC/cmake/modules/AddSwift.cmake"; then

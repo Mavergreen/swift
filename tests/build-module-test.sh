@@ -10,7 +10,8 @@
 #   SWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY (build.sh); with --runtime-floor (test support, which runs only
 #   on this runtime) every released SwiftStdlib version, and its StdlibDeploymentTarget, is macOS 10.9, so a
 #   10.9 client may call its @available(SwiftStdlib 5.1) declarations, and 9999 stays as it is; a missing
-#   source must fail naming the file; --flag must hand a word to the compile; and two build roots must give the same bytes (the prefix maps).
+#   source must fail naming the file; --flag must hand a word to the compile; and two build roots must give the same bytes (the prefix maps,
+#   and compiler patch 0004, without which an escaping-closure check carried the length of the source's path).
 #   SKIPs (77) without SWIFT_HOST_TOOLCHAIN, a shipyard, or a host that can run that toolchain. Reads with
 #   OTOOL, NM and STRINGS, else otool, nm and strings, unless those are the Command Line Tools' stubs (OS X
 #   10.9 without them): then mavericks-clang-22's llvm-otool, llvm-nm and llvm-strings (CLANG22_PREFIX).
@@ -46,7 +47,9 @@ src() {  # src <root> -- lays out Tiny's two files and a .def under <root>/work
   mkdir -p "$1/work/src"
   printf '%s\n' '@available(SwiftStdlib 5.1, *)' 'public func tinyNew() -> Int { return 2 }' \
     'public func tiny() -> Int { return helper() + 1 }' > "$1/work/src/Tiny.swift"
-  printf '%s\n' 'internal func helper() -> Int { return 41 }' > "$1/work/src/Helper.swift"
+  # withoutActuallyEscaping: its escape check names the source file to the runtime (compiler patch 0004).
+  printf '%s\n' 'internal func helper() -> Int { return 41 }' \
+    'public func tinyRun(_ f: () -> Int) -> Int { return withoutActuallyEscaping(f) { g in g() } }' > "$1/work/src/Helper.swift"
   printf '%s\n' '# comment' '' 'SwiftStdlib 9999:macOS 9999, iOS 9999' \
     'SwiftStdlib 5.1:macOS 10.15, iOS 13.0' 'SwiftStdlib 6.2:anyAppleOS 26.0' > "$1/work/avail.def"
 }
