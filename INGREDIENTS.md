@@ -163,6 +163,13 @@ since their availability is the OS's APIs'; deprecations, obsoletions and unavai
 as a link to `libswiftCore.dylib`, as upstream's own stdlib install does beside a Core that has Span. So a
 program built for 10.9 that uses Span needs a runtime pkg that has the link, as one using any other new API
 needs a runtime that has it, and an app that bundles our runtime must bundle the link with it.
+`_Concurrency` is imported implicitly, as Apple's swiftc does: the toolchains ship `_Concurrency.swiftmodule`
+and `_Builtin_float.swiftmodule` and `libswift_Concurrency.dylib`, the runtime pkg that dylib alone. `_Builtin_float`
+is a module only. Its dylib is a stub whose every export (but its force-load symbol) libswiftDarwin
+defines, so no pkg ships it and no program links it; step 7 checks that, so a Darwin that lost a symbol fails
+the build, not a client. A program built by these toolchains links `@rpath/libswift_Concurrency.dylib`,
+so a toolchain pkg requires the runtime pkg of its own release or later, not the earlier runtime that had
+Darwin and ObjectiveC alone. `-disable-implicit-string-processing-module-import` stays: `_StringProcessing` ships nowhere.
 Every feature's class, with the symbol it needs and the compiler code that reads it, and the declaration
 rule, are in `patches/compiler/0003-AUDIT.md`, and `tests/compiler-patch-audit-test.sh` holds the patch to
 them. The proof programs are `tests/typed_throws_test.swift`, `tests/parameter_packs_test.swift` and
@@ -296,9 +303,8 @@ believing a release is good; it is not the bar for publishing one.
 
 `check-artifact-conformance.sh` holds a release's artifacts to the family's schemes, and the compat
 guard (`scripts/guard.sh`) reads the `sdk-pin` entries too. These departures are deliberate, and
-each is scoped to the artifact it concerns: the first seven to the stdlib dylibs (libswiftCore and
-libswiftSwiftOnoneSupport: the runtime pkg's, and the same bytes in both toolchain pkgs; and
-libswift_Concurrency, the runtime pkg's), the next to the cross toolchain pkg's install floor, the
+each is scoped to the artifact it concerns: the first nine to the stdlib dylibs (libswiftCore,
+libswiftSwiftOnoneSupport and libswift_Concurrency: the runtime pkg's, and the same bytes in both toolchain pkgs), the next to the cross toolchain pkg's install floor, the
 next to vm-test's upgrade from the newest release, and the last ones to the swift.org mirror attached to
 `-mavericks.1` releases.
 
@@ -307,8 +313,10 @@ next to vm-test's upgrade from the newest release, and the last ones to the swif
 - sdk-pin:*/swift-runtime/lib/swift/libswift_Concurrency.dylib: the same stdlib build and the same reason as libswiftCore.dylib's, above: Concurrency's runtime is C++17 as Core's is, and records sdk 11.3 and minos 10.9 (runtime patch 0012 lowers the 10.15 its build forced).
 - sdk-pin:*/swift-toolchain/lib/swift/macosx/libswiftCore.dylib: the toolchain's stdlib dylibs are the runtime's own bytes, staged from the one stdlib build (scripts/stage-toolchain.sh), so the runtime's reason above applies verbatim. The compiler, lld and clang beside them record the pinned 10.9 SDK and take no exemption.
 - sdk-pin:*/swift-toolchain/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib: the same stdlib build and the same reason as libswiftCore.dylib's, above.
+- sdk-pin:*/swift-toolchain/lib/swift/macosx/libswift_Concurrency.dylib: the runtime's own bytes too, from the same stdlib build, and the same reason as libswiftCore.dylib's, above; the toolchain ships it so a program's link finds it, as it ships Core's.
 - sdk-pin:*/swift-toolchain-cross/lib/swift/macosx/libswiftCore.dylib: the cross toolchain's stdlib dylibs are the runtime's own bytes too: CI's build-cross job builds the one stdlib, with that cross toolchain, and stages it into all three pkgs, and collect refuses a release whose two toolchains' stdlib and builtins trees differ in a byte, so the runtime's reason above applies verbatim. The compiler, lld and clang beside them are arm64 and record the family's arm64 pin (minOS 11.0, SDK 11.3) and take no exemption.
 - sdk-pin:*/swift-toolchain-cross/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib: the same stdlib build and the same reason as libswiftCore.dylib's, above.
+- sdk-pin:*/swift-toolchain-cross/lib/swift/macosx/libswift_Concurrency.dylib: the runtime's own bytes too, staged from the one stdlib build into all three pkgs and compared byte for byte by collect, as libswiftCore.dylib's are; the same reason as its, above.
 - floor:swift-toolchain-cross-*.pkg: the cross toolchain runs on an Apple-silicon Mac with macOS 11 or later and only targets 10.9, so its archive's install floor is 11.0 (arm64), not 10.9.5; clang22-cross and rust-cross declare the same.
 - unpinned:.github/workflows/release.yml: vm-test installs the newest published release's runtime and native toolchain pkgs (`gh release view`, then SHA256SUMS-verified), and this run's over them, because that is the upgrade a user makes: from whatever they have, which is the latest release. A pin would test an upgrade from a version nobody upgrades from once the next one ships. Reconsider if the family keeps more than one supported line at once, when each line's latest is the one to upgrade from. Longboat, which only the native smoke's mavericks-clang-22 pkg needs, comes the same way (`gh release view`, then SHA256SUMS-verified), because clang22's pkg sends a user to Longboat's latest release.
 - version:upstream-swift-*.pkg: mirrored verbatim from swift.org, so its version is upstream's own

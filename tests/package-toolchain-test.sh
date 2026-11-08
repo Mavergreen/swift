@@ -32,7 +32,7 @@ fake_toolchain_build "$W"
 # Real Mach-O stdlib dylibs, so conformance measures them under the scoped sdk-pin deviation.
 printf 'int f(void){return 0;}\n' > "$T/f.c"
 real_dylibs() {
-  for n in Core SwiftOnoneSupport; do
+  for n in Core SwiftOnoneSupport _Concurrency; do
     cc -dynamiclib -arch x86_64 -mmacosx-version-min=10.9 -install_name "@rpath/libswift$n.dylib" \
       -o "$W/stdlib-build/lib/swift/macosx/x86_64/libswift$n.dylib" "$T/f.c"
   done
@@ -88,12 +88,14 @@ pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$M" 2>/dev/null; }
 ex=""; i=0; while e="$(pb "exports-exclude:$i")"; do ex="$ex$e "; i=$((i + 1)); done
 [ "$ex" = "bin/swift-frontend bin/ld64.lld bin/clang bin/clang++ bin/clang.cfg bin/clang++.cfg " ] || fail "the manifest excludes [$ex]"
 
-echo "-- its preinstall requires swift-runtime 6.4.1-mavericks.9 or later, the release notes' minimum, and libcxx22"
-# Programs this toolchain builds that import Darwin or ObjectiveC link @rpath/libswiftDarwin.dylib and
-# libswiftObjectiveC.dylib, which the installed runtime carries from 6.4.1-mavericks.9 on.
-RUNTIME_MIN=6.4.1-mavericks.9
-[ "$(sed -n 1p "$REPO/release-notes/swift-runtime/$RUNTIME_MIN/requires/swift-runtime" 2>/dev/null)" = "$RUNTIME_MIN" ] \
-  || fail "release-notes/swift-runtime/$RUNTIME_MIN/requires/swift-runtime does not say $RUNTIME_MIN"
+echo "-- its preinstall requires swift-runtime of its own version or later, and libcxx22"
+# Programs this toolchain builds link @rpath/libswift_Concurrency.dylib (swiftc imports _Concurrency
+# implicitly) and, when they import Darwin or ObjectiveC, those overlays' dylibs; the runtime that carries
+# all of them is the one built with this toolchain, so the minimum is the pkg's own version, whatever
+# release that turns out to be. Read from the VERSION the pkg was named from, never a literal here.
+RUNTIME_MIN="$(cat "$REPO/VERSION")"
+case "$RUNTIME_MIN" in 6.4.1-mavericks.[0-9]*) ;; *) fail "VERSION '$RUNTIME_MIN' is not a release version" ;; esac
+case "$pkg" in *"swift-toolchain-$RUNTIME_MIN.pkg") ;; *) fail "the pkg $pkg is not named for VERSION $RUNTIME_MIN" ;; esac
 PRE="$comp/Scripts/preinstall"; [ -f "$PRE" ] || fail "the toolchain component has no preinstall"
 L22="$(sed -n 's/^CLANG22_VERSION="\([^"]*\)".*/\1/p' "$REPO/pins.env")"
 pre_on() {   # pre_on <runtime version, or none> -- runs the preinstall against a volume holding that runtime
@@ -107,8 +109,9 @@ pre_on() {   # pre_on <runtime version, or none> -- runs the preinstall against 
 }
 if pre_on none; then fail "the preinstall ran with no swift-runtime installed"; fi
 grep -q "swift-runtime" "$T/pre.log" || fail "the preinstall refused, but did not name swift-runtime: $(cat "$T/pre.log")"
-if pre_on 6.4.1-mavericks.8; then fail "the preinstall ran beside swift-runtime 6.4.1-mavericks.8"; fi
-grep -q "swift-runtime $RUNTIME_MIN or newer" "$T/pre.log" || fail "the preinstall refused .8, but not for $RUNTIME_MIN: $(cat "$T/pre.log")"
+OLDER="6.4.1-mavericks.$(( ${RUNTIME_MIN##*.} - 1 ))"
+if pre_on "$OLDER"; then fail "the preinstall ran beside swift-runtime $OLDER, older than this toolchain"; fi
+grep -q "swift-runtime $RUNTIME_MIN or newer" "$T/pre.log" || fail "the preinstall refused $OLDER, but not for $RUNTIME_MIN: $(cat "$T/pre.log")"
 pre_on "$RUNTIME_MIN" || fail "the preinstall refused swift-runtime $RUNTIME_MIN: $(cat "$T/pre.log")"
 
 echo "-- beside an installed clang22, linking exports swiftc alone and takes none of clang22's names"

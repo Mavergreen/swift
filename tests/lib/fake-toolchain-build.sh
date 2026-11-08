@@ -18,10 +18,14 @@ fake_toolchain_build() {
     "$_fw/$_fl/lib/clang/21/include" "$_fw/stdlib-build/lib/swift/macosx/x86_64" \
     "$_fw/stdlib-build/lib/swift/macosx/Swift.swiftmodule" "$_fw/stdlib-build/lib/swift/macosx/SwiftOnoneSupport.swiftmodule" \
     "$_fw/stdlib-build/lib/swift/macosx/Darwin.swiftmodule" "$_fw/stdlib-build/lib/swift/macosx/ObjectiveC.swiftmodule" \
+    "$_fw/stdlib-build/lib/swift/macosx/_Concurrency.swiftmodule" "$_fw/stdlib-build/lib/swift/macosx/_Builtin_float.swiftmodule" \
     "$_fw/stdlib-build/lib/swift/shims" "$_fw/llvm-project/llvm" "$_fw/builtins-x86/lib/darwin"
   for _ff in $_fs/bin/swift-frontend $_fl/bin/lld $_fl/bin/clang $_fl/lib/clang/21/include/stdint.h \
     stdlib-build/lib/swift/macosx/x86_64/libswiftCore.dylib stdlib-build/lib/swift/macosx/x86_64/libswiftSwiftOnoneSupport.dylib \
     stdlib-build/lib/swift/macosx/x86_64/libswiftDarwin.dylib stdlib-build/lib/swift/macosx/x86_64/libswiftObjectiveC.dylib \
+    stdlib-build/lib/swift/macosx/x86_64/libswift_Concurrency.dylib stdlib-build/lib/swift/macosx/x86_64/libswift_Builtin_float.dylib \
+    stdlib-build/lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule \
+    stdlib-build/lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule \
     stdlib-build/lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule \
     stdlib-build/lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule \
     stdlib-build/lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule \

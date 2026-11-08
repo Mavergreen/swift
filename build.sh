@@ -2,7 +2,7 @@
 # platform: macOS-only -- a modern Mac (cross: pkgutil and ditto expand the swift.org compiler) or OS X 10.9 (native)
 # build.sh — from-source build of the Swift runtime (libswiftCore + libswiftSwiftOnoneSupport) for
 # OS X 10.9 / x86_64, staged as the runtime .pkg's payload, and beside it, in the stdlib build's tree,
-# libswift_Concurrency (built and checked here; not yet staged into any pkg) and the
+# libswift_Concurrency (the runtime pkg's third dylib, with its _Builtin_float module) and the
 # Darwin and ObjectiveC overlays (libswiftDarwin, libswiftObjectiveC and their modules: swift-6.2's
 # Platform and swift-5.4's ObjectiveC sources, pinned tarballs, compiled against the 10.9 SDK by
 # scripts/build-module.sh with the stdlib's flags). No Apple prebuilt runtime bytes ship.
@@ -473,8 +473,9 @@ recaulk_hidden "$CONCURRENCY" "$RECAULK_CONC_UNX" $RECAULK_CONCURRENCY_SYMBOLS
 # spec: INGREDIENTS.md "Recaulk" -- APSL 2.0 section 2.3 wants the "source is available" notice in the code
 #       itself and in the documentation. Recaulk embeds it in each Apple-derived member and lists it in
 #       share/recaulk/notices.tsv: every dylib that links a Recaulk subset (libswiftCore, libswiftDarwin and
-#       libswift_Concurrency; the other two link none) must still carry the notice of each APSL member it links after our link
-#       (dead-stripping, -S, the unexported list), and NOTICE must carry it too (lib.sh's recaulk_notices).
+#       libswift_Concurrency; the other two link none) must still carry the notice of each APSL member it
+#       links after our link (dead-stripping, -S, the unexported list), and NOTICE must carry it too
+#       (lib.sh's recaulk_notices).
 #       The tsv lists only APSL members, so a linked MacPorts mp-* member without a row passes only when
 #       named here, its licence read and carried in NOTICE: pthread_chdir.c is under legacy-support's MIT
 #       LICENSE, and time.c (Concurrency's clock_gettime) under its own ISC-style grant
@@ -489,6 +490,22 @@ recaulk_notices_in() {
 recaulk_notices_in "$CORE" "$RECAULK_A"
 recaulk_notices_in "$DARWIN" "$RECAULK_DARWIN_A"
 recaulk_notices_in "$CONCURRENCY" "$RECAULK_CONC_A"
+# spec: INGREDIENTS.md "The compiler's runtime table" -- libswift_Builtin_float is not shipped: 6.4's _Concurrency
+#       imports its module, and its $ld$previous sends a client below 10.14.4 to @rpath/libswiftDarwin.dylib for the
+#       float constants it declares. So every export it has (its force-load symbol and the $ld$ directives aside)
+#       must be one libswiftDarwin defines, or a 10.9 program using one fails in dyld, not here. A reader that
+#       found no exports would pass vacuously, so none is a failure.
+BUILTIN_FLOAT="$RES/macosx/$ARCH/libswift_Builtin_float.dylib"
+[ -f "$BUILTIN_FLOAT" ] || { echo "FAIL: no $BUILTIN_FLOAT to check"; exit 1; }
+BF_EXPORTS="$("${NM:-nm}" -gU "$BUILTIN_FLOAT" | awk '{ print $NF }' | grep -v -e '^\$ld\$' -e '^__swift_FORCE_LOAD_\$_swift_Builtin_float$' | LC_ALL=C sort)" \
+  || { echo "FAIL: could not read $BUILTIN_FLOAT's exports"; exit 1; }
+[ -n "$BF_EXPORTS" ] || { echo "FAIL: read no exports from $BUILTIN_FLOAT"; exit 1; }
+DARWIN_EXPORTS="$("${NM:-nm}" -gU "$DARWIN" | awk '{ print $NF }' | LC_ALL=C sort)" \
+  || { echo "FAIL: could not read $DARWIN's exports"; exit 1; }
+printf '%s\n' "$BF_EXPORTS" > "$ROOT/builtin-float-exports.txt"; printf '%s\n' "$DARWIN_EXPORTS" > "$ROOT/darwin-exports.txt"
+BF_MISSING="$(LC_ALL=C comm -23 "$ROOT/builtin-float-exports.txt" "$ROOT/darwin-exports.txt")"
+rm -f "$ROOT/builtin-float-exports.txt" "$ROOT/darwin-exports.txt"
+[ -z "$BF_MISSING" ] || { printf '%s\n' "$BF_MISSING"; echo "FAIL: libswiftDarwin does not define what libswift_Builtin_float exports (listed above)"; exit 1; }
 #       The weak imports whose presence the runtime reads as the OS's answer stay the OS's (a
 #       whole-archive link would bind them, and os_signpost_enabled would turn tracing on over NULLs).
 for s in objc_realizeClassFromSwift os_signpost_enabled os_signpost_emit_with_name_impl availability_version_check; do

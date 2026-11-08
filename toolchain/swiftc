@@ -26,11 +26,12 @@ if [ -z "$SDK" ]; then
 fi
 [ -d "$SDK" ] || { echo "swiftc: no Mac OS X 10.9 SDK at '$SDK'" >&2; exit 1; }
 SWIFT_AVOID_WARNING_USING_OLD_DRIVER=1; export SWIFT_AVOID_WARNING_USING_OLD_DRIVER
+# _Concurrency is imported implicitly, as Apple's swiftc does: the runtime pkg carries libswift_Concurrency.
+# _StringProcessing is not shipped, so its implicit import stays off.
 exec "$BIN/swift-frontend" --driver-mode=swiftc \
   -target x86_64-apple-macosx10.9 \
   -sdk "$SDK" -tools-directory "$LIBEXEC" \
   -runtime-compatibility-version none \
-  -Xfrontend -disable-implicit-concurrency-module-import \
   -Xfrontend -disable-implicit-string-processing-module-import \
   -no-stdlib-rpath -Xlinker -rpath -Xlinker /usr/local/mavergreen/swift-runtime/lib/swift \
   "$@"

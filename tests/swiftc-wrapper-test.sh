@@ -43,8 +43,6 @@ $P/libexec/mavergreen-swift
 -runtime-compatibility-version
 none
 -Xfrontend
--disable-implicit-concurrency-module-import
--Xfrontend
 -disable-implicit-string-processing-module-import
 -no-stdlib-rpath
 -Xlinker

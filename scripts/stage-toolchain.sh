@@ -5,7 +5,8 @@
 #          build: build-toolchain.sh --host $STAGE_HOST's lld, clang and clang's headers, and its compiler
 #          and helper outputs (--frontend: the swift build dir holding bin/swift-frontend and
 #          share/swift, default $SWIFT_WORK/<host's swift dir>); the stdlib, and the Darwin and ObjectiveC
-#          overlays' modules and dylibs beside it (--stdlib: a stdlib build's lib/swift, default build.sh's $SWIFT_WORK/stdlib-build/lib/swift, or a staged toolchain's
+#          overlays' and _Concurrency's modules and dylibs beside it (_Concurrency's with _Builtin_float's module, whose
+#          dylib ships nowhere) (--stdlib: a stdlib build's lib/swift, default build.sh's $SWIFT_WORK/stdlib-build/lib/swift, or a staged toolchain's
 #          lib/swift: CI's build job takes the cross toolchain pkg's, self-host.sh a stage's); compiler-rt's
 #          builtins (--builtins, default build-builtins.sh's archive), where that clang looks for them;
 #          the swiftc and ld wrappers; shipyard's SDK fetcher and the two scripts it sources; clang's
@@ -13,8 +14,8 @@
 #          swift-toolchain; arm64 the cross toolchain, swift-toolchain-cross. Everything but what each
 #          host's build makes itself (the three binaries, clang's headers, the helper outputs) is the same
 #          bytes in both. <out-dir> persists between builds, so its usr/ is removed first;
-#          <out-dir>/Library belongs to package-toolchain.sh and is left alone. A stdlib without both
-#          overlays is refused unless --overlays-optional (self-host.sh's pre toolchain only) says to
+#          <out-dir>/Library belongs to package-toolchain.sh and is left alone. A stdlib without either
+#          overlay or without Concurrency is refused unless --overlays-optional (self-host.sh's pre toolchain only) says to
 #          stage it without them.
 #          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, STAGE_HOST.
 set -eu
@@ -52,19 +53,25 @@ done
 # A stdlib build keeps its dylibs in macosx/x86_64/, a staged toolchain in macosx/ (lib.sh).
 LAYOUT="$(stdlib_layout "$STDLIB")" || { echo "stage-toolchain: $STDLIB is no stdlib -- run build.sh, or name one with --stdlib" >&2; exit 1; }
 if [ "$LAYOUT" = build ]; then DYLIBS="$STDLIB/macosx/x86_64"; else DYLIBS="$STDLIB/macosx"; fi
-# The Darwin and ObjectiveC overlays (step 5b of build.sh): a module and a dylib each, in the same two places.
-# --overlays-optional stages those it finds and skips the rest: self-host.sh's pre toolchain, whose stdlib
-# (a seed's from before the overlays, 6.4.1-mavericks.8 say) only makes the stage's compiler run, since
-# build.sh compiles the overlays against the stdlib it builds. A toolchain that ships or is compared never
-# passes it.
-OVERLAYS=""
-for o in Darwin ObjectiveC; do
-  if [ -f "$STDLIB/macosx/$o.swiftmodule/x86_64-apple-macos.swiftmodule" ] && [ -f "$DYLIBS/libswift$o.dylib" ]; then
-    OVERLAYS="$OVERLAYS $o"
+# The Darwin and ObjectiveC overlays (step 5b of build.sh) and _Concurrency (step 5): a module and a dylib each, in the
+# same two places, and _Concurrency's _Builtin_float module beside it, with no dylib (it re-exports symbols
+# libswiftDarwin defines, so nothing links it). Each is wanted whole. --overlays-optional stages those it finds
+# and skips the rest: self-host.sh's pre toolchain, whose stdlib (a seed's from before the overlays, 6.4.1-mavericks.8
+# say) only makes the stage's compiler run, since build.sh compiles the overlays against the stdlib it builds. A
+# toolchain that ships or is compared never passes it.
+MODULES=""; LIBS_STAGED=""
+for o in Darwin ObjectiveC _Concurrency _Builtin_float; do
+  case "$o" in
+    _Builtin_float) lib="" ;;
+    _Concurrency) lib="libswift_Concurrency.dylib" ;;
+    *) lib="libswift$o.dylib" ;;
+  esac
+  if [ -f "$STDLIB/macosx/$o.swiftmodule/x86_64-apple-macos.swiftmodule" ] && { [ -z "$lib" ] || [ -f "$DYLIBS/$lib" ]; }; then
+    MODULES="$MODULES $o"; LIBS_STAGED="$LIBS_STAGED $lib"
   elif [ -n "$OVERLAYS_OPTIONAL" ]; then
-    echo "stage-toolchain: $STDLIB has no $o overlay; --overlays-optional stages it without" >&2
+    echo "stage-toolchain: $STDLIB has no $o; --overlays-optional stages it without" >&2
   else
-    echo "stage-toolchain: $STDLIB has no $o.swiftmodule and libswift$o.dylib -- run build.sh" >&2; exit 1
+    echo "stage-toolchain: $STDLIB has no $o.swiftmodule${lib:+ and $lib} -- run build.sh" >&2; exit 1
   fi
 done
 
@@ -86,10 +93,8 @@ chmod 755 "$P/bin/swiftc" "$P/libexec/mavergreen-swift/ld"
 cp "$SHIPYARD/fetch_sdk.sh" "$SHIPYARD/mavericks_fetch.sh" "$SHIPYARD/sdk-pins.sh" "$P/libexec/mavergreen-swift/"
 cp -R "$STDLIB/macosx/Swift.swiftmodule" "$STDLIB/macosx/SwiftOnoneSupport.swiftmodule" "$P/lib/swift/macosx/"
 cp "$STDLIB/macosx/layouts-x86_64.yaml" "$DYLIBS/libswiftCore.dylib" "$DYLIBS/libswiftSwiftOnoneSupport.dylib" "$P/lib/swift/macosx/"
-for o in $OVERLAYS; do
-  cp -R "$STDLIB/macosx/$o.swiftmodule" "$P/lib/swift/macosx/"
-  cp "$DYLIBS/libswift$o.dylib" "$P/lib/swift/macosx/"
-done
+for o in $MODULES; do cp -R "$STDLIB/macosx/$o.swiftmodule" "$P/lib/swift/macosx/"; done
+for lib in $LIBS_STAGED; do cp "$DYLIBS/$lib" "$P/lib/swift/macosx/"; done
 cp -R "$STDLIB/shims" "$P/lib/swift/shims"
 # clang finds its resource headers at <bin>/../lib/clang/<v>; Swift at lib/swift/clang, as in swift.org toolchains.
 cp -R "$CLANG_INC" "$P/lib/clang/$CLANG_V/include"

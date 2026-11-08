@@ -44,9 +44,11 @@ for f in llvm-x86/bin/lld builtins-x86/lib/darwin/libclang_rt.osx.a; do
   mv "$T/away" "$W/$f"
 done
 
-echo "-- refuses a stdlib missing an overlay's module or dylib, naming it, before writing anything"
+echo "-- refuses a stdlib missing an overlay's or Concurrency's module or dylib, naming it, before writing anything"
 for f in stdlib-build/lib/swift/macosx/Darwin.swiftmodule stdlib-build/lib/swift/macosx/ObjectiveC.swiftmodule \
-         stdlib-build/lib/swift/macosx/x86_64/libswiftDarwin.dylib stdlib-build/lib/swift/macosx/x86_64/libswiftObjectiveC.dylib; do
+         stdlib-build/lib/swift/macosx/x86_64/libswiftDarwin.dylib stdlib-build/lib/swift/macosx/x86_64/libswiftObjectiveC.dylib \
+         stdlib-build/lib/swift/macosx/_Concurrency.swiftmodule stdlib-build/lib/swift/macosx/_Builtin_float.swiftmodule \
+         stdlib-build/lib/swift/macosx/x86_64/libswift_Concurrency.dylib; do
   mv "$W/$f" "$T/away"
   if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" "$T/out-missing" 2> "$T/err"; then fail "staged without $f"; fi
   grep -q "${f##*/}" "$T/err" || fail "did not name the missing ${f##*/}: $(cat "$T/err")"
@@ -74,9 +76,12 @@ want="$(printf '%s\n' "$P/bin/clang" "$P/bin/clang.cfg" "$P/bin/clang++.cfg" "$P
   "$P/lib/swift/macosx/SwiftOnoneSupport.swiftmodule/x86_64-apple-macos.swiftmodule" \
   "$P/lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule" \
   "$P/lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule" \
+  "$P/lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule" \
+  "$P/lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule" \
   "$P/lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule" "$P/lib/swift/macosx/layouts-x86_64.yaml" \
   "$P/lib/swift/macosx/libswiftCore.dylib" "$P/lib/swift/macosx/libswiftDarwin.dylib" \
   "$P/lib/swift/macosx/libswiftObjectiveC.dylib" "$P/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib" \
+  "$P/lib/swift/macosx/libswift_Concurrency.dylib" \
   "$P/lib/swift/shims/module.modulemap" "$P/libexec/mavergreen-swift/fetch_sdk.sh" "$P/libexec/mavergreen-swift/ld" \
   "$P/libexec/mavergreen-swift/mavericks_fetch.sh" "$P/libexec/mavergreen-swift/sdk-pins.sh" \
   "$P/share/doc/LICENSE-LLVM.txt" "$P/share/doc/LICENSE.txt" "$P/share/doc/NOTICE" \
@@ -94,6 +99,11 @@ $want"
 for c in clang.cfg clang++.cfg; do
   cmp -s "$REPO/toolchain/clang.cfg" "$T/out/$P/bin/$c" || fail "bin/$c is not toolchain/clang.cfg"
 done
+
+# _Builtin_float is a module only: its dylib is a stub of symbols libswiftDarwin defines, which no toolchain
+# or runtime ships (the build's step 7 checks that). The fake build holds one, as the real one does.
+[ -f "$W/stdlib-build/lib/swift/macosx/x86_64/libswift_Builtin_float.dylib" ] || fail "the fake build has no libswift_Builtin_float.dylib to leave out"
+[ -z "$(cd "$T/out" && find usr -name 'libswift_Builtin_float*')" ] || fail "staged libswift_Builtin_float.dylib"
 
 echo "-- --stdlib from a staged toolchain's lib/swift, --frontend and --builtins elsewhere: the same payload"
 mkdir -p "$T/fe/bin" "$T/fe/share/swift/diagnostics"
@@ -119,14 +129,15 @@ echo "-- --overlays-optional (self-host.sh's pre toolchain): a seed's stdlib wit
 # compiler run, and build.sh compiles the overlays against the stdlib it builds, never the seed's.
 cp -R "$T/out/$P/lib/swift" "$T/seedlib"
 rm -r "$T/seedlib/macosx/Darwin.swiftmodule" "$T/seedlib/macosx/ObjectiveC.swiftmodule" \
-  "$T/seedlib/macosx/libswiftDarwin.dylib" "$T/seedlib/macosx/libswiftObjectiveC.dylib"
+  "$T/seedlib/macosx/libswiftDarwin.dylib" "$T/seedlib/macosx/libswiftObjectiveC.dylib" \
+  "$T/seedlib/macosx/_Concurrency.swiftmodule" "$T/seedlib/macosx/_Builtin_float.swiftmodule" "$T/seedlib/macosx/libswift_Concurrency.dylib"
 if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --stdlib "$T/seedlib" "$T/out-seed" 2> "$T/err"; then
   fail "staged a stdlib without overlays, without --overlays-optional"
 fi
 SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --overlays-optional --stdlib "$T/seedlib" "$T/out-seed" > "$T/seed.log" 2>&1 \
   || fail "--overlays-optional refused a stdlib without overlays: $(cat "$T/seed.log")"
 [ -f "$T/out-seed/$P/lib/swift/macosx/libswiftCore.dylib" ] || fail "--overlays-optional staged no libswiftCore"
-[ -z "$(cd "$T/out-seed/$P" && find . -name '*Darwin*' -o -name '*ObjectiveC*')" ] || fail "--overlays-optional staged an overlay it was not given"
+[ -z "$(cd "$T/out-seed/$P" && find . -name '*Darwin*' -o -name '*ObjectiveC*' -o -name '*Concurrency*' -o -name '*Builtin_float*')" ] || fail "--overlays-optional staged an overlay it was not given"
 SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --overlays-optional --frontend "$T/fe" --stdlib "$T/out/$P/lib/swift" --builtins "$T/other.a" "$T/out-opt" \
   || fail "--overlays-optional refused a stdlib with overlays"
 [ "$(cd "$T/out-opt" && find usr -type f | sort)" = "$want" ] || fail "--overlays-optional over a stdlib with overlays staged another payload"
