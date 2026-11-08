@@ -121,6 +121,10 @@ cat > "$C22/bin/llvm-nm" <<'F'
 printf '%s\n' "$2:fwd-97.o: 0000000000000000 T _os_system_version_get_current_version" "$2:fwd-97.o:                  U ___recaulk_resolve" \
   "$2:fwd-resolve.o: 0000000000000000 T ___recaulk_resolve" "$2:fwd-9.o: 0000000000000000 T _os_signpost_enabled" \
   "$2:fwd-90.o: 0000000000000000 T _objc_readClassPair" "$2:fwd-90.o:                  U ___recaulk_resolve" \
+  "$2:recaulk-libm_fma.o: 0000000000000000 T _fma" "$2:recaulk-libm_fma.o: 0000000000000010 T ___recaulk_fma" \
+  "$2:recaulk-libm_fma.o:                  U ___recaulk_libm_exact_sum" "$2:recaulk-libm_exact.o: 0000000000000000 T ___recaulk_libm_exact_sum" \
+  "$2:recaulk-libm_fmal.o: 0000000000000000 T _fmal" "$2:recaulk-libm_fmal.o:                  U ___recaulk_libm_exact_sum" \
+  "$2:recaulk-libm_truncl.o: 0000000000000000 T _truncl" "$2:recaulk-libm_truncl.o: 0000000000000010 T ___recaulk_truncl" \
   "$2:fwd-40.o: 0000000000000000 T _clock_gettime" "$2:fwd-40.o:                  U ___recaulk_resolve" \
   "$2:fwd-41.o: 0000000000000000 T _clock_getres" "$2:fwd-41.o:                  U ___recaulk_resolve" \
   "$2:recaulk-qos_class.o: 0000000000000000 T _qos_class_self" \
@@ -209,7 +213,7 @@ grep -qxF -e "  -DCMAKE_CXX_FLAGS=$(grep -m1 '^  -DCMAKE_C_FLAGS=' "$T/log" | se
 grep -q -e "^  -DCMAKE_SHARED_LINKER_FLAGS=.* -nostdlib++ $LCX -Wl,-syslibroot,$R/swift/work/libcxx22-root $R/swift/work/recaulk-runtime.a -Wl,-unexported_symbols_list,$R/swift/work/recaulk-runtime.unexported\$" "$T/log" \
   || fail "the runtime does not link libcxx22's libc++ by path, alone, then Recaulk's subset, hidden: $(grep CMAKE_SHARED_LINKER_FLAGS "$T/log")"
 # The subset is the APIs named and what they need, never the archive's other APIs.
-[ "$(tr '\n' ' ' < "$R/swift/work/recaulk-runtime.unexported")" = "___recaulk_resolve _objc_readClassPair _os_system_version_get_current_version " ] \
+[ "$(tr '\n' ' ' < "$R/swift/work/recaulk-runtime.unexported")" = "___recaulk_fma ___recaulk_libm_exact_sum ___recaulk_resolve ___recaulk_truncl _fma _objc_readClassPair _os_system_version_get_current_version _truncl " ] \
   || fail "Recaulk's subset: $(cat "$R/swift/work/recaulk-runtime.unexported")"
 # libswift_Concurrency: built, and its own subset reaches its link alone, through patch 0013's hook; the
 # dispatch member's block helper (___recaulk_-prefixed since Recaulk 20261108.3) is hidden with the rest.

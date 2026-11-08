@@ -73,6 +73,17 @@ either. For the OS version, upstream's own failure value stays (0.0.0, never a g
 only `_swift_stdlib_operatingSystemVersion`, an ABI entry point kept for old binaries, calls it
 (`tests/availability_test.swift` holds both to 10.9.5 on 10.9.5).
 
+libswiftCore also takes Recaulk's `fma` and `truncl`, which 10.9's libm has but gets wrong: `fma` gives
+a cancellation the wrong sign (`Double.addingProduct` calls it at -Onone) and tiny results the wrong zero,
+and `truncl` gives `-0` and small negatives `+0` (`Float80.round(.towardZero)`). Recaulk's are correct, and
+used on every macOS, as no later x86_64 libm is known to be right (its PROVENANCE, "fma, fmal and
+truncl"). No other shipped dylib imports either. That fixes only the calls compiled into libswiftCore,
+such as a generic `addingProduct` at -Onone that goes through its witness: the stdlib's floating-point
+operations are inlinable, so a program's own code calls `fma` and `truncl` too, and binds them to
+libSystem's. Upstream's `test/stdlib/FloatingPoint.swift.gyb`, which found both, still fails on 10.9 for
+that reason (owed, below). Recaulk's `fmal`, which 10.9 also gets wrong, is not taken: libswiftCore
+imports it (`Float80.addingProduct`), but no test here or upstream's has failed on it yet.
+
 `build.sh` links a subset of `librecaulk.a`, never the whole archive, which would bind six of
 libswiftCore's weak imports where it means one: the runtime reads a weak import's presence as "the OS has
 this", so `os_signpost_enabled` would turn its tracing on and then call the `os_log_create` and
@@ -272,8 +283,8 @@ The VM estimate has to tell sleeping from computing, because a VM is no faster a
 sleep-bound: basic_future (4 binaries x 21 runs x 4.4 s, about 370 s) and clock's unguarded runs (4 x 20 x 1.55 s,
 about 125 s), so about 495 s. The rest is CPU-bound: about 465 s of upstream's and 157 s of ours. At Release 1's
 VM-to-box CPU ratio of 0.42 (run 40272925587), that rest takes about 260 s. The VM gate is then about 495 + 260
-= 755 s, 13 min, and at the box's own pace 19 min. Compiling in the VM is the larger cost: 110 binaries at a
-pessimistic 15 s each is 28 min. Install, compiles, gate and smoke total about an hour at the worst, so
+= 755 s, 13 min, and at the box's own pace 19 min. Compiling in the VM is the larger cost: 112 binaries (26 of
+ours, 86 of upstream's) at a pessimistic 15 s each is 28 min. Install, compiles, gate and smoke total about an hour at the worst, so
 `vm-test`'s `timeout-minutes` stays 120, under GitHub's 360. 20 runs stay: 20 plus 1 under Guard Malloc is a
 short, deterministic-test budget, and halving it would save about 7 min on the box.
 
@@ -290,7 +301,9 @@ until its blocker goes (the reasons are in `tests/upstream/*.list`):
 - `validation-test/stdlib/ObjectiveC_without_Foundation.swift`: the 10.9 SDK has no nullability, so
   `NSObject()` is `NSObject!` and `var anNSObject` is not `CVarArg`.
 - `test/stdlib/FloatingPoint.swift.gyb`: 10.9's libm, where `fma` returns the wrong sign (`Double.addingProduct`
-  at -Onone) and `truncl(-0)` returns +0 (`Float80.round`).
+  at -Onone) and `truncl(-0)` returns +0 (`Float80.round`). libswiftCore links Recaulk's correct ones, but
+  the test binary imports both from libSystem itself, through the stdlib's inlined code; owed until a
+  program's own calls reach Recaulk's too.
 - POSIX.swift and mmap.swift hand the test a temp directory (`%t`), which the gate does not supply.
 - The Concurrency tests that use `DispatchQueue` or `DispatchTime` (7): the Dispatch Swift overlay, which this release
   does not ship.
