@@ -17,7 +17,7 @@ was merged in (2026-09) and deleted (2026-10). Its 6.4.0 installer mirror is now
 | mavericks-clang-22 cross toolchain (compiles the 10.9-hosted toolchain and compiler-rt's builtins, and its `llvm-libtool-darwin`, `llvm-ar`, `llvm-ranlib` and `llvm-lipo` make their archives; on OS X 10.9, `self-host.sh` uses the native package of the same release) | `CLANG22_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/clang-22`, `-mavericks.N` versioning | auto-repackages `-mavericks.(N+1)` |
 | libcxx22, the family's shared libc++ (the stdlib's C++ compiles against the pinned clang22's libc++ headers and links libcxx22's `libc++.1.dylib`; the runtime and native toolchain pkgs require it at install) | `CLANG22_VERSION` in `pins.env`: one clang-22 release publishes clang22, clang22-cross and libcxx22 under one version | ✅ with the clang22 pin (`github-releases` on `Mavergreen/clang-22`) | auto-repackages `-mavericks.(N+1)`, and the pkgs then require that libcxx22 or later |
 | Recaulk, the family's back-fills of post-10.9 OS APIs (libswiftCore links Recaulk's definitions of the APIs `build.sh`'s `RECAULK_RUNTIME_SYMBOLS` names, and only those, statically, and libswiftDarwin and libswift_Concurrency their own subsets: below) | `RECAULK_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/recaulk`, `YYYYMMDD.N` versioning | auto-repackages `-mavericks.(N+1)`; nothing is required at install, since the link is static |
-| LLVM and compiler source patches (`patches/llvm/`, `patches/compiler/`: compiler `0003` maps the compiler's runtime table to OS X 10.9 for targets below 10.14.4, below) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
+| LLVM and compiler source patches (`patches/llvm/`, `patches/compiler/`: compiler `0003` maps the compiler's runtime table, and the stdlib's own declarations, to OS X 10.9 for targets below 10.14.4, below) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | swift.org toolchain `.pkg` (CI's one seed: it compiles the cross toolchain's Swift half, and a first stdlib that only makes that toolchain runnable; everything the release ships is compiled by this repo's own compilers, below) | `TOOLCHAIN_URL`, derived from `SWIFT_VERSION` | ✅ moves with the Swift pin | verified by **signer identity**, not a hash (below) |
 | Runtime source patches (`patches/runtime/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | swift-6.2 Darwin overlay source (`stdlib/public/Platform`) | `SWIFT62_SHA` + `SWIFT62_TARBALL_SHA256` in `pins.env`, fetched by `fetch_source` into `swift-6.2` | ❌ untrackable: frozen, since upstream removed the files in 6.3 and Mavergreen owns them; no `renovate:` marker, and no updater (Renovate, the pins bot, `pin-source-tarballs.sh`) names the pin | n/a: moves only by a deliberate edit |
@@ -148,11 +148,23 @@ What the OS's libobjc provides keeps upstream's table on every target, and so st
 Recaulk's `objc_readClassPair` realization depend on), `ObjCGetClassHook`, `ObjCClassStubs`,
 `ObjCIsUniquelyReferenced`, and three callers that read a Swift version directly for an OS need
 (`objc_opt_self`, `@objc @implementation`, ObjC protocol emission). The two `.def` files stay upstream's.
-Every feature's class, with the symbol it needs and the compiler code that reads it, is in
-`patches/compiler/0003-AUDIT.md`, and `tests/compiler-patch-audit-test.sh` holds the patch to it. The
-proof programs are `tests/typed_throws_test.swift` and `tests/parameter_packs_test.swift`: only this
-repo's compiler builds them, so `make-selftest.sh`'s swift.org-compiler mode skips them by their first
-line.
+The same rule covers the library's own declarations. Swift's `@available(SwiftStdlib N, *)` macros stay
+upstream's, so `Task.sleep(for:)` still reads macOS 13.0 and `InlineArray` 26.0 in every module we ship,
+for every target. Below 10.14.4 only, the compiler reads a declaration of a module the runtime pkg ships
+Swift code for (`Swift`, `_Concurrency`, `SwiftOnoneSupport`, `_Builtin_float`) as available from 10.9
+when its macOS version is a released runtime's (`RuntimeVersions.def`, 5.0 through 6.4): the deserializer
+moves that one `introduced:` version as it reads the attribute. `Darwin` and `ObjectiveC` stay as written,
+since their availability is the OS's APIs'; deprecations, obsoletions and unavailability never move.
+`Span` is opened with the rest: Core's `$ld$previous` sends its symbols to
+`@rpath/libswiftCompatibilitySpan.dylib` for any client below macOS 26, and the runtime pkg ships that name
+as a link to `libswiftCore.dylib`, as upstream's own stdlib install does beside a Core that has Span. So a
+program built for 10.9 that uses Span needs a runtime pkg that has the link, as one using any other new API
+needs a runtime that has it, and an app that bundles our runtime bundles the link too.
+Every feature's class, with the symbol it needs and the compiler code that reads it, and the declaration
+rule, are in `patches/compiler/0003-AUDIT.md`, and `tests/compiler-patch-audit-test.sh` holds the patch to
+them. The proof programs are `tests/typed_throws_test.swift`, `tests/parameter_packs_test.swift` and
+`tests/stdlib_availability_test.swift` (Core's newer APIs, Span among them, unmodified): only this repo's
+compiler builds them, so `make-selftest.sh`'s swift.org-compiler mode skips them by their first line.
 
 ## Two seeds, one result
 

@@ -4,7 +4,8 @@
 #          Lays out the runtime .pkg's payload under <out-dir>: libswiftCore.dylib,
 #          libswiftSwiftOnoneSupport.dylib, libswiftDarwin.dylib and libswiftObjectiveC.dylib (the
 #          overlays every program importing Darwin or ObjectiveC loads) from <built-lib-dir> in
-#          usr/local/mavergreen/swift-runtime/lib/swift/, and <license-file> as
+#          usr/local/mavergreen/swift-runtime/lib/swift/, with libswiftCompatibilitySpan.dylib beside them
+#          as a link to libswiftCore.dylib, and <license-file> as
 #          usr/local/mavergreen/swift-runtime/share/doc/LICENSE.txt, and <notice-file> beside it as NOTICE (it
 #          names what the runtime holds besides Swift, Recaulk among them, whose license asks for its
 #          notice in every copy). Only the dylibs: the overlays' swiftmodules ship in the toolchains.
@@ -29,5 +30,11 @@ PREFIX="$OUT/usr/local/mavergreen/swift-runtime"
 rm -rf "$OUT/usr" "$OUT/LICENSE.txt"
 mkdir -p "$PREFIX/lib/swift" "$PREFIX/share/doc"
 for lib in $RUNTIME_DYLIBS; do cp "$BUILT/$lib" "$PREFIX/lib/swift/"; done
+# Core's $ld$previous sends the Span types' symbols to @rpath/libswiftCompatibilitySpan.dylib for a client
+# below macOS 26, and compiler patch 0003 opens Span for 10.9 with the rest of the stdlib. On an older OS
+# that library is a back-deployment copy of Span; beside a Core that has Span, as ours (6.4) does, it is
+# Core itself, and upstream's stdlib install makes it a link (stdlib/public/core/CMakeLists.txt). 10.9's
+# dyld loads the one Core through either name. spec: INGREDIENTS.md "The compiler's runtime table".
+ln -s libswiftCore.dylib "$PREFIX/lib/swift/libswiftCompatibilitySpan.dylib"
 cp "$LICENSE" "$PREFIX/share/doc/LICENSE.txt"
 cp "$NOTICE" "$PREFIX/share/doc/NOTICE"

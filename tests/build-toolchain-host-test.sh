@@ -50,7 +50,7 @@ done
 cat > "$T/shipyard/fetch_pinned_source.sh" <<F
 #!/bin/sh
 echo "fetch_pinned_source \$*" >> "$T/log"
-rm -rf "\$4"; mkdir -p "\$4/lib/Driver" "\$4/cmake/modules" "\$4/include/swift/AST" "\$4/lib/AST"; : > "\$4/lib/Driver/Driver.cpp"; : > "\$4/cmake/modules/AddSwift.cmake"
+rm -rf "\$4"; mkdir -p "\$4/lib/Driver" "\$4/cmake/modules" "\$4/include/swift/AST" "\$4/lib/AST" "\$4/lib/Serialization"; : > "\$4/lib/Driver/Driver.cpp"; : > "\$4/cmake/modules/AddSwift.cmake"
 # FAKE_SWIFT_SOURCE and FAKE_CMARK_SOURCE stand for another commit's tarball of the compiler's source, or cmark's.
 l="\$1 \$2 \$3"; case "\$4" in swift-compiler*) l="\${FAKE_SWIFT_SOURCE:-\$l}" ;; cmark) l="\${FAKE_CMARK_SOURCE:-\$l}" ;; esac
 echo "\$l" > "\$4/.mavergreen-source"
@@ -83,7 +83,7 @@ echo "patch \$(basename "\$PWD") \$p" >> "$T/log"
 case "\${p##*/}" in
   0001-*) echo 'any macOS SDK back to 10.9 is accepted' >> lib/Driver/Driver.cpp ;;
   0002-*) echo "host tools run on the toolchain's own bundled runtime" >> cmake/modules/AddSwift.cmake ;;
-  0003-*) for f in lib/AST/Availability.cpp include/swift/AST/ASTContext.h; do echo "Mavergreen: the 10.9 runtime is the pkgs'" >> \$f; done ;;
+  0003-*) for f in lib/AST/Availability.cpp include/swift/AST/ASTContext.h lib/Serialization/Deserialization.cpp; do echo "Mavergreen: the 10.9 runtime is the pkgs'" >> \$f; done ;;
 esac
 F
 # shipyard-cmake records its arguments and, like a configure, leaves a CMakeCache.txt in its -B dir.

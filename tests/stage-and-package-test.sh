@@ -83,13 +83,18 @@ mkdir -p "$T/out/usr/lib/swift" "$T/out/usr/local/share/doc/mavericks-swift-runt
 sh scripts/stage-runtime.sh "$T/built" "$T/out" LICENSE NOTICE
 got="$(cd "$T/out" && find usr LICENSE.txt Library 2>/dev/null | sort)"
 want="$(printf '%s\n' Library Library/keep usr usr/local usr/local/mavergreen "$P" "$P/lib" \
-  "$P/lib/swift" "$P/lib/swift/libswiftCore.dylib" "$P/lib/swift/libswiftDarwin.dylib" \
+  "$P/lib/swift" "$P/lib/swift/libswiftCompatibilitySpan.dylib" "$P/lib/swift/libswiftCore.dylib" "$P/lib/swift/libswiftDarwin.dylib" \
   "$P/lib/swift/libswiftObjectiveC.dylib" "$P/lib/swift/libswiftSwiftOnoneSupport.dylib" \
   "$P/share" "$P/share/doc" "$P/share/doc/LICENSE.txt" "$P/share/doc/NOTICE" | sort)"
 [ "$got" = "$want" ] || fail "staged tree is
 $got
 wanted
 $want"
+# Core's $ld$previous sends a client below macOS 26 that uses Span to @rpath/libswiftCompatibilitySpan.dylib;
+# our Core is that library, as upstream's stdlib install has it: a link, relative, so it moves with the prefix.
+[ -L "$T/out/$P/lib/swift/libswiftCompatibilitySpan.dylib" ] \
+  && [ "$(readlink "$T/out/$P/lib/swift/libswiftCompatibilitySpan.dylib")" = libswiftCore.dylib ] \
+  || fail "staged libswiftCompatibilitySpan.dylib is not a link to libswiftCore.dylib"
 cmp -s LICENSE "$T/out/$P/share/doc/LICENSE.txt" || fail "staged LICENSE.txt is not this repo's LICENSE"
 cmp -s NOTICE "$T/out/$P/share/doc/NOTICE" || fail "staged NOTICE is not this repo's NOTICE"
 
@@ -113,7 +118,7 @@ expand_pkg() {
 payload_of() { lsbom -s "$comp/Bom" | grep -v '/\._' | sort; }
 outside_of() { _i=0; while _v="$(/usr/libexec/PlistBuddy -c "Print :outside:$_i" "$1" 2>/dev/null)"; do echo "$_v"; _i=$((_i + 1)); done; }
 want_payload="$(printf '%s\n' . ./usr ./usr/local ./usr/local/mavergreen "./$P" "./$P/lib" "./$P/lib/swift" \
-  "./$P/lib/swift/libswiftCore.dylib" "./$P/lib/swift/libswiftDarwin.dylib" \
+  "./$P/lib/swift/libswiftCompatibilitySpan.dylib" "./$P/lib/swift/libswiftCore.dylib" "./$P/lib/swift/libswiftDarwin.dylib" \
   "./$P/lib/swift/libswiftObjectiveC.dylib" "./$P/lib/swift/libswiftSwiftOnoneSupport.dylib" \
   "./$P/share" "./$P/share/doc" "./$P/share/doc/LICENSE.txt" "./$P/share/doc/NOTICE" "./$P/mavergreen.plist" | sort)"
 
@@ -167,6 +172,9 @@ payload="$(payload_of)"
 $payload
 wanted
 $want_payload"
+[ -L "$T/x/root/$P/lib/swift/libswiftCompatibilitySpan.dylib" ] \
+  && [ "$(readlink "$T/x/root/$P/lib/swift/libswiftCompatibilitySpan.dylib")" = libswiftCore.dylib ] \
+  || fail "the pkg's libswiftCompatibilitySpan.dylib is not a link to libswiftCore.dylib"
 [ -z "$(outside_of "$manifest")" ] || fail "with no updater the manifest's outside is not empty: $(outside_of "$manifest")"
 [ -z "$(/usr/libexec/PlistBuddy -c 'Print :appcast' "$manifest" 2>/dev/null)" ] \
   || fail "with no updater the manifest names an appcast"

@@ -1,7 +1,7 @@
 diff --git include/swift/AST/ASTContext.h include/swift/AST/ASTContext.h
 --- include/swift/AST/ASTContext.h
 +++ include/swift/AST/ASTContext.h
-@@ -927,6 +927,16 @@ public:
+@@ -927,6 +927,31 @@ public:
    /// of the Swift compiler for the target platform.
    AvailabilityRange getSwiftAvailability(unsigned major, unsigned minor) const;
  
@@ -15,10 +15,25 @@ diff --git include/swift/AST/ASTContext.h include/swift/AST/ASTContext.h
 +  /// libobjc, not the Swift runtime, and so takes getOSSwiftAvailability().
 +  static bool isOSRuntimeFeature(StringRef feature);
 +
++  /// Mavergreen: the 10.9 runtime is the pkgs'. Whether \p module is one the
++  /// runtime pkg ships Swift code for (Swift, _Concurrency, SwiftOnoneSupport,
++  /// _Builtin_float), whose declarations getPkgsRuntimeIntroduced() moves.
++  static bool isPkgsRuntimeModule(StringRef module);
++
++  /// Mavergreen: the 10.9 runtime is the pkgs'. For a declaration of \p module
++  /// introduced on macOS at \p macOSIntroduced, the macOS version it is
++  /// available from on this target, when that differs from upstream's: 10.9,
++  /// for a macOS target below 10.14.4 and a released Swift runtime's version
++  /// (lib/AST/Availability.cpp). The deserializer applies it to each
++  /// @available it reads.
++  std::optional<llvm::VersionTuple>
++  getPkgsRuntimeIntroduced(StringRef module,
++                           llvm::VersionTuple macOSIntroduced) const;
++
    // For each feature defined in FeatureAvailability, define two functions;
    // the latter, with the suffix RuntimeAvailability, is for use with
    // AvailabilityRange::forRuntimeTarget(), and only looks at the Swift
-@@ -935,6 +945,9 @@ public:
+@@ -935,6 +960,9 @@ public:
    inline AvailabilityRange get##N##Availability() const {                      \
      if (LangOpts.hasFeature(Feature::Embedded))                                \
        return AvailabilityRange::alwaysAvailable();                             \
@@ -39,7 +54,7 @@ diff --git lib/AST/Availability.cpp lib/AST/Availability.cpp
  #include <map>
  
  using namespace swift;
-@@ -909,8 +910,41 @@ AvailabilityRange ASTContext::getSwiftFutureAvailability() const {
+@@ -909,8 +910,86 @@ AvailabilityRange ASTContext::getSwiftFutureAvailability() const {
    }
  }
  
@@ -64,6 +79,51 @@ diff --git lib/AST/Availability.cpp lib/AST/Availability.cpp
 +      .Case("ObjCClassStubs", true)             // objc_loadClassref
 +      .Case("ObjCIsUniquelyReferenced", true)   // objc_isUniquelyReferenced
 +      .Default(false);
++}
++
++// Mavergreen: the 10.9 runtime is the pkgs'. The same split, for declarations.
++// Below 10.14.4 a client loads the Swift code the runtime pkg ships for these
++// modules, all of it 6.4's, so a declaration of theirs introduced on macOS with
++// a released Swift runtime (a macOS version of upstream's table, short of
++// FUTURE) is available from 10.9; Swift's own @available macros stay upstream's,
++// so a module built with them serves every target. Darwin and ObjectiveC are not
++// among them: their availability is the OS's APIs'. Span's types are: Core's
++// $ld$previous sends their symbols to @rpath/libswiftCompatibilitySpan.dylib,
++// which the runtime pkg ships as a link to libswiftCore.dylib, as upstream's
++// stdlib install does. From 10.14.4: upstream's. Unavailable, obsoleted and
++// deprecated versions are never moved.
++bool ASTContext::isPkgsRuntimeModule(StringRef module) {
++  return llvm::StringSwitch<bool>(module)
++      .Case("Swift", true)
++      .Case("_Concurrency", true)
++      .Case("SwiftOnoneSupport", true)
++      .Case("_Builtin_float", true)
++      .Default(false);
++}
++
++std::optional<llvm::VersionTuple>
++ASTContext::getPkgsRuntimeIntroduced(StringRef module,
++                                     llvm::VersionTuple macOSIntroduced) const {
++  if (!isMacOSTargetBeforeSwiftInTheOS(LangOpts.Target) ||
++      !isPkgsRuntimeModule(module))
++    return std::nullopt;
++  auto introduced =
++      canonicalizePlatformVersion(PlatformKind::macOS, macOSIntroduced);
++#define RUNTIME_VERSION(V, PLATFORMS) PLATFORMS
++#define PLATFORM(P, V) PLATFORM_##P(V)
++#define PLATFORM_macOS(V)                                                      \
++  if (introduced ==                                                            \
++      canonicalizePlatformVersion(PlatformKind::macOS, llvm::VersionTuple V))  \
++    return llvm::VersionTuple(10, 9, 0);
++#define PLATFORM_iOS(V)
++#define PLATFORM_watchOS(V)
++#define PLATFORM_visionOS(V)
++#include "swift/AST/RuntimeVersions.def"
++#undef PLATFORM_macOS
++#undef PLATFORM_iOS
++#undef PLATFORM_watchOS
++#undef PLATFORM_visionOS
++  return std::nullopt;
 +}
 +
  AvailabilityRange ASTContext::getSwiftAvailability(unsigned major,
@@ -133,3 +193,27 @@ diff --git lib/Sema/TypeCheckAttr.cpp lib/Sema/TypeCheckAttr.cpp
        if (attr->isEarlyAdopter()) {
          diag.wrapIn(diag::wrap_objc_implementation_will_become_error);
        }
+diff --git lib/Serialization/Deserialization.cpp lib/Serialization/Deserialization.cpp
+--- lib/Serialization/Deserialization.cpp
++++ lib/Serialization/Deserialization.cpp
+@@ -5935,6 +5935,20 @@ DeclDeserializer::readAvailable_DECL_ATTR(SmallVectorImpl<uint64_t> &scratch,
+     domain = decodeNonCustomAvailabilityDomain(domainKind, platform);
+   }
+ 
++  // Mavergreen: the 10.9 runtime is the pkgs'. Below macOS 10.14.4 a
++  // declaration of the runtime pkg's own modules, introduced with a released
++  // Swift runtime, is available from 10.9 (ASTContext::getPkgsRuntimeIntroduced);
++  // anyAppleOS versions are macOS's on a macOS target.
++  if (domain.isPlatform() && !Introduced.empty() &&
++      (domain.getPlatformKind() == PlatformKind::macOS ||
++       domain.getPlatformKind() == PlatformKind::anyAppleOS)) {
++    auto module = MF.getAssociatedModule()->getName().str();
++    if (auto moved = ctx.getPkgsRuntimeIntroduced(module, Introduced)) {
++      Introduced = *moved;
++      domain = AvailabilityDomain::forPlatform(PlatformKind::macOS);
++    }
++  }
++
+   auto attr = new (ctx)
+       AvailableAttr(SourceLoc(), SourceRange(), domain, SourceLoc(), kind,
+                     message, rename, Introduced, SourceRange(), Deprecated,

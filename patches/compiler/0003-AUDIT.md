@@ -119,3 +119,50 @@ and is upstream's above it.
   target below 12 (`X86Subtarget::swiftAsyncContextIsDynamicallySet`), from whichever library defines
   it (libswift_Concurrency does). A 10.9 client of the patched compiler still references it weakly (the
   evidence client in the task report); its value is the library's, unchanged by this patch.
+
+## Declarations of the runtime pkg's modules
+
+The same split, for the library's own declarations (the maintainer's decision of 2026-11-08). Swift's
+`@available(SwiftStdlib N, *)` macros expand to the OS release that first shipped runtime N (`macOS 13.0`
+for 5.7, `anyAppleOS 26.0` for 6.2), and stay upstream's in the modules we ship, so a module serves every
+target. `ASTContext::getPkgsRuntimeIntroduced` (Availability.cpp), called by the deserializer for every
+`@available` it reads (`readAvailable_DECL_ATTR`, Deserialization.cpp, before it makes the attribute),
+moves one version:
+
+- **Which declarations.** Those of the modules the runtime pkg ships Swift code for,
+  `ASTContext::isPkgsRuntimeModule`: `Swift`, `_Concurrency`, `SwiftOnoneSupport`, `_Builtin_float`. Not
+  `Darwin` or `ObjectiveC`: their availability is the OS's APIs', so a newer one stays unavailable at 10.9.
+  Nor any module built from source (the stdlib's own compile reads its attributes from source, unmoved) or
+  imported from C.
+- **Which version.** The `introduced:` of a macOS or `anyAppleOS` attribute, when it equals (canonicalized:
+  10.16 is 11.0) the macOS entry of a released runtime in `RuntimeVersions.def`, 5.0 (10.14.4) through 6.4
+  (27.0), read from the `.def` at the compiler's build, no number written in. It becomes `macOS 10.9`. A
+  version no runtime has (macOS 9999, `SwiftStdlib 6.5`) stays.
+- **Which targets.** Only a macOS target below 10.14.4 (`isMacOSTargetBeforeSwiftInTheOS`, the same single
+  test as the table's). From 10.14.4 the function answers nothing and the attribute is upstream's.
+- **What never moves.** `deprecated:`, `obsoleted:`, `unavailable`, `noasync`, `@backDeployed(before:)` and
+  `@_originallyDefinedIn` versions. A back-deployed declaration's client keeps its fallback thunk, which on
+  10.9 picks the copy emitted into the client: correct, if not our runtime's.
+
+Effects below 10.14.4: such a declaration type-checks at 10.9 and, its linkage availability now 10.9, is
+referenced strongly (our 6.4 runtime has it). Core's own `#available(SwiftStdlib N, *)` sites fold TRUE
+when Core is built (`-disable-availability-checking`) and are exercised on the 10.9 gate
+(`tests/thorough_test.swift`, `tests/stdlib_availability_test.swift`); an `#available` in a client, or in
+inlinable stdlib code compiled into one, is a run-time OS check, and on 10.9 takes its fallback, as before.
+
+**Span** takes no exception. `SwiftCompatibilitySpan 5.0` is macOS 10.14.4, `SwiftStdlib 5.0`'s, so the rule
+opens Span with the rest, and with the 6.2 and 6.4 APIs that vend it (`Array.span`, ...). Core's
+`$ld$previous` (`PreviousModuleInstallName.json`) sends the 33 Span symbols it exports (the six types'
+metadata and descriptors, their `_count`/`_pointer`/`capacity` accessors) to
+`@rpath/libswiftCompatibilitySpan.dylib` for a client below macOS 26. Upstream's back-deployment library of
+that name (`stdlib/toolchain/CompatibilitySpan`) defines Span itself, for an OS whose Core lacks it; beside
+a Core that has Span, upstream's stdlib install makes that name a link to `libswiftCore.dylib`
+(`stdlib/public/core/CMakeLists.txt`), and so does the runtime pkg (`scripts/stage-runtime.sh`). 10.9's
+dyld loads one Core through both names (proved on 10.9.5 in the A1 task 13 report; on the gate,
+`tests/stdlib_availability_test.swift`). The toolchains carry no such link and no toolchain binary records
+it. Excluding Span instead (by its `@_originallyDefinedIn(module: "Swift;CompatibilitySpan", ...)`) would
+have left Span-returning 6.2 and 6.4 APIs open with Span closed, and inferred Span values still reaching
+the library: not taken.
+
+`tests/compiler-patch-audit-test.sh` holds it: the module list, the `.def` as the only source of versions,
+the exact split lines, the deserializer's call before the attribute is made, and the Span link.

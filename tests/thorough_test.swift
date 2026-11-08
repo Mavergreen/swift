@@ -123,12 +123,59 @@ func exerciseAvailability() {
     if #available(macOS 26.0, *)  { mix("ge-26")    } else { mix("lt-26") }
 }
 
+// ---- Core's own folded `#available` sites. The stdlib is compiled with -disable-availability-checking,
+//      so each `if #available(SwiftStdlib N, *)` inside libswiftCore folds TRUE when Core is built: on
+//      10.9 our 6.4 Core takes upstream's current branch, never its fallback. One check per site, each
+//      telling the branches apart. Codable.swift:6385 and :6449 (5.6) are stdlib_availability_test's:
+//      their key type conforms to CodingKeyRepresentable, which only this repo's compiler allows for
+//      10.9. ReflectionMirror.swift:176 (6.2, Mirror's display style) is reachable only from a C++
+//      foreign reference type, which no stdlib-only program can declare.
+func expect(_ ok: Bool, _ what: String) {
+    if !ok { print("thorough_test FAIL: \(what)"); exit(1) }
+}
+
+// StringGutsRangeReplaceable.swift:396 (5.1): scalars that are neither scalar view are spliced into a
+// uniquely owned native string as their lazy UTF-8 (the fallback copies them into an array first).
+func exerciseScalarReplacement() {
+    var s = String(repeating: "m", count: 24) + "avericks"
+    let first = s.unicodeScalars.index(s.unicodeScalars.startIndex, offsetBy: 23)
+    let next = s.unicodeScalars.index(after: first)
+    s.unicodeScalars.replaceSubrange(first..<next, with: ["\u{E9}", "\u{1F34E}", "!"] as [Unicode.Scalar])
+    expect(s == String(repeating: "m", count: 23) + "\u{E9}\u{1F34E}!avericks", "unicodeScalars.replaceSubrange gave \(s)")
+    mix(s)
+}
+
+// ContiguousArrayBuffer.swift:930 (5.7): an array of a class, bridged to Objective-C, gets its storage's
+// class set to _ContiguousArrayStorage<Element>, so bridging back adopts that storage. [AnyObject] storage
+// cast to [Cell] is still _ContiguousArrayStorage<AnyObject> until then; the fallback leaves it so, and
+// bridging back copies. No overlay: these are the entry points the Foundation overlay calls, in Core, and
+// Foundation itself is loaded by dlopen, which bridging needs (as objc_refcount_bridging_test does).
+final class Cell { let v: Int; init(_ v: Int) { self.v = v } }
+func exerciseArrayStorageClass() {
+    expect(dlopen("/System/Library/Frameworks/Foundation.framework/Foundation", RTLD_NOW) != nil, "dlopen Foundation")
+    let any: [AnyObject] = [Cell(5), Cell(6)]
+    let before = any._bridgeToObjectiveCImpl()
+    let was = String(describing: type(of: before))
+    expect(was == "_ContiguousArrayStorage<AnyObject>", "[AnyObject] bridged as \(was)")
+    let cells = any as! [Cell]
+    let bridged = cells._bridgeToObjectiveCImpl()
+    expect(bridged === before, "[AnyObject] as! [Cell] did not keep its storage")
+    let storage = String(describing: type(of: bridged))
+    expect(storage == "_ContiguousArrayStorage<Cell>", "[Cell] bridged as \(storage)")
+    let again = [Cell]._bridgeFromObjectiveCAdoptingNativeStorageOf(bridged)
+    expect(again != nil, "[Cell] did not adopt its bridged storage")
+    expect(again!.count == 2 && again![0] === cells[0] && again![1].v == 6, "[Cell] adopted the wrong elements")
+    mix(storage)
+}
+
 exerciseCollections()
 exerciseControlFlow()
 exerciseGenerics()
 exerciseSwiftClasses()
 exerciseARC()
 exerciseAvailability()
+exerciseScalarReplacement()
+exerciseArrayStorageClass()
 
 print("thorough_test OK  checksum=0x\(String(acc, radix: 16))")
 exit(0)

@@ -98,8 +98,8 @@ SWIFTC=/usr/local/mavergreen/bin/swiftc SWIFT_RUNTIME_PREFIX="$R" SELFTEST_SUPPO
 ```
 
 `make-selftest.sh` there compiles every `tests/*.swift` with the installed toolchain, so that toolchain
-must have compiler patch 0003 (INGREDIENTS.md): an earlier release refuses `typed_throws_test.swift` and
-`parameter_packs_test.swift`. Before such a release is installed, name `self-host.sh`'s stage-2
+must have compiler patch 0003 (INGREDIENTS.md): an earlier release refuses `typed_throws_test.swift`,
+`parameter_packs_test.swift` and `stdlib_availability_test.swift`. Before such a release is installed, name `self-host.sh`'s stage-2
 toolchain as `SWIFTC` instead (it prints the command).
 
 From nothing to a gated runtime takes about 35 minutes on a 6-core Mac Pro. `build-llvm.sh` is the long

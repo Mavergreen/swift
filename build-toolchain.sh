@@ -198,7 +198,7 @@ for p in $PATCHES; do
 done
 IFS="$_ifs"
 grep -q 'any macOS SDK back to 10.9 is accepted' "$SC/lib/Driver/Driver.cpp" || { echo "FAIL: compiler patch 0001 not applied"; exit 1; }
-for f in lib/AST/Availability.cpp include/swift/AST/ASTContext.h; do
+for f in lib/AST/Availability.cpp include/swift/AST/ASTContext.h lib/Serialization/Deserialization.cpp; do
   grep -q "Mavergreen: the 10.9 runtime is the pkgs'" "$SC/$f" || { echo "FAIL: compiler patch 0003 not applied ($f)"; exit 1; }
 done
 if [ "$HOST" = x86_64 ]; then

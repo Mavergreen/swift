@@ -17,7 +17,8 @@
 #                             first line is `// selftest: needs this repo's compiler ...` is skipped,
 #                             saying so: it uses a feature only compiler patch 0003 opens for 10.9,
 #                             which the swift.org compiler refuses (typed_throws_test,
-#                             parameter_packs_test). SWIFTC= mode builds every test.
+#                             parameter_packs_test, stdlib_availability_test). SWIFTC= mode builds
+#                             every test.
 #            SWIFTC=<swiftc>  exactly `$SWIFTC -O|-Onone <file> -o <out>`: this repo's own toolchain,
 #                             on 10.9, whose defaults supply target, SDK and rpath. With SWIFT_RUNTIME_PREFIX
 #                             also set (a staged, uninstalled runtime), each compile adds
