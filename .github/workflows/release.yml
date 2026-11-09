@@ -259,6 +259,8 @@ jobs:
             "$P/lib/swift/macosx/libswift_Concurrency.dylib"
           # The builtins archive is not executable, so the list above misses it; guard it by name.
           ./scripts/guard.sh "$P"/lib/clang/*/lib/darwin/libclang_rt.osx.a
+          # So is Recaulk's, whose members call each other: guarded linked whole (scripts/guard.sh --linked-with).
+          ./scripts/guard.sh --linked-with "$P/bin/ld64.lld" "$P/lib/recaulk/librecaulk.a"
 
       - name: Digest the stdlib and builtins the cross toolchain ships
         id: digest
@@ -460,6 +462,10 @@ jobs:
           xargs ./scripts/guard.sh < "$RUNNER_TEMP/toolchain-machos"
           # The builtins archive is not executable, so the list above misses it; guard it by name.
           ./scripts/guard.sh "$SWIFT_BUILD"/payload/toolchain/usr/local/mavergreen/swift-toolchain/lib/clang/*/lib/darwin/libclang_rt.osx.a
+          # So is Recaulk's, whose members call each other: guarded linked whole (scripts/guard.sh --linked-with),
+          # by the cross toolchain's lld, which runs on this runner.
+          ./scripts/guard.sh --linked-with "$SWIFT_HOST_TOOLCHAIN/bin/ld64.lld" \
+            "$SWIFT_BUILD/payload/toolchain/usr/local/mavergreen/swift-toolchain/lib/recaulk/librecaulk.a"
 
       - name: Build swift-toolchain-updater.app (Cocoa/Sparkle; must NOT link Swift)
         run: |

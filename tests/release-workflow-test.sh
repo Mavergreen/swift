@@ -5,7 +5,8 @@
 #   check as passed. So build must run whatever its needs did (if: !cancelled()), and its first step must fail
 #   unless version and build-cross both succeeded: a failed build-cross must fail the check, never skip it
 #   (PR 9 automerged 6.4.1 with 6.4.0's tarball pins that way). Each check is run against a workflow mutated to
-#   break it, and must refuse it.
+#   break it, and must refuse it. Its guard steps (build-cross's and build's) must guard the payload's
+#   builtins archive and its Recaulk archive (lib/recaulk/librecaulk.a, linked whole) by name.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d "${TMPDIR:-/tmp}/release-workflow-test.XXXXXX")"
@@ -27,6 +28,23 @@ check() {
 
 W="$REPO/.github/workflows/release.yml"
 check "$W" > "$T/why" || fail "release.yml: $(cat "$T/why")"
+
+# The archives each toolchain bundles are not executable, so the guard steps' Mach-O lists miss them: each
+# step guards its payload's builtins archive and Recaulk's (linked whole) by name.
+archives() {
+  for job in build-cross build; do
+    awk -v j="  $job:" '$0 == j { on = 1; next } /^  [a-z-]+:$/ { on = 0 } on' "$1" > "$T/$job"
+    grep -q '^          \./scripts/guard\.sh .*/lib/clang/\*/lib/darwin/libclang_rt\.osx\.a$' "$T/$job" \
+      || { echo "$job does not guard its builtins archive by name"; return 1; }
+    grep -A1 '^          \./scripts/guard\.sh --linked-with ".*/bin/ld64\.lld"' "$T/$job" | grep -q '/lib/recaulk/librecaulk\.a"$' \
+      || { echo "$job does not guard its Recaulk archive by name, linked whole"; return 1; }
+  done
+}
+archives "$W" > "$T/why" || fail "release.yml: $(cat "$T/why")"
+for job in build-cross build; do
+  sed "/^  $job:\$/,/^  [a-z-]*:\$/{/--linked-with/d;}" "$W" > "$T/no-rk.yml"
+  if archives "$T/no-rk.yml" > /dev/null; then fail "a $job without Recaulk's guard passed"; fi
+done
 
 mutant() {
   sed "$2" "$W" > "$T/mutant.yml"
