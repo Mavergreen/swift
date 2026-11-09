@@ -358,7 +358,7 @@ above), whose sources keep their own licenses:
   header of its own, are the MacPorts community's, under legacy-support's LICENSE
   (above).
 
-A program built with these toolchains that links an APSL member (one that calls
+A program built with these toolchains that links an APSL member (one that itself declares and calls
 openat or another *at call, fdopendir, fstatat, utimensat or futimens, say) carries
 that member's notice in its binary, and its author should repeat that notice in the
 program's documentation; lib/recaulk/notices.tsv lists those members and their

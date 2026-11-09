@@ -156,18 +156,28 @@ covers `lib/recaulk`, so both pkgs carry the same bytes.
 
 The driver's linker, `libexec/mavergreen-swift/ld` (`toolchain/ld`), puts the archive on the line just before
 the driver's first `-lobjc` or `-lSystem`. ld pulls a member only for a symbol still undefined there, so a
-program defines Recaulk's weak, hidden `fma`, `fmal` and `truncl`, plus any back-fill it calls (`openat`
-through `import Darwin`, say), and binds everything else to libSystem as before. The archive must precede
+program defines Recaulk's weak, hidden `fma`, `fmal` and `truncl`, plus any back-fill it calls itself (a
+function it declares with `@_silgen_name` or in its own C: the overlay's `openat` binds libswiftDarwin's
+hidden copy, so `import Darwin` reaches none), and binds everything else to libSystem as before. The archive must precede
 `-lSystem`: after it, ld has already taken libSystem's definition (the A1 probe: `-Xlinker <archive>` lands
 after `-lSystem` and does nothing). It goes in the linker wrapper, not among `swiftc`'s inputs, because only a
 link reaches that program: as an input it broke `-c`, `-typecheck`, `-emit-module` and the module name
 `-emit-library` infers, and `swiftc -v` tried to link the archive alone. A line without `-lSystem` (`ld -v`)
 reaches lld unchanged; `-emit-library -static` runs libtool, not ld, so a static library takes no copy and the
 program that links it takes one. A user's own inputs, `-l`, `-L` and `-Xlinker` arguments stay where the
-driver puts them. A dylib takes its own copy, as Recaulk wants ("every image gets its own copy"): the
-definitions are hidden, so two images never share one.
+driver puts them. A dylib takes its own copy, as Recaulk wants ("every image gets its own copy"). Only the
+libm members (`fma`, `fmal`, `truncl`) are private externs, so two images never share those. Recaulk's
+back-fill forwarders and `___recaulk_impl_*` are external: a user dylib that uses a back-fill exports them.
 
-Most programs take only Recaulk's own members, under its ISC licence. A program that calls an API Recaulk
+The bundled `clang` and `clang++` link Recaulk too, through `toolchain/clang.cfg` (installed as `clang.cfg`
+and `clang++.cfg`), as mavericks-clang-22's cfg does: its link-only `$-Wl,<CFGDIR>/../lib/recaulk/librecaulk.a`
+(`<CFGDIR>` is the cfg's directory, so it moves with the toolchain; a compile never sees it) precedes the
+driver's `-lSystem`. One path per driver, so the archive is never added twice: clang runs `bin/ld64.lld`
+itself, never the `libexec/mavergreen-swift/ld` wrapper, so the cfg is the only path for clang and the
+wrapper the only one for swiftc. `tests/toolchain-smoke-test.sh` pins the archive once on clang's and
+clang++'s link lines, defining `fmal` hidden, with `clang -c` clean and a copied toolchain naming its own copy.
+
+Most programs take only Recaulk's own members, under its ISC licence. A program that itself calls an API Recaulk
 builds from Apple's code (`openat` and the other `*at` calls, `fdopendir`, `fstatat`, `utimensat`,
 `futimens`) links an APSL member, which carries its notice as a string in the program; its author should
 repeat that notice in the program's documentation (the README says so). `lib/recaulk/notices.tsv` lists those

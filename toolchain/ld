@@ -7,7 +7,9 @@
 #   pins.env's RECAULK_VERSION) goes on the line just before the driver's first -lobjc or -lSystem. ld
 #   pulls a member only for a symbol still undefined there, so a program defines Recaulk's fixes of
 #   10.9's libm (fma, fmal, truncl: the stdlib's inlined floating-point code calls them) and any
-#   back-fill it calls (openat, say), all hidden, and binds everything else to libSystem as before. After
+#   back-fill it calls itself (a declared openat, say), and binds everything else to libSystem as before. Only
+#   the libm members (fma, fmal, truncl) are private externs; Recaulk's back-fill forwarders and
+#   ___recaulk_impl_* are external, so a dylib that uses a back-fill exports them. After
 #   -lSystem the archive would do nothing: ld takes the first definition, and libSystem has one, wrong on
 #   10.9. Here, not in swiftc, because only a link reaches this program: an archive among swiftc's inputs
 #   would break the compile-only modes (-c, -typecheck, -emit-module) and the module name -emit-library

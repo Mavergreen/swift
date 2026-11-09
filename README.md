@@ -75,11 +75,11 @@ That compiler links no Recaulk (below), so such a program takes 10.9's own `fma`
 
 ### Recaulk in every program
 
-Both toolchain packages' `swiftc` link [Recaulk](https://github.com/Mavergreen/recaulk) statically into
+Both toolchain packages' `swiftc`, and their bundled `clang` and `clang++`, link [Recaulk](https://github.com/Mavergreen/recaulk) statically into
 every program and library they build, as mavericks-clang-22 does: a program takes Recaulk's correct `fma`,
 `fmal` and `truncl` (10.9's get some results wrong, `Double.addingProduct` and `Float80.rounded(.towardZero)`
-among them), and its versions of the newer APIs it calls (`openat`, say), and everything else from the OS.
-Most programs take only Recaulk's own code, under its ISC licence. A program that calls one of the few
+among them), and its versions of the newer APIs it declares itself (through `@_silgen_name` or its own C declarations; `import Darwin` reaches none of them), and everything else from the OS.
+Most programs take only Recaulk's own code, under its ISC licence. A program that itself calls one of the few
 APIs Recaulk builds from Apple's code (`openat` and the other `*at` calls, `fdopendir`, `fstatat`,
 `utimensat`, `futimens`) carries that code's APSL notice in its binary; mention that notice in your
 program's documentation. The toolchain's `lib/recaulk/notices.tsv` lists those parts and their notices.
