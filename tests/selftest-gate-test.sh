@@ -3,7 +3,8 @@
 # usage: sh tests/selftest-gate-test.sh
 #   Exercises tests/run-selftest.sh against small C fixtures: a clean program, one that exits 1,
 #   one whose heap overrun only Guard Malloc catches, one that outlives SELFTEST_TIMEOUT, and
-#   (--loads) programs that load the runtime's libswift*.dylib from the prefix or from elsewhere, or none;
+#   (--loads) programs that load the runtime's libswift*.dylib from the prefix or from elsewhere, or none (most
+#   print the dyld lines they model, so the host's own Swift cannot leak in);
 #   and a bundle's upstream/bin/, which runs after bin/, SELFTEST_UPSTREAM_RUNS times plus one Guard Malloc run.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,25 +46,39 @@ cc -o "$T/crasher" "$T/crasher.c"
 printf '%s\n' '#include <stdio.h>' '#include <stdlib.h>' \
   'int main(int c, char **v){FILE *f=fopen(getenv("SELFTEST_COUNT"),"a"); if(!f) return 2; fprintf(f,"%s\n",v[0]); fclose(f); return 0;}' > "$T/counter.c"
 cc -o "$T/counter" "$T/counter.c"
-# os_support / os_shipped: loads_ok that also prints, as a modern dyld does, a load line for an OS libswift* image.
-for n in Prespecialized Core; do
-  printf '%s\n' '#include <stdio.h>' 'int core_f(void);' \
-    "int main(void){fprintf(stderr,\"dyld[1]: <UUID> /usr/lib/libswift$n.dylib\\n\"); return core_f();}" > "$T/os$n.c"
-done
-cc -o "$T/os_support" "$T/osPrespecialized.c" -L"$T/prefix/lib/swift" -lswiftCore -Wl,-rpath,"$T/prefix/lib/swift"
-cc -o "$T/os_shipped" "$T/osCore.c" -L"$T/prefix/lib/swift" -lswiftCore -Wl,-rpath,"$T/prefix/lib/swift"
-cc -o "$T/up_core" "$T/useCore.c" -L"$T/prefix/lib/swift" -lswiftCore -Wl,-rpath,"$T/prefix/lib/swift"
-cc -o "$T/up_support" "$T/useSupport.c" -L"$T/supportlib" -lswiftTestSupport -L"$T/prefix/lib/swift" -lswiftCore \
-  -Wl,-rpath,@executable_path/../../lib -Wl,-rpath,"$T/prefix/lib/swift"
+# The --loads fixtures print, as dyld would under DYLD_PRINT_LIBRARIES, the loads they model, and link no
+# libswift* themselves: a real program that links libswiftCore loads whatever else the host's dyld adds, and
+# macOS 26's maps the OS's libswiftPrespecialized and, through it, /usr/lib/swift/libswiftCore into it,
+# which 10.9 (no OS Swift) never does. The real-binary cases further down run only where the host adds none.
+# sim <name> <line>... : a fixture that writes each line to stderr, "@exe@" as its own physical bin/ dir.
+sim() {
+  n="$1"; shift
+  { printf '%s\n' '#include <libgen.h>' '#include <limits.h>' '#include <stdio.h>' '#include <stdlib.h>' '#include <string.h>' \
+      'static void line(const char *d, const char *s){const char *a=strstr(s,"@exe@");' \
+      '  if(a) fprintf(stderr,"%.*s%s%s\n",(int)(a-s),s,d,a+5); else fprintf(stderr,"%s\n",s);}' \
+      'int main(int c, char **v){char r[PATH_MAX]; const char *d=realpath(v[0],r)?dirname(r):"."; (void)c;'
+    for l in "$@"; do printf '  line(d,"%s");\n' "$l"; done
+    printf '  return 0;}\n'; } > "$T/$n.c"
+  cc -o "$T/$n" "$T/$n.c"
+}
+CORE_LINE="dyld: loaded: $T/prefix/lib/swift/libswiftCore.dylib"   # 10.9's dyld's form
 # loads_ok: Core from the prefix. loads_stray: Darwin from a stray dir (Core from the prefix).
 # support_ok / support_stray: Core from the prefix, a non-shipped libswift* from the bundle's lib/ or a stray dir.
-cc -o "$T/loads_ok" "$T/useCore.c" -L"$T/prefix/lib/swift" -lswiftCore -Wl,-rpath,"$T/prefix/lib/swift"
-cc -o "$T/loads_stray" "$T/useBoth.c" -L"$T/stray" -lswiftDarwin -L"$T/prefix/lib/swift" -lswiftCore \
+sim loads_ok "$CORE_LINE"
+sim loads_stray "$CORE_LINE" "dyld: loaded: $T/stray/libswiftDarwin.dylib"
+sim support_ok "$CORE_LINE" "dyld: loaded: @exe@/../lib/libswiftTestSupport.dylib"
+sim support_stray "$CORE_LINE" "dyld: loaded: $T/stray/libswiftTestSupport.dylib"
+# os_support / os_shipped: loads_ok plus, in a modern dyld's form, an OS libswift* image.
+sim os_support "dyld[1]: <UUID> $T/prefix/lib/swift/libswiftCore.dylib" "dyld[1]: <UUID> /usr/lib/libswiftPrespecialized.dylib"
+sim os_shipped "dyld[1]: <UUID> $T/prefix/lib/swift/libswiftCore.dylib" "dyld[1]: <UUID> /usr/lib/libswiftCore.dylib"
+sim up_core "$CORE_LINE"
+sim up_support "$CORE_LINE" "dyld: loaded: @exe@/../../lib/libswiftTestSupport.dylib"
+# real_*: real programs linking the fake runtime, for the cases that take dyld's own output.
+cc -o "$T/real_ok" "$T/useCore.c" -L"$T/prefix/lib/swift" -lswiftCore -Wl,-rpath,"$T/prefix/lib/swift"
+cc -o "$T/real_stray" "$T/useBoth.c" -L"$T/stray" -lswiftDarwin -L"$T/prefix/lib/swift" -lswiftCore \
   -Wl,-rpath,"$T/stray" -Wl,-rpath,"$T/prefix/lib/swift"
-cc -o "$T/support_ok" "$T/useSupport.c" -L"$T/supportlib" -lswiftTestSupport -L"$T/prefix/lib/swift" -lswiftCore \
+cc -o "$T/real_support" "$T/useSupport.c" -L"$T/supportlib" -lswiftTestSupport -L"$T/prefix/lib/swift" -lswiftCore \
   -Wl,-rpath,@executable_path/../lib -Wl,-rpath,"$T/prefix/lib/swift"
-cc -o "$T/support_stray" "$T/useSupport.c" -L"$T/supportlib" -lswiftTestSupport -L"$T/prefix/lib/swift" -lswiftCore \
-  -Wl,-rpath,"$T/stray" -Wl,-rpath,"$T/prefix/lib/swift"
 
 bundle() {  # $1.. = fixtures to put in a fresh bundle's bin/, or its upstream/bin/ as up:<fixture>; prints the bundle dir
   b="$(mktemp -d "$T/bundle.XXXXXX")"; mkdir -p "$b/bin"
@@ -194,6 +209,17 @@ echo "-- --loads: an OS libswift* image (/usr/lib) is fine for non-shipped names
 run "$(bundle os_support)" --loads; [ "$rc" = 0 ] || fail "os_support: rc=$rc: $out"
 run "$(bundle os_shipped)" --loads; [ "$rc" = 1 ] || fail "os_shipped: rc=$rc: $out"
 case "$out" in *'FAIL: os_shipped'*'/usr/lib/libswiftCore.dylib'*) ;; *) fail "os_shipped: not named: $out" ;; esac
+
+echo "-- --loads, real programs: dyld's own output read the same way (only where the host's dyld adds no OS Swift)"
+os_swift="$(DYLD_PRINT_LIBRARIES=1 "$T/real_ok" 2>&1 >/dev/null | sed -n 's/^[^/]*\(\/[^ ]*libswift[^ ]*\.dylib\).*$/\1/p' \
+  | grep -E '^/(usr/lib|System)/' || :)"
+if [ -z "$os_swift" ]; then
+  run "$(bundle real_ok real_support)" --loads; [ "$rc" = 0 ] || fail "real_ok: rc=$rc: $out"
+  run "$(bundle real_stray)" --loads; [ "$rc" = 1 ] || fail "real_stray: rc=$rc: $out"
+  case "$out" in *'FAIL: real_stray'*"/stray/libswiftDarwin.dylib"*) ;; *) fail "real_stray: binary and path not named: $out" ;; esac
+else
+  echo "   this host's dyld loads OS Swift into a program that links libswiftCore ($(echo $os_swift)); not exercised"
+fi
 
 echo "-- --loads: a test that loads no libswiftCore from the prefix fails (it checked nothing)"
 run "$(bundle ok)" --loads; [ "$rc" = 1 ] || fail "--loads passed a test that loads no libswift*: rc=$rc: $out"
