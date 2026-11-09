@@ -23,6 +23,11 @@ while [ -L "$self" ]; do
 done
 PREFIX="$(CDPATH= cd -P -- "$(dirname "$self")/../.." && pwd -P)"
 RK="$PREFIX/lib/recaulk/librecaulk.a"
+# The driver passes no response file (its Darwin link uses -filelist); one from -Xlinker @file could hold
+# the -lSystem the archive must precede, and the program would link without Recaulk, silently.
+for a do
+  case "$a" in @*) echo "ld: a response file (${a#@}) is not supported: it could hide the -lSystem Recaulk's archive must precede -- pass its arguments instead" >&2; exit 1 ;; esac
+done
 case " $* " in
   *" -lSystem "*)
     [ -f "$RK" ] || { echo "ld: no Recaulk archive at $RK -- reinstall this toolchain" >&2; exit 1; }

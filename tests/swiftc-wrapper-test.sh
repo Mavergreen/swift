@@ -7,7 +7,8 @@
 #   fetch or an SDK that is not a directory. The driver's linker, libexec/mavergreen-swift/ld, must run
 #   ld64.lld with the toolchain's Recaulk archive (lib/recaulk/librecaulk.a) just before the driver's
 #   -lobjc and -lSystem, so that every program and dylib swiftc links defines the Recaulk fixes and
-#   back-fills it uses; leave a line without -lSystem as it was; and refuse to link without the archive.
+#   back-fills it uses; leave a line without -lSystem as it was; and refuse to link without the archive,
+#   or a line with a response file (@file), which could hide the -lSystem.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -152,4 +153,12 @@ rm -f "$T/lld-ran"; mv "$RK" "$T/rk-away"; rc=0
 [ "$rc" != 0 ] && [ ! -f "$T/lld-ran" ] || fail "linked without the Recaulk archive: $(cat "$T/out")"
 grep -qF "no Recaulk archive at $RK" "$T/err" || fail "a missing archive was not explained: $(cat "$T/err")"
 mv "$T/rk-away" "$RK"
+# A response file (-Xlinker @file) could hide the -lSystem the archive must precede: refused, never linked.
+for line in "@$T/rsp" "x.o @$T/rsp -lSystem"; do
+  rm -f "$T/lld-ran"; rc=0
+  # shellcheck disable=SC2086  # the line's words, as the driver passes them
+  "$LD" $line > "$T/out" 2> "$T/err" || rc=$?
+  [ "$rc" != 0 ] && [ ! -f "$T/lld-ran" ] || fail "linked a line with a response file ($line): $(cat "$T/out")"
+  grep -qF "a response file ($T/rsp)" "$T/err" || fail "a response file was not explained: $(cat "$T/err")"
+done
 echo "PASS"
