@@ -1,0 +1,1 @@
+The bundled clang and clang++ now link Recaulk into every program too, so C and C++ programs get correct fma, fmal and truncl on 10.9.

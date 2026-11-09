@@ -1,0 +1,1 @@
+A program built for 10.9 can now use typed throws, parameter packs and the rest of Swift 6.4 that the runtime package provides, which the compiler used to refuse.

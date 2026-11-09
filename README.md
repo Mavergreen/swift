@@ -4,10 +4,27 @@ Swift runtime and toolchain for Mac OS X 10.9 Mavericks.
 
 ## Runtime
 
-Included: strings, collections, closures, generics, protocols, classes, ARC, `if #available`, and the
+Included: strings, collections, closures, generics, protocols, classes, ARC, `if #available`, Concurrency, and the
 `Darwin` and `ObjectiveC` runtime libraries.
 
-Not yet included: Foundation, AppKit, Macros, Concurrency.
+Not yet included: Foundation, AppKit, Macros, Dispatch's Swift overlay.
+
+### Concurrency and the newer language and library
+
+`async`/`await`, actors and task groups compile for 10.9 with no flags, and run on the runtime package's
+`libswift_Concurrency`. The newer standard library works too: `Duration`, `Clock`, `Int128`, `InlineArray` and
+`Span`, with typed throws and parameter packs. The toolchains' compiler treats a Swift 6.4 feature as available
+when the runtime package provides it, for a target below macOS 10.14.4, where a program loads this runtime.
+For a target of 10.14.4 and later the program loads the OS's own `/usr/lib/swift`, and upstream's rules and
+availability apply unchanged. A program that uses any of this needs the runtime package of its toolchain's
+release or later, and each toolchain package requires it. Programs link Recaulk, so `fma`, `fmal` and `truncl`
+are correct, with the notice duty described under "Recaulk in every program", below. Still owed, and not in
+this release's gate: upstream tests that need FileCheck, that set environment variables, or that use
+Dispatch's Swift overlay.
+
+An app that bundles this runtime must copy the `libswiftCompatibilitySpan.dylib` link, which points at
+`libswiftCore.dylib`, along with the libraries. Under an rpath that finds another Core first, 10.9's dyld
+can load the link as a second file, a second copy of Core.
 
 The runtime package carries only the libraries, which run programs already built. To compile a program
 that does `import Darwin` or `import ObjectiveC`, install a toolchain package: the modules ship there.

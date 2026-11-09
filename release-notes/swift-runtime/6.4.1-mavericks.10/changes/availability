@@ -1,0 +1,1 @@
+Duration, Clock, Int128, InlineArray and other newer standard library APIs now work in programs built for 10.9; programs built for 10.14.4 or later keep upstream's availability.

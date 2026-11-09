@@ -1,0 +1,1 @@
+Span now works on 10.9; an app that bundles the runtime must also copy its libswiftCompatibilitySpan.dylib link beside libswiftCore.dylib.

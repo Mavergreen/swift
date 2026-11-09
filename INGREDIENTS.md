@@ -19,7 +19,7 @@ was merged in (2026-09) and deleted (2026-10). Its 6.4.0 installer mirror is now
 | Recaulk, the family's back-fills of post-10.9 OS APIs (libswiftCore links Recaulk's definitions of the APIs `build.sh`'s `RECAULK_RUNTIME_SYMBOLS` names, and only those, statically, and libswiftDarwin and libswift_Concurrency their own subsets: below) | `RECAULK_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/recaulk`, `YYYYMMDD.N` versioning | auto-repackages `-mavericks.(N+1)`; nothing is required at install, since the link is static |
 | LLVM and compiler source patches (`patches/llvm/`, `patches/compiler/`: compiler `0003` maps the compiler's runtime table, and the stdlib's own declarations, to OS X 10.9 for targets below 10.14.4, below; `0004` stops an optimized escaping-closure check from passing the length of the source's path, which no prefix map reaches, so libswift_Concurrency is the same bytes from any build root) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | swift.org toolchain `.pkg` (CI's one seed: it compiles the cross toolchain's Swift half, and a first stdlib that only makes that toolchain runnable; everything the release ships is compiled by this repo's own compilers, below) | `TOOLCHAIN_URL`, derived from `SWIFT_VERSION` | ✅ moves with the Swift pin | verified by **signer identity**, not a hash (below) |
-| Runtime source patches (`patches/runtime/`) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
+| Runtime source patches (`patches/runtime/`; `0012` to `0016` are libswift_Concurrency's: its deployment floor follows the stdlib's 10.9, not upstream's 10.15; `0013` the link-flags hook for its Recaulk subset; `0014` maps QoS classes to the priorities 10.9's libdispatch knows; `0015` guards the one tracing call that lacked its `ENSURE_LOGS`; `0016` expresses a continuous-clock deadline as an uptime one, which 10.9's libdispatch fires) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | swift-6.2 Darwin overlay source (`stdlib/public/Platform`) | `SWIFT62_SHA` + `SWIFT62_TARBALL_SHA256` in `pins.env`, fetched by `fetch_source` into `swift-6.2` | ❌ untrackable: frozen, since upstream removed the files in 6.3 and Mavergreen owns them; no `renovate:` marker, and no updater (Renovate, the pins bot, `pin-source-tarballs.sh`) names the pin | n/a: moves only by a deliberate edit |
 | swift-5.4 ObjectiveC overlay source (`stdlib/public/Darwin/ObjectiveC`) | `SWIFT54_SHA` + `SWIFT54_TARBALL_SHA256` in `pins.env`, fetched by `fetch_source` into `swift-5.4` | ❌ untrackable: frozen, since upstream removed the files in 5.5 and Mavergreen owns them; as for swift-6.2 | n/a: moves only by a deliberate edit |
 | Overlay source patches (`patches/overlays/`, applied with `-p0` from the swift-5.4 tree: `0001` makes `NSObject.hash` a method call, as the 10.9 SDK declares it) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
@@ -261,6 +261,11 @@ the two hosts' builds the same bytes:
   `build-toolchain.sh`, for both toolchains.
 - **Paths:** the build root is mapped to `/mavergreen-build` in every compile.
 
+A native build on 10.9 is byte-identical to CI's only with a toolchain that carries compiler patch `0004`: an
+escaping-closure check in `libswift_Concurrency` takes the length of its source's path, which no prefix map reaches,
+so a toolchain of 6.4.1-mavericks.9 or earlier gives a `libswift_Concurrency` whose bytes depend on the build root's
+length. `self-host.sh --compare` against such a seed shows that difference, and it is the seed's, not a bug in the build.
+
 ## Why the sources are tarballs, and their SHA-256s a script's
 
 The builds run on OS X 10.9 with nothing from Xcode's Command Line Tools, and 10.9's only git is one of
@@ -349,6 +354,11 @@ until its blocker goes (the reasons are in `tests/upstream/*.list`):
   does not ship.
 - The Concurrency tests whose RUN: line sets an environment variable with `env` (14, the isolation-mode
   overrides and `SWIFT_DEBUG_VALIDATE_UNCHECKED_CONTINUATIONS` among them): the gate sets no variable.
+- The FileCheck tests (67 in Concurrency alone, and Darwin's and ObjectiveC's): no 10.9 pkg ships FileCheck. The
+  umbrella's "Next piece of work", after this release, brings them in and re-sizes `vm-test`.
+- The site that reads Mirror's 6.2 availability: untested on 10.9, since the only upstream test that reaches it
+  uses a C++ foreign reference, which this gate does not build.
+- Tests of the Dispatch Swift overlay and of the environment variables above are owed with their blockers, as listed.
 - `test/Concurrency/Runtime/actor_dynamic_subclass.swift`: the 10.9 SDK has no nullability, so it does not compile
   (line 32).
 
