@@ -9,7 +9,8 @@
 #   RECAULK_VERSION) into a program and a dylib, each defining Recaulk's fma, fmal and truncl, hidden,
 #   the program still taking puts and malloc from libSystem, while -c compiles alone; then builds the gate corpus through
 #   make-selftest.sh's SWIFTC= mode, and its clang links C that uses @available (its builtins archive is
-#   where the driver looks). Its bare clang and clang++, given no flags, must build for 10.9 (clang.cfg and
+#   where the driver looks), and, with clang++, links Recaulk (clang.cfg's link-only archive, named once, relative to
+#   bin/, defining fmal hidden, also from a copied toolchain). Its bare clang and clang++, given no flags, must build for 10.9 (clang.cfg and
 #   clang++.cfg), and its bare clang, given only the SDK, must link C with the toolchain's own ld64.lld (its
 #   default linker) and none of the flags a newer ld64 takes (its pinned host linker version):
 #   6.4.0-mavericks.8's clang ran the host's ld, with -no_deduplicate, which OS X 10.9's refuses. Nothing it
@@ -144,4 +145,66 @@ case "$LD" in *'"-no_deduplicate"'*) fail "bare clang passes -no_deduplicate, a 
 "$TC/bin/clang" -isysroot "$SDKROOT" "$T/hi.c" -o "$T/hi" || fail "bare clang could not link C"
 p="$(plat "$T/hi")"
 [ "$p" = "10.9 10.9" ] || fail "bare clang's program records minOS and SDK '$p', not '10.9 10.9'"
+
+echo "-- its clang and clang++ link Recaulk too (clang.cfg's link-only \$-Wl), once, by one path"
+# clang links with bin/ld64.lld itself, never through libexec/mavergreen-swift/ld (swiftc's linker, which adds
+# the archive for swiftc), so the cfg is the one path for clang and the wrapper the one for swiftc.
+RKA="$BIN/../lib/recaulk/librecaulk.a"     # <CFGDIR>/../lib/recaulk, as clang spells it
+cat > "$T/rk.c" <<'C'
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <float.h>
+int main(int argc, char **argv) {
+  volatile double e = 0x1p-27 * argc;               /* fma(1+e, e-1, 1) is e*e; 10.9's gives -e*e */
+  volatile long double m = LDBL_MAX, z = -0.5L * argc;
+  double a = fma(1 + e, e - 1, 1);
+  long double b = fmal(m, 2, -m), c = truncl(z);    /* 10.9's fmal overflows; its truncl(-0.5) lacks the sign */
+  void *p = malloc(16); free(p);
+  printf("%d %d %d\n", a == e * e, b == m, signbit(c) != 0);
+  return !(a == e * e && b == m && signbit(c) != 0);
+}
+C
+# C++ source with C headers only: this toolchain ships no libc++ headers (the SDK's are what a program names).
+cat > "$T/rk.cc" <<'C'
+#include <float.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+int main(int argc, char **) {
+  volatile long double m = LDBL_MAX * argc;
+  long double b = fmal(m, 2, -m);
+  printf("%d\n", b == m);
+  free(malloc(1));
+  return b != m;
+}
+C
+for d in clang clang++; do
+  case "$d" in clang) src=rk.c ;; *) src=rk.cc ;; esac
+  line="$("$TC/bin/$d" -isysroot "$SDKROOT" -### "$T/$src" -o "$T/rk-$d" 2>&1 | tail -1 | sed "s/^ *//")"
+  case "$line" in "\"$BIN/ld64.lld\""*) ;; *) fail "$d links with something other than $BIN/ld64.lld" ;; esac
+  n="$(printf '%s\n' "$line" | grep -o 'librecaulk\.a' | wc -l | tr -d ' ')"
+  [ "$n" = 1 ] || fail "$d's link line names librecaulk.a $n times, not once"
+  printf '%s\n' "$line" | grep -q "\"$RKA\"" || fail "$d's link line does not name $RKA"
+  pre="${line%%\"-lSystem\"*}"
+  case "$pre" in *librecaulk.a*) ;; *) fail "$d's link line puts librecaulk.a after -lSystem" ;; esac
+  "$TC/bin/$d" -isysroot "$SDKROOT" "$T/$src" -o "$T/rk-$d" || fail "$d could not link a program that calls fmal"
+  m="$("$NM" -m "$T/rk-$d")" || fail "could not read rk-$d's symbols"
+  printf '%s\n' "$m" | grep -q "(__TEXT,__text) non-external (was a private external) _fmal\$" \
+    || fail "rk-$d does not define Recaulk's _fmal, hidden: $(printf '%s\n' "$m" | grep ' _fmal$')"
+  for sym in _malloc _printf; do
+    printf '%s\n' "$m" | grep -q "(undefined) external $sym (from libSystem)\$" \
+      || fail "rk-$d does not take $sym from libSystem"
+  done
+  # Link-only: a compile alone neither warns nor fails (an unused linker argument would warn).
+  w="$("$TC/bin/$d" -isysroot "$SDKROOT" -Werror -c "$T/$src" -o "$T/rk-$d.o" 2>&1)" || fail "$d -c failed: $w"
+  [ -z "$w" ] || fail "$d -c warned: $w"
+done
+echo "-- the toolchain moves: its clang finds the archive relative to bin/, not by an absolute path"
+mkdir -p "$T/reloc"
+cp -R "$TC/." "$T/reloc/"
+"$T/reloc/bin/clang" -isysroot "$SDKROOT" "$T/rk.c" -o "$T/rk-reloc" -### 2>&1 | tail -1 | grep -q "\"$(CDPATH='' cd -P -- "$T/reloc/bin" && pwd -P)/../lib/recaulk/librecaulk.a\"" \
+  || fail "a copied toolchain's clang does not name its own copy of the archive"
+"$T/reloc/bin/clang" -isysroot "$SDKROOT" "$T/rk.c" -o "$T/rk-reloc" || fail "a copied toolchain's clang could not link"
+rm -rf "$T/reloc"
 echo "PASS"

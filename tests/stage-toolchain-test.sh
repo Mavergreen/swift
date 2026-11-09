@@ -117,6 +117,10 @@ cmp -s "$W/recaulk/share/recaulk/notices.tsv" "$T/out/$P/lib/recaulk/notices.tsv
 for c in clang.cfg clang++.cfg; do
   cmp -s "$REPO/toolchain/clang.cfg" "$T/out/$P/bin/$c" || fail "bin/$c is not toolchain/clang.cfg"
 done
+# clang links Recaulk through its cfg (link-only, relative to the cfg's directory), once: the archive is where
+# the cfg says, and the linker wrapper that adds it for swiftc is not clang's linker.
+[ "$(grep -c '^\$-Wl,<CFGDIR>/\.\./lib/recaulk/librecaulk\.a$' "$REPO/toolchain/clang.cfg")" = 1 ] \
+  || fail "toolchain/clang.cfg does not pass \$-Wl,<CFGDIR>/../lib/recaulk/librecaulk.a exactly once"
 
 # _Builtin_float is a module only: its dylib is a stub of symbols libswiftDarwin defines, which no toolchain
 # or runtime ships (the build's step 7 checks that). The fake build holds one, as the real one does.
