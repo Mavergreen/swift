@@ -61,6 +61,12 @@ sim() {
     printf '  return 0;}\n'; } > "$T/$n.c"
   cc -o "$T/$n" "$T/$n.c"
 }
+# Probe the host once: does its dyld put an OS Swift image into a plain C program that links no Swift? On macOS 26+
+# it does (system libraries link Swift), so DYLD_PRINT_LIBRARIES names libswift* whatever a fixture does and --loads
+# cannot be exercised here; 10.9 has no OS Swift, and vm-test runs the real --loads check there. The env var is a
+# test-only hook that injects such a line, to rehearse that host (CI) on any Mac.
+HOST_SWIFT="$( { DYLD_PRINT_LIBRARIES=1 "$T/ok" 2>&1 >/dev/null; [ -z "${SELFTEST_GATE_TEST_FAKE_OS_SWIFT:-}" ] || echo "dyld[1]: <UUID> /usr/lib/swift/libswiftCore.dylib"; } | grep libswift || :)"
+SKIP_WHY="the host's dyld loads the OS Swift runtime into every process (macOS 26+); --loads is exercised on 10.9 by vm-test"
 CORE_LINE="dyld: loaded: $T/prefix/lib/swift/libswiftCore.dylib"   # 10.9's dyld's form
 # loads_ok: Core from the prefix. loads_stray: Darwin from a stray dir (Core from the prefix).
 # support_ok / support_stray: Core from the prefix, a non-shipped libswift* from the bundle's lib/ or a stray dir.
@@ -195,6 +201,7 @@ out="$(SELFTEST_PERL="$T/no-such-perl" SWIFT_RUNTIME_PREFIX="$T/prefix" sh "$b/r
 case "$out" in *'no perl'*) ;; *) fail "no perl: not named: $out" ;; esac
 
 echo "-- --loads: libswift* the runtime ships must load from the prefix"
+if [ -n "$HOST_SWIFT" ]; then echo "   skipped: $SKIP_WHY"; else
 run "$(bundle loads_ok)" --loads; [ "$rc" = 0 ] || fail "loads_ok: rc=$rc: $out"
 case "$out" in *'ALL PASS'*) ;; *) fail "loads_ok: no ALL PASS: $out" ;; esac
 run "$(bundle loads_stray)" --loads; [ "$rc" = 1 ] || fail "loads_stray: rc=$rc: $out"
@@ -209,11 +216,14 @@ echo "-- --loads: an OS libswift* image (/usr/lib) is fine for non-shipped names
 run "$(bundle os_support)" --loads; [ "$rc" = 0 ] || fail "os_support: rc=$rc: $out"
 run "$(bundle os_shipped)" --loads; [ "$rc" = 1 ] || fail "os_shipped: rc=$rc: $out"
 case "$out" in *'FAIL: os_shipped'*'/usr/lib/libswiftCore.dylib'*) ;; *) fail "os_shipped: not named: $out" ;; esac
+fi
 
 echo "-- --loads, real programs: dyld's own output read the same way (only where the host's dyld adds no OS Swift)"
 os_swift="$(DYLD_PRINT_LIBRARIES=1 "$T/real_ok" 2>&1 >/dev/null | sed -n 's/^[^/]*\(\/[^ ]*libswift[^ ]*\.dylib\).*$/\1/p' \
   | grep -E '^/(usr/lib|System)/' || :)"
-if [ -z "$os_swift" ]; then
+if [ -n "$HOST_SWIFT" ]; then
+  echo "   skipped: $SKIP_WHY"
+elif [ -z "$os_swift" ]; then
   run "$(bundle real_ok real_support)" --loads; [ "$rc" = 0 ] || fail "real_ok: rc=$rc: $out"
   run "$(bundle real_stray)" --loads; [ "$rc" = 1 ] || fail "real_stray: rc=$rc: $out"
   case "$out" in *'FAIL: real_stray'*"/stray/libswiftDarwin.dylib"*) ;; *) fail "real_stray: binary and path not named: $out" ;; esac
@@ -222,8 +232,10 @@ else
 fi
 
 echo "-- --loads: a test that loads no libswiftCore from the prefix fails (it checked nothing)"
+if [ -z "$HOST_SWIFT" ]; then
 run "$(bundle ok)" --loads; [ "$rc" = 1 ] || fail "--loads passed a test that loads no libswift*: rc=$rc: $out"
 case "$out" in *'FAIL: ok'*'libswiftCore'*) ;; *) fail "--loads did not say libswiftCore was not loaded: $out" ;; esac
+else echo "   skipped: $SKIP_WHY"; fi
 
 echo "-- upstream/bin/: --gate runs each SELFTEST_UPSTREAM_RUNS times and once under Guard Malloc, after bin/"
 b="$(bundle counter up:counter)"; mv "$b/upstream/bin/counter" "$b/upstream/bin/upcounter"
@@ -247,8 +259,10 @@ out="$(cd / && SELFTEST_COUNT="$T/count" SWIFT_RUNTIME_PREFIX="$T/prefix" sh "$b
 rm -f "$T/count"
 
 echo "-- upstream/bin/: --loads holds them to the same rule (support from the bundle's lib/)"
+if [ -z "$HOST_SWIFT" ]; then
 run "$(bundle loads_ok up:up_core up:up_support)" --loads; [ "$rc" = 0 ] || fail "upstream loads: rc=$rc: $out"
 case "$out" in *'upstream/bin/up_support'*) ;; *) fail "upstream loads: upstream/bin/ not checked: $out" ;; esac
+else echo "   skipped: $SKIP_WHY"; fi
 
 echo "-- a SELFTEST_UPSTREAM_RUNS that is not a positive integer is refused"
 b="$(bundle ok)"; rc=0
