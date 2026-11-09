@@ -62,7 +62,29 @@ native_host_shim "$H" "$T/host" || fail "native_host_shim failed"
 for n in swiftc swift-frontend; do
   [ "$(readlink "$T/host/usr/bin/$n")" = "$H/bin/swift-frontend" ] || fail "bin/$n is not the bare swift-frontend"
 done
-for n in clang clang++; do [ "$(readlink "$T/host/usr/bin/$n")" = "$H/bin/clang" ] || fail "bin/$n is not clang"; done
+# clang and clang++ run the toolchain's clang with its cfgs' flags but never their Recaulk link line: the
+# runtime takes its own subset of Recaulk (build.sh), and the whole archive before -lSystem would bind the
+# runtime's weak OS imports to Recaulk. The fake clang prints what it is given and the cfg it is handed.
+printf '#!/bin/sh\nfor a do case "$a" in --config=*) echo "cfg:$(cat "${a#--config=}" | tr "\\n" " ")" ;; *) echo "arg:$a" ;; esac; done\n' > "$H/bin/clang"
+chmod +x "$H/bin/clang"
+printf '%s\n' '# a comment' -mmacosx-version-min=10.9 -Wl,-U,__availability_version_check '$-Wl,<CFGDIR>/../lib/recaulk/librecaulk.a' > "$H/bin/clang.cfg"
+cp "$H/bin/clang.cfg" "$H/bin/clang++.cfg"
+native_host_shim "$H" "$T/host" || fail "native_host_shim failed"
+for n in clang clang++; do
+  "$T/host/usr/bin/$n" -### -dynamiclib 'a b.o' > "$T/cl.out" || fail "bin/$n did not run the toolchain's clang"
+  ! grep -q librecaulk "$T/cl.out" || fail "bin/$n hands clang the cfgs' Recaulk line: $(cat "$T/cl.out")"
+  grep -qx 'arg:--no-default-config' "$T/cl.out" || fail "bin/$n lets clang read its default cfg: $(cat "$T/cl.out")"
+  grep -qx 'cfg:-mmacosx-version-min=10.9 -Wl,-U,__availability_version_check ' "$T/cl.out" \
+    || fail "bin/$n does not hand clang the cfg's other flags: $(cat "$T/cl.out")"
+  [ "$(sed -n 's/^arg://p' "$T/cl.out" | tail -3 | tr '\n' '|')" = "-###|-dynamiclib|a b.o|" ] || fail "bin/$n did not pass its arguments last: $(cat "$T/cl.out")"
+done
+grep -qx 'arg:--driver-mode=g++' "$T/cl.out" || fail "bin/clang++ is not clang's C++ driver: $(cat "$T/cl.out")"
+"$T/host/usr/bin/clang" -c x.c > "$T/cl.out"
+! grep -q 'driver-mode' "$T/cl.out" || fail "bin/clang is not clang's C driver: $(cat "$T/cl.out")"
+rm "$H/bin/clang.cfg" "$H/bin/clang++.cfg"
+native_host_shim "$H" "$T/host" || fail "native_host_shim failed on a toolchain with no cfgs"
+"$T/host/usr/bin/clang++" -c x.cc > "$T/cl.out" || fail "bin/clang++ failed without cfgs"
+grep -qx 'cfg:' "$T/cl.out" || fail "bin/clang++ without cfgs: $(cat "$T/cl.out")"
 [ "$(readlink "$T/host/usr/bin/ld64.lld")" = "$H/bin/ld64.lld" ] || fail "bin/ld64.lld is not lld"
 [ "$(readlink "$T/host/usr/lib")" = "$H/lib" ] || fail "usr/lib is not the toolchain's lib"
 [ "$("$T/host/usr/bin/ld" -arch x86_64 'a b.o')" = "ld64.lld -arch x86_64 a b.o" ] || fail "bin/ld does not exec ld64.lld with its arguments"

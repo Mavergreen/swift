@@ -176,6 +176,11 @@ driver's `-lSystem`. One path per driver, so the archive is never added twice: c
 itself, never the `libexec/mavergreen-swift/ld` wrapper, so the cfg is the only path for clang and the
 wrapper the only one for swiftc. `tests/toolchain-smoke-test.sh` pins the archive once on clang's and
 clang++'s link lines, defining `fmal` hidden, with `clang -c` clean and a copied toolchain naming its own copy.
+The runtime is the exception: `build.sh`, given a host toolchain of ours, compiles and links the stdlib with
+`lib.sh`'s `native_host_shim`, whose `clang` and `clang++` run that toolchain's clang with
+`--no-default-config` and the cfgs' other lines (the 10.9 floor, `-U __availability_version_check`), never
+this one. The whole archive would bind the runtime's weak imports of the OS (above) to Recaulk's; the
+runtime links only its subset. The smoke test pins that the shim's link lines name no `librecaulk.a`.
 
 Most programs take only Recaulk's own members, under its ISC licence. A program that itself calls an API Recaulk
 builds from Apple's code (`openat` and the other `*at` calls, `fdopendir`, `fstatat`, `utimensat`,

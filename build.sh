@@ -258,8 +258,13 @@ LINK="-fuse-ld=lld --ld-path=$LLD"
 # (a file a patch stops touching is extracted again with the tarball's old date): ninja cannot see them
 # change (a toolchain update, say, or a pin moved to an older commit, whose tarball's files all carry that
 # commit's date), and would keep the objects the previous ones built; and a configured tree keeps its
-# first CMAKE_AR. The overlays' trees are stamped too: step 5b writes into this tree.
-STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$TC/bin/clang" "$BUILTINS" "$X/llvm-ar" "$LIBCXX" "$CXXINC/__config" "$RECAULK_A" "$RECAULK_CONC_A" && source_stamp swift swift-6.2 swift-5.4)" || { echo "FAIL: could not stamp the host inputs and the swift sources"; exit 1; }
+# first CMAKE_AR. The overlays' trees are stamped too: step 5b writes into this tree. A named host
+# toolchain's clang is stamped as its own binary and cfgs, and the shim's clang and clang++ scripts that
+# run it (lib.sh's native_host_shim: its cfgs' flags without their Recaulk line) as further inputs.
+HCLANG="$TC/bin/clang"; SHIM_CC=""
+if [ -n "$HTC" ]; then HCLANG="$HTC/bin/clang"; SHIM_CC="$TC/bin/clang $TC/bin/clang++"; fi
+# shellcheck disable=SC2086  # space-free words: the shim is under the build root, which holds no whitespace
+STAMP="$(host_inputs_stamp "$TC/bin/swift-frontend" "$HCLANG" "$BUILTINS" "$X/llvm-ar" "$LIBCXX" "$CXXINC/__config" "$RECAULK_A" "$RECAULK_CONC_A" $SHIM_CC && source_stamp swift swift-6.2 swift-5.4)" || { echo "FAIL: could not stamp the host inputs and the swift sources"; exit 1; }
 reuse_build_dir "$ROOT/stdlib-build" "$STAMP" || exit 1
 # LLVM_BUILD_* are build-tree-only variables that an install tree does not define, but
 # SwiftSharedCMakeConfig.cmake preconditions on them. LLVM_BUILD_MAIN_SRC_DIR only needs to be

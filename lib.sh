@@ -225,8 +225,15 @@ clang_resource_shim() {
 # bin/swift-frontend are its BARE swift-frontend: the stdlib build passes its own -sdk, -target,
 # -tools-directory and -runtime-compatibility-version, and the toolchain's bin/swiftc wrapper would add
 # the 10.9 SDK, the installed runtime's rpath and an SDK fetch to every call. bin/clang and bin/clang++
-# are its clang; bin/ld64.lld its lld, and bin/ld a script that execs it under that name (lld takes its
-# Mach-O personality from its name). usr/lib is its lib: the stdlib's CMake derives <tools>/../lib paths.
+# are scripts that exec its clang (as clang++, with --driver-mode=g++) with --no-default-config and
+# --config=bin/<driver>.cfg here: its own clang.cfg or clang++.cfg less comments and every line naming
+# librecaulk (empty when it has none). The cfgs' other flags (-mmacosx-version-min=10.9, -Wl,-U,...) reach the stdlib
+# as before; their link-only Recaulk archive (INGREDIENTS.md "Recaulk in every program") must not: the
+# runtime links its own hidden subset of Recaulk (build.sh), and the whole archive, before -lSystem,
+# would bind the runtime's weak imports of the OS (os_signpost_enabled, _availability_version_check, ...)
+# to Recaulk's, which step 7 refuses. bin/ld64.lld is its lld, and bin/ld a script that execs it under
+# that name (lld takes its Mach-O personality from its name). usr/lib is its lib: the stdlib's CMake
+# derives <tools>/../lib paths.
 native_host_shim() {
   for _ns_p in "$1" "$2"; do
     case "$_ns_p" in /*) ;; *) echo "native_host_shim: '$_ns_p' is not an absolute path" >&2; return 1 ;; esac
@@ -236,7 +243,12 @@ native_host_shim() {
   done
   rm -rf "$2" && mkdir -p "$2/usr/bin" || return 1
   for _ns_n in swiftc swift-frontend; do ln -s "$1/bin/swift-frontend" "$2/usr/bin/$_ns_n" || return 1; done
-  for _ns_n in clang clang++; do ln -s "$1/bin/clang" "$2/usr/bin/$_ns_n" || return 1; done
+  for _ns_n in clang clang++; do
+    if [ -f "$1/bin/$_ns_n.cfg" ]; then grep -v -e librecaulk -e "^#" "$1/bin/$_ns_n.cfg" || [ $? -eq 1 ]; fi > "$2/usr/bin/$_ns_n.cfg" || return 1
+    _ns_m=""; [ "$_ns_n" = clang ] || _ns_m=" --driver-mode=g++"
+    printf '#!/bin/sh\nexec "%s/bin/clang"%s --no-default-config "--config=%s/usr/bin/%s.cfg" "$@"\n' \
+      "$1" "$_ns_m" "$2" "$_ns_n" > "$2/usr/bin/$_ns_n" && chmod 755 "$2/usr/bin/$_ns_n" || return 1
+  done
   ln -s "$1/bin/ld64.lld" "$2/usr/bin/ld64.lld" && ln -s "$1/lib" "$2/usr/lib" || return 1
   printf '#!/bin/sh\nexec "%s/bin/ld64.lld" "$@"\n' "$1" > "$2/usr/bin/ld" && chmod 755 "$2/usr/bin/ld"
 }

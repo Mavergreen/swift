@@ -10,7 +10,8 @@
 #   the program still taking puts and malloc from libSystem, while -c compiles alone; then builds the gate corpus through
 #   make-selftest.sh's SWIFTC= mode, and its clang links C that uses @available (its builtins archive is
 #   where the driver looks), and, with clang++, links Recaulk (clang.cfg's link-only archive, named once, relative to
-#   bin/, defining fmal hidden, also from a copied toolchain). Its bare clang and clang++, given no flags, must build for 10.9 (clang.cfg and
+#   bin/, defining fmal hidden, also from a copied toolchain), while build.sh's host shim over it (lib.sh's
+#   native_host_shim) links none. Its bare clang and clang++, given no flags, must build for 10.9 (clang.cfg and
 #   clang++.cfg), and its bare clang, given only the SDK, must link C with the toolchain's own ld64.lld (its
 #   default linker) and none of the flags a newer ld64 takes (its pinned host linker version):
 #   6.4.0-mavericks.8's clang ran the host's ld, with -no_deduplicate, which OS X 10.9's refuses. Nothing it
@@ -207,4 +208,13 @@ cp -R "$TC/." "$T/reloc/"
   || fail "a copied toolchain's clang does not name its own copy of the archive"
 "$T/reloc/bin/clang" -isysroot "$SDKROOT" "$T/rk.c" -o "$T/rk-reloc" || fail "a copied toolchain's clang could not link"
 rm -rf "$T/reloc"
+echo "-- build.sh's host shim over this toolchain: its clang and clang++ link no Recaulk, with the cfgs' other flags"
+# The runtime links its own hidden subset; the whole archive before -lSystem would bind its weak OS imports.
+native_host_shim "$TC" "$T/shim" || fail "native_host_shim failed on $TC"
+for d in clang clang++; do
+  line="$("$T/shim/usr/bin/$d" -isysroot "$SDKROOT" -### -dynamiclib "$T/rk-$d.o" -o "$T/rk-$d.dylib" 2>&1 | tail -1)"
+  case "$line" in *librecaulk*) fail "the shim's $d links Recaulk: $line" ;; esac
+  case "$line" in *'"-platform_version" "macos" "10.9.0"'*'"-U" "__availability_version_check"'*) ;;
+    *) fail "the shim's $d lost the cfg's -mmacosx-version-min=10.9 or -U: $line" ;; esac
+done
 echo "PASS"

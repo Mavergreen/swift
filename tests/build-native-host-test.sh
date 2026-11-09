@@ -297,9 +297,17 @@ grep -q '^PYTHON=.*stage-selftest-support.sh" "$ROOT/stdlib-build" "$ROOT/swift"
 SB="$R/swift/work/stdlib-build"
 grep -q '^archiver ' "$SB/mavergreen-inputs.stamp" \
   || fail "the stdlib-build's stamp does not record the archiver: $(cat "$SB/mavergreen-inputs.stamp")"
-# libcxx22's dylib and headers and the two Recaulk subsets (Core's, Concurrency's): four further inputs.
-[ "$(grep -c '^input ' "$SB/mavergreen-inputs.stamp")" -eq 4 ] \
-  || fail "the stdlib-build's stamp does not record libcxx22 and Recaulk: $(cat "$SB/mavergreen-inputs.stamp")"
+# libcxx22's dylib and headers and the two Recaulk subsets (Core's, Concurrency's), and the host shim's
+# clang and clang++ (scripts that keep the cfgs' Recaulk line from the runtime): six further inputs.
+[ "$(grep -c '^input ' "$SB/mavergreen-inputs.stamp")" -eq 6 ] \
+  || fail "the stdlib-build's stamp does not record libcxx22, Recaulk and the shim's clang: $(cat "$SB/mavergreen-inputs.stamp")"
+for f in clang clang++; do
+  grep -qx "input $(shasum -a 256 < "$R/swift/work/native-host/usr/bin/$f" | awk '{ print $1 }')" "$SB/mavergreen-inputs.stamp" \
+    || fail "the stdlib-build's stamp does not record the shim's $f: $(cat "$SB/mavergreen-inputs.stamp")"
+done
+# Its clang line is the toolchain's own clang, the binary the shim's scripts run, not a script.
+grep -qx "clang $(shasum -a 256 < "$H/bin/clang" | awk '{ print $1 }')" "$SB/mavergreen-inputs.stamp" \
+  || fail "the stdlib-build's stamp does not record the toolchain's clang: $(cat "$SB/mavergreen-inputs.stamp")"
 # The runtime patches applied, in order (lib.sh's source_stamp): a changed patch set starts it afresh.
 [ "$(sed -n 's/^patch swift \([0-9]*\)-[^ ]*\.patch [0-9a-f]\{64\}$/\1/p' "$SB/mavergreen-inputs.stamp" | tr '\n' ' ')" = "0004 0005 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016 " ] \
   || fail "the stdlib-build's stamp does not record the runtime patches: $(cat "$SB/mavergreen-inputs.stamp")"
