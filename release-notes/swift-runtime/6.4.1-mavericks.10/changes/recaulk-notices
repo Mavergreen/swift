@@ -1,1 +1,1 @@
-Both toolchains now link Recaulk into every program; a program calling openat or a similar call built from Apple's code carries its license notice, which its documentation should repeat.
+A program that itself declares and calls openat or a similar function built from Apple's code now carries its license notice, which its documentation should repeat; importing Darwin does not.

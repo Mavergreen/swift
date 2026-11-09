@@ -220,9 +220,10 @@ and libswift_Concurrency the APIs named above, under this license:
 Both toolchain packages also contain Recaulk's static library itself, unmodified:
 lib/recaulk/librecaulk.a (the release pinned in pins.env, under Recaulk's license
 above), with Recaulk's list of the notices its members need, lib/recaulk/notices.tsv.
-Their swiftc links it into every program and dylib it builds: a program takes only
-the members whose symbols it uses, for most programs only Recaulk's own (fma, fmal
-and truncl, which floating-point code calls), under Recaulk's license. Recaulk builds
+Their swiftc, clang and clang++ link it into every program and dylib they build: a
+program takes only the members whose symbols it uses, for most programs only
+Recaulk's own (fma, fmal and truncl, which floating-point code calls), under
+Recaulk's license. Recaulk builds
 its mp-*.o members from MacPorts' legacy-support library (the same commit as
 above), whose sources keep their own licenses:
 
