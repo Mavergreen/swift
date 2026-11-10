@@ -154,6 +154,10 @@ rm -f "$T/lld-ran"; mv "$RK" "$T/rk-away"; rc=0
 grep -qF "no Recaulk archive at $RK" "$T/err" || fail "a missing archive was not explained: $(cat "$T/err")"
 mv "$T/rk-away" "$RK"
 # A response file (-Xlinker @file) could hide the -lSystem the archive must precede: refused, never linked.
+# An @-path that names no file (an rpath's @executable_path) is no response file, to lld or here.
+got="$("$LD" x.o -rpath @executable_path/../lib -lSystem | tr '\n' ' ')"
+[ "$got" = "x.o -rpath @executable_path/../lib $RK -lSystem " ] || fail "an @executable_path rpath: $got"
+echo '-lSystem' > "$T/rsp"
 for line in "@$T/rsp" "x.o @$T/rsp -lSystem"; do
   rm -f "$T/lld-ran"; rc=0
   # shellcheck disable=SC2086  # the line's words, as the driver passes them

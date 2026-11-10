@@ -24,9 +24,10 @@ done
 PREFIX="$(CDPATH= cd -P -- "$(dirname "$self")/../.." && pwd -P)"
 RK="$PREFIX/lib/recaulk/librecaulk.a"
 # The driver passes no response file (its Darwin link uses -filelist); one from -Xlinker @file could hold
-# the -lSystem the archive must precede, and the program would link without Recaulk, silently.
+# the -lSystem the archive must precede, and the program would link without Recaulk, silently. lld reads
+# @<x> as a response file only when <x> is a file, so an rpath's @executable_path/... is left alone.
 for a do
-  case "$a" in @*) echo "ld: a response file (${a#@}) is not supported: it could hide the -lSystem Recaulk's archive must precede -- pass its arguments instead" >&2; exit 1 ;; esac
+  case "$a" in @*) [ -f "${a#@}" ] || continue; echo "ld: a response file (${a#@}) is not supported: it could hide the -lSystem Recaulk's archive must precede -- pass its arguments instead" >&2; exit 1 ;; esac
 done
 case " $* " in
   *" -lSystem "*)
