@@ -319,33 +319,32 @@ run the real-10.9 gate. It does: `vm-test`, a required check, installs each run'
 merges like any other, as the family's default has it.
 
 The gate is sized, so that upstream's tests can grow. `run-selftest.sh --gate` runs our own binaries
-500x plus 10x under Guard Malloc (28 with Release 2's concurrency_test and concurrency_isolation_test, and compiler patch 0005's concurrency_isolation_default_test) and
-upstream's, each included test at -O and -Onone and once per
-variant (`SELFTEST_UPSTREAM_RUNS`, default 20, plus 1 under Guard Malloc), after a `--loads` run. Release 2's
-lists include 7 Darwin, 2 ObjectiveC and 19 Concurrency tests (most of those built twice: lit runs them again in
-Swift 5 mode with NonisolatedNonsendingByDefault), 44 builds, 88 upstream binaries.
+500x plus 10x under Guard Malloc (28 of them) and upstream's, each included test at -O and -Onone and once per
+variant (`SELFTEST_UPSTREAM_RUNS`, default 20, plus 1 under Guard Malloc), after a `--loads` run. The lists
+include 12 Darwin and ObjectiveC tests and 61 Concurrency tests (most of those built twice: lit runs them again in
+Swift 5 mode with NonisolatedNonsendingByDefault), 124 builds, 248 upstream binaries, 276 with ours. 43 of those
+tests have their output checked with FileCheck, 160 of the binaries.
 
-Measured on the real box (ultimate-hat, 12 cores, shared: load 3 to 5.5): 1116 s for all 110 binaries, about
-157 s for ours and 958 s for upstream's. That run timed out one guarded run at the then-uniform 60 s, so
-upstream's runs now have their own limit, `SELFTEST_UPSTREAM_TIMEOUT`, 180 s. Every binary's slowest single run on
-the box: clock's Guard Malloc runs take 40 to 45 s (its unguarded runs 1.3 to 1.8 s), and
-cancellation_handler_concurrent's -Onone Guard Malloc run takes 65 s (100,000 tasks; 16 s at -O). Everything else
-is under 5 s, ours included. So 180 s is three to four times the box's worst. A hang still fails, three minutes
-later.
+Measured on the real box (ultimate-hat, 12 cores, shared: load 3 to 5.5): the whole `--gate`, 274 binaries,
+took 70 min 41 s and passed. Upstream's runs have their own limit, `SELFTEST_UPSTREAM_TIMEOUT`, 180 s. Every
+binary's slowest single run on the box: clock's Guard Malloc runs take 40 to 45 s (its unguarded runs 1.3 to
+1.8 s), and cancellation_handler_concurrent's -Onone Guard Malloc run takes 65 s (100,000 tasks; 16 s at -O).
+async_task_cancellation_while_running takes 13.1 s a run, asleep. Everything else is under 5 s, ours included. So
+180 s is three to four times the box's worst. A hang still fails, three minutes later.
 
-The VM estimate has to tell sleeping from computing, because a VM is no faster at sleeping. Two suites are
-sleep-bound: basic_future (4 binaries x 21 runs x 4.4 s, about 370 s) and clock's unguarded runs (4 x 20 x 1.55 s,
-about 125 s), so about 495 s. The rest is CPU-bound: about 465 s of upstream's and 157 s of ours. At Release 1's
-VM-to-box CPU ratio of 0.42 (run 40272925587), that rest takes about 260 s. The VM gate is then about 495 + 260
-= 755 s, 13 min, and at the box's own pace 19 min. Compiling in the VM is the larger cost: 114 binaries (26 of
-ours, 88 of upstream's) at a pessimistic 15 s each is 29 min. Install, compiles, gate and smoke total about an hour at the worst, so
-`vm-test`'s `timeout-minutes` stays 120, under GitHub's 360. 20 runs stay: 20 plus 1 under Guard Malloc is a
-short, deterministic-test budget, and halving it would save about 7 min on the box.
+The VM estimate has to tell sleeping from computing, because a VM is no faster at sleeping. Three suites are
+sleep-bound: basic_future (4 binaries x 21 runs x 4.4 s, about 370 s), clock's unguarded runs (4 x 20 x 1.55 s,
+about 125 s) and async_task_cancellation_while_running (4 x 21 x 13.1 s, about 1100 s), so about 1595 s. The rest
+is CPU-bound: 465 s of the original upstream tests', 157 s of ours and 1635 s of the 43 FileCheck tests' (their
+130 s a run, less 52 s of that sleeping, x 21), 2257 s. At Release 1's VM-to-box CPU ratio of 0.42 (run
+40272925587), that rest takes about 950 s. The VM gate is then about 1595 + 950 = 2545 s, 42 min, and at the
+box's own pace 71 min. Compiling in the VM is the larger cost: 276 binaries at a pessimistic 15 s each is 69 min.
+Install and smoke take about 18 min. Install, compiles, gate and smoke total about 129 min at the worst, so
+`vm-test`'s `timeout-minutes` is 260, twice that, under GitHub's 360. 20 runs stay: 20 plus 1 under Guard Malloc
+is a short, deterministic-test budget.
 
-The 120 minutes must be re-sized when the next excluded groups come in. Those are the 67 FileCheck tests (once
-output is checked), the 14 that set an environment variable, and the 7 that need the Dispatch overlay.
-Together that is about 90 tests and, most having two variants, up to about 330 binaries at -O and -Onone: some 80 min of compiles at 15 s each before
-their gate time, which would by itself pass today's budget.
+The 260 minutes must be re-sized when more tests come in: each added binary is 15 s of compiles plus its run
+time x 21.
 
 Owed: upstream tests the gate excludes because 10.9 or this release lacks something, each owed
 until its blocker goes (the reasons are in `tests/upstream/*.list`):
