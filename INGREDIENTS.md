@@ -338,8 +338,9 @@ about 125 s) and async_task_cancellation_while_running (4 x 21 x 13.1 s, about 1
 is CPU-bound: 465 s of the original upstream tests', 157 s of ours and 1635 s of the 43 FileCheck tests' (their
 130 s a run, less 52 s of that sleeping, x 21), 2257 s. At Release 1's VM-to-box CPU ratio of 0.42 (run
 40272925587), that rest takes about 950 s. The VM gate is then about 1595 + 950 = 2545 s, 42 min, and at the
-box's own pace 71 min. Compiling in the VM is the larger cost: 276 binaries at a pessimistic 15 s each is 69 min.
-Install and smoke take about 18 min. Install, compiles, gate and smoke total about 129 min at the worst, so
+box's own pace 64 min (the measured 71 min is wall time on a shared box). Compiling in the VM is the larger cost: 276 binaries at a pessimistic 15 s each is 69 min.
+Install and smoke are allowed 18 min, a pessimistic allowance (the old estimate's hour less its compiles and gate; the whole
+old vm-test measured about 31 min). Install, compiles, gate and smoke total about 129 min at the worst, so
 `vm-test`'s `timeout-minutes` is 260, twice that, under GitHub's 360. 20 runs stay: 20 plus 1 under Guard Malloc
 is a short, deterministic-test budget.
 
