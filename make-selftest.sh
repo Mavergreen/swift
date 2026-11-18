@@ -40,7 +40,10 @@
 #          `-I <dir>/modules -L <dir>/lib -Xlinker -rpath -Xlinker @executable_path/../../lib`, into
 #          upstream/bin/<layer>-<name> and <layer>-<name>-Onone, and each further variant of it (lit
 #          builds it again with other flags), <path>.<n>.args, into <layer>-<name>-v<n> and
-#          <layer>-<name>-v<n>-Onone; and <dir>/lib, the test-support dylibs,
+#          <layer>-<name>-v<n>-Onone; a variant with a <path>.check (<path>.<n>.check: `filecheck`, then
+#          FileCheck's options, one per line) also gets upstream/check/<layer>-<name>[-v<n>].args, those
+#          options, and .swift, the source FileCheck reads (for a .gyb, the .gyb, as lit's %s is that),
+#          one pair for both builds; and <dir>/lib, the test-support dylibs,
 #          is copied to the bundle's lib/, which that rpath reaches from upstream/bin/. The support
 #          modules are binary .swiftmodule files: the compiler here must be the release that built them.
 #          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, TC (toolchain usr/), DIST (output dir),
@@ -94,13 +97,14 @@ else
 fi
 
 # upstream_tests -- one line per upstream test variant of $SELFTEST_SUPPORT: <args file> <source> <binary
-# name>, sorted; fails, naming them, on two of one name (a test of one name in two directories of a layer).
+# name> <check file, or -> <check source, or ->, sorted; fails, naming them, on two of one name (a test of one name in two directories of a layer).
 upstream_tests() {
   find "$SELFTEST_SUPPORT/upstream" -name '*.args' | LC_ALL=C sort | while IFS= read -r _u_a; do
     _u_r="${_u_a#"$SELFTEST_SUPPORT/upstream/"}"; _u_s="${_u_a%.args}"; _u_v=""
     case "$_u_s" in *.[0-9]|*.[0-9][0-9]) _u_v="-v${_u_s##*.}"; _u_s="${_u_s%.*}" ;; esac
+    _u_c="${_u_a%.args}.check"; _u_k="$_u_s"; [ -f "$_u_c" ] || { _u_c=-; _u_k=-; }
     _u_s="${_u_s%.gyb}"
-    _u_n="${_u_s##*/}"; printf '%s %s %s-%s%s\n' "$_u_a" "$_u_s" "${_u_r%%/*}" "${_u_n%.swift}" "$_u_v"
+    _u_n="${_u_s##*/}"; printf '%s %s %s-%s%s %s %s\n' "$_u_a" "$_u_s" "${_u_r%%/*}" "${_u_n%.swift}" "$_u_v" "$_u_c" "$_u_k"
   done
 }
 if [ -n "${SELFTEST_SUPPORT:-}" ]; then
@@ -144,8 +148,12 @@ done
 [ -n "$(ls -A "$B/bin")" ] || { echo "make-selftest: nothing was built" >&2; exit 1; }
 if [ -n "${SELFTEST_SUPPORT:-}" ]; then
   mkdir -p "$B/upstream/bin" "$B/lib"; cp "$SELFTEST_SUPPORT"/lib/* "$B/lib/"
-  printf '%s\n' "$UPSTREAM" | while read -r args src n; do
+  printf '%s\n' "$UPSTREAM" | while read -r args src n check chksrc; do
     [ -n "$args" ] || continue
+    if [ "$check" != - ]; then
+      mkdir -p "$B/upstream/check"
+      sed 1d "$check" > "$B/upstream/check/$n.args"; cp "$chksrc" "$B/upstream/check/$n.swift"
+    fi
     # The compile-line, one argument per line (an availability macro holds spaces), becomes "$@".
     set --; while IFS= read -r a; do set -- "$@" "$a"; done < "$args"
     for o in O Onone; do

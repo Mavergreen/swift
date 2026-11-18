@@ -16,7 +16,10 @@
 #   at -O and -Onone, with its compile-line's arguments kept one apiece and the support modules and
 #   libraries searched, into upstream/bin/<layer>-<name>[-Onone], whose rpath reaches the bundle's lib/
 #   (a test's further variants, <path>.<n>.args, into <layer>-<name>-v<n>[-Onone]),
-#   where <dir>/lib is copied; two tests of one name, or a <dir> without lib/, are refused before anything
+#   where <dir>/lib is copied; a variant with a <path>.check (<path>.<n>.check) also gets
+#   upstream/check/<name>.args, its FileCheck options (the .check less its first line), and
+#   upstream/check/<name>.swift, the source FileCheck reads (for a .gyb, the .gyb itself), one for both
+#   -O and -Onone, named as the binary less -Onone; two tests of one name, or a <dir> without lib/, are refused before anything
 #   is compiled. Upstream's concurrency layer is built in SWIFTC= mode and skipped, saying so, in the default
 #   mode, whose swift.org compiler refuses its 10.9 async code. A fake compiler and fake install_name_tools
 #   record their calls.
@@ -150,6 +153,25 @@ for f in upstream/bin/darwin-Foo upstream/bin/darwin-Foo-Onone upstream/bin/darw
 done
 tarball="$(unset SWIFT_RUNTIME_PREFIX; PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" DIST="$T/dist" sh "$REPO/make-selftest.sh" | tail -1)"
 if tar -tzf "$tarball" | grep -q 'swift-runtime-selftest/upstream/\|swift-runtime-selftest/lib/'; then fail "a bundle without SELFTEST_SUPPORT has upstream/ or lib/"; fi
+
+echo "-- SELFTEST_SUPPORT: variant check names -- a variant's .check becomes upstream/check/<name>.args and .swift"
+CK="$SUP/upstream/concurrency/test/Concurrency"; mkdir -p "$CK"
+printf '%s\n' '// FC source' > "$CK/FC.swift"
+printf '%s\n' -swift-version 5 > "$CK/FC.swift.args"; printf '%s\n' -swift-version 6 > "$CK/FC.swift.2.args"
+printf '%s\n' filecheck --dump-input=always > "$CK/FC.swift.check"; printf '%s\n' filecheck --dump-input always > "$CK/FC.swift.2.check"
+printf '%s\n' '// gyb source' > "$CK/G.swift.gyb"; printf '%s\n' '// gyb output' > "$CK/G.swift"
+printf '%s\n' -swift-version 5 > "$CK/G.swift.gyb.args"; printf '%s\n' filecheck --check-prefix=X > "$CK/G.swift.gyb.check"
+tarball="$(unset SWIFT_RUNTIME_PREFIX; PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" SELFTEST_SUPPORT="$SUP" DIST="$T/dist" sh "$REPO/make-selftest.sh" | tail -1)"
+tar -xzf "$tarball" -C "$T/dist"; K="$T/dist/swift-runtime-selftest/upstream/check"
+[ "$(cat "$K/concurrency-FC.args")" = --dump-input=always ] || fail "concurrency-FC.args: $(cat "$K/concurrency-FC.args" 2>&1)"
+[ "$(cat "$K/concurrency-FC-v2.args")" = "--dump-input
+always" ] || fail "concurrency-FC-v2.args: $(cat "$K/concurrency-FC-v2.args" 2>&1)"
+cmp -s "$K/concurrency-FC.swift" "$CK/FC.swift" && cmp -s "$K/concurrency-FC-v2.swift" "$CK/FC.swift" || fail "FC's check source is not FC.swift: $(ls "$K")"
+[ "$(cat "$K/concurrency-G.args")" = --check-prefix=X ] || fail "concurrency-G.args: $(cat "$K/concurrency-G.args" 2>&1)"
+cmp -s "$K/concurrency-G.swift" "$CK/G.swift.gyb" || fail "a gyb test's check source is not its .gyb: $(ls "$K")"
+[ -z "$(ls "$K" | grep Onone || :)" ] || fail "a check for an -Onone twin: $(ls "$K")"
+[ ! -e "$K/concurrency-Baz.args" ] || fail "a check for a test with no .check"
+rm -r "$CK"
 
 echo "-- SELFTEST_SUPPORT: upstream's concurrency tests are built by SWIFTC= (this repo's compiler), and skipped,"
 echo "   saying why, by the default mode's swift.org compiler, which refuses their 10.9 async code"

@@ -12,6 +12,9 @@
 #            upstream/<layer>/<path>.args  its compile-line (scripts/upstream-tests.py), one argument per line
 #            upstream/<layer>/<path>.<n>.args  the compile-line of its variant n, from 2 up, where lit builds
 #                                          it more than once (upstream-tests.py variants)
+#            upstream/<layer>/<path>.check  (<path>.<n>.check)  where that variant's RUN step pipes to FileCheck:
+#                                          upstream-tests.py check-line's output, `filecheck` and then FileCheck's
+#                                          options, one per line; a variant with no pipe has no file
 #          The modules are binary .swiftmodule files, which only the compiler that wrote them reads: the one
 #          that built this release's stdlib. In CI that is the same run's cross toolchain (build-cross), the
 #          same Swift and the same release as the native toolchain vm-test installs and builds the bundle
@@ -58,6 +61,9 @@ for list in "$@"; do
       a="$d.args"; [ "$v" = 1 ] || a="$d.$v.args"
       "$PY" -I "$HERE/scripts/upstream-tests.py" compile-line "$TREE" "$p" "$v" > "$a" \
         || { echo "stage-selftest-support.sh: no compile-line for $p's variant $v" >&2; exit 1; }
+      "$PY" -I "$HERE/scripts/upstream-tests.py" check-line "$TREE" "$p" "$v" > "${a%.args}.check" \
+        || { echo "stage-selftest-support.sh: no check-line for $p's variant $v" >&2; exit 1; }
+      [ -s "${a%.args}.check" ] || rm -f "${a%.args}.check"
       v=$((v + 1))
     done
     n=$((n + 1)); builds=$((builds + nv))

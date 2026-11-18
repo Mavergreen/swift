@@ -5,7 +5,8 @@
 #   includes is copied to upstream/<layer>/<path> beside its compile-line, <path>.args, and each further
 #   variant's (scripts/upstream-tests.py variants), <path>.<n>.args, which make-selftest.sh builds into
 #   <layer>-<name>-v<n>; a test with one variant has no numbered file; the support dylibs and modules land in
-#   lib/ and modules/; a list that does not match the tree stages nothing.
+#   lib/ and modules/; a variant whose RUN step pipes to FileCheck also has <path>.check (<path>.<n>.check),
+#   upstream-tests.py check-line's output, and one that does not has none; a list that does not match the tree stages nothing.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -25,8 +26,10 @@ printf '%s\n' '// RUN: %target-run-simple-swift(-parse-as-library)' \
   '// REQUIRES: concurrency' 'import _Concurrency' > "$R/test/Concurrency/Runtime/Two.swift"
 printf '%s\n' '// RUN: %target-run-simple-swift' '// REQUIRES: concurrency' 'import _Concurrency' > "$R/test/Concurrency/Runtime/One.swift"
 printf '%s\n' '// RUN: %target-run-simple-swift | %FileCheck %s' 'import _Concurrency' > "$R/test/Concurrency/Runtime/Checked.swift"
+printf '%s\n' '// RUN: %target-run-simple-swift | %FileCheck %s --dump-input=always' \
+  '// RUN: %target-run-simple-swift(-swift-version 5) | %FileCheck %s --dump-input always' 'import _Concurrency' > "$R/test/Concurrency/Runtime/FC.swift"
 printf '%s\n' 'exclude test/Concurrency/Runtime/Checked.swift -- needs FileCheck' 'include test/Concurrency/Runtime/One.swift' \
-  'include test/Concurrency/Runtime/Two.swift' > "$T/lists/concurrency.list"
+  'include test/Concurrency/Runtime/Two.swift' 'include test/Concurrency/Runtime/FC.swift' > "$T/lists/concurrency.list"
 O="$T/out"
 sh "$REPO/scripts/stage-selftest-support.sh" "$SB" "$R" "$T/lists" "$O" > "$T/log" 2>&1 || fail "staging failed: $(cat "$T/log")"
 U="$O/upstream/concurrency/test/Concurrency/Runtime"
@@ -39,10 +42,14 @@ cl Two.swift 2 | cmp -s - "$U/Two.swift.2.args" || fail "Two.swift.2.args is not
 grep -qx 'NonisolatedNonsendingByDefault' "$U/Two.swift.2.args" || fail "variant 2 lacks its own flags: $(cat "$U/Two.swift.2.args")"
 if grep -qx 'NonisolatedNonsendingByDefault' "$U/Two.swift.args"; then fail "variant 1 has variant 2's flags"; fi
 cl One.swift 1 | cmp -s - "$U/One.swift.args" || fail "One.swift.args is not its compile-line"
+[ -f "$U/FC.swift.check" ] && [ -f "$U/FC.swift.2.check" ] || fail "no FC.swift's .check files: $(find "$O")"
+printf '%s\n' filecheck --dump-input=always | cmp -s - "$U/FC.swift.check" || fail "FC.swift.check is not variant 1's check-line: $(cat "$U/FC.swift.check")"
+printf '%s\n' filecheck --dump-input always | cmp -s - "$U/FC.swift.2.check" || fail "FC.swift.2.check is not variant 2's check-line: $(cat "$U/FC.swift.2.check")"
+[ -z "$(find "$U" -name '*.check' ! -name 'FC.*')" ] || fail "a .check for a test that pipes nothing: $(find "$U" -name '*.check')"
 for m in SwiftPrivate StdlibUnittest; do
   [ -f "$O/lib/libswift$m.dylib" ] && [ -d "$O/modules/$m.swiftmodule" ] || fail "no $m in lib/ or modules/: $(find "$O")"
 done
-grep -q 'and 2 upstream tests (3 builds)' "$T/log" || fail "did not count the tests and their builds: $(cat "$T/log")"
+grep -q 'and 3 upstream tests (5 builds)' "$T/log" || fail "did not count the tests and their builds: $(cat "$T/log")"
 
 echo "-- a list that does not match the tree stages nothing"
 sed '/One.swift/d' "$T/lists/concurrency.list" > "$T/l2" && mkdir -p "$T/lists2" && mv "$T/l2" "$T/lists2/concurrency.list"
