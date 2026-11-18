@@ -61,6 +61,9 @@ t test/stdlib/FCIR.swift '// RUN: %target-build-swift -emit-ir %s | %FileCheck -
 t test/stdlib/FCBuildOut.swift '// RUN: %target-build-swift %s -o %t/a.out | %FileCheck %s' 'import Darwin'
 t test/stdlib/FCOther.swift '// RUN: %target-run-simple-swift | %FileCheck %S/Inputs/x.swift' 'import Darwin'
 t test/stdlib/FCNone.swift '// RUN: %target-run-simple-swift | %FileCheck' 'import Darwin'
+t test/stdlib/FCGyb.swift.gyb '// RUN: %gyb %s -o %t/G.swift | %FileCheck %s' '// RUN: %target-run-simple-swift' 'import Darwin'
+t test/stdlib/FCEmptyDir.swift '// RUN: %empty-directory(%t) | %FileCheck %s' '// RUN: %target-run-simple-swift' 'import Darwin'
+t test/stdlib/FCNoStep.swift '// RUN: | %FileCheck %s' '// RUN: %target-run-simple-swift' 'import Darwin'
 t test/stdlib/FCGrep.swift '// RUN: %target-run-simple-swift | grep x' 'import Darwin'
 t test/stdlib/FCTwice.swift '// RUN: %target-run-simple-swift | %FileCheck %s | %FileCheck %s' 'import Darwin'
 t test/stdlib/FCPrefixBad.swift '// RUN: %target-run-simple-swift | %FileCheck %s --check-prefix=a$b' 'import Darwin'
@@ -124,7 +127,7 @@ printf '%s\n' test/stdlib/Args.swift test/stdlib/Built.swift test/stdlib/Checked
   test/stdlib/FCPrefix.swift test/stdlib/FCPrefixes.swift test/stdlib/FCBuilt.swift test/stdlib/FCLine.swift.gyb \
   test/stdlib/FCOpt.swift test/stdlib/FCDump.swift test/stdlib/FCMerge.swift test/stdlib/FCMergeBuilt.swift \
   test/stdlib/FCIR.swift test/stdlib/FCBuildOut.swift test/stdlib/FCOther.swift test/stdlib/FCNone.swift \
-  test/stdlib/FCGrep.swift test/stdlib/FCTwice.swift test/stdlib/FCPrefixBad.swift | LC_ALL=C sort > "$T/d.want"
+  test/stdlib/FCGrep.swift test/stdlib/FCGyb.swift.gyb test/stdlib/FCEmptyDir.swift test/stdlib/FCNoStep.swift test/stdlib/FCTwice.swift test/stdlib/FCPrefixBad.swift | LC_ALL=C sort > "$T/d.want"
 printf '%s\n' test/Concurrency/Runtime/Objc.swift test/stdlib/Runtime.swift validation-test/stdlib/Both.swift > "$T/o.want"
 diff "$T/d.want" "$T/d" > "$T/diff" || fail "survey darwin: $(cat "$T/diff")"
 diff "$T/o.want" "$T/o" > "$T/diff" || fail "survey objectivec: $(cat "$T/diff")"
@@ -316,7 +319,6 @@ chk test/stdlib/FCPrefixes.swift "" 'filecheck
 chk test/stdlib/Checked.swift "" 'filecheck'
 chk test/stdlib/FCBuilt.swift "" 'filecheck'
 chk test/stdlib/FCLine.swift.gyb "" 'filecheck'
-# no pipe: no output at all, so "no check" differs from "check with no options"
 ut check-line "$R" test/stdlib/Simple.swift > "$T/ck" 2> "$T/err" || fail "check-line refused Simple.swift: $(cat "$T/err")"
 [ ! -s "$T/ck" ] || fail "check-line printed for a test with no FileCheck pipe: $(cat "$T/ck")"
 ut check-line "$R" test/stdlib/Built.swift > "$T/ck" 2> "$T/err" || fail "check-line refused Built.swift"
@@ -342,6 +344,9 @@ fcrefuse test/stdlib/FCIR.swift "checks the compiler's IR output"
 fcrefuse test/stdlib/FCBuildOut.swift "checks the compiler's output"
 fcrefuse test/stdlib/FCOther.swift 'FileCheck reads a file other than the test'
 fcrefuse test/stdlib/FCNone.swift 'FileCheck reads no test file'
+fcrefuse test/stdlib/FCGyb.swift.gyb 'RUN pipes %gyb into FileCheck'
+fcrefuse test/stdlib/FCEmptyDir.swift 'RUN pipes %empty-directory(%t) into FileCheck'
+fcrefuse test/stdlib/FCNoStep.swift 'RUN pipes no command into FileCheck'
 fcrefuse test/stdlib/FCGrep.swift 'RUN pipes into grep'
 fcrefuse test/stdlib/FCTwice.swift 'RUN pipes more than once'
 echo "PASS"

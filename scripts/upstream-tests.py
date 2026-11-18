@@ -386,6 +386,14 @@ def variants_of(tree, path):
         m = re.match(r"^%line-directive\s+\S+\s+--\s+(.*)$", c)
         if m:
             c = m.group(1).strip()
+        if not c:
+            raise Refused("RUN pipes no command into FileCheck")
+        if tail is not None and not (SIMPLE.match(c) or re.match(r"%target-run(\s|$)", c)):
+            w0 = split(c)[0]
+            if w0 == "%target-build-swift":
+                raise Refused("RUN's FileCheck checks the compiler's %s, which runs no code on 10.9" %
+                              ("IR output" if "-emit-ir" in split(c) else "output"))
+            raise Refused("RUN pipes %s into FileCheck, which runs no code on 10.9" % w0)
         m = SIMPLE.match(c)
         if m:
             rest = c[m.end():]
@@ -418,11 +426,6 @@ def variants_of(tree, path):
             gyb_out = m.group(1)
             continue
         w = split(c)
-        if tail is not None and w[0] != "%target-run":
-            if w[0] == "%target-build-swift":
-                raise Refused("RUN's FileCheck checks the compiler's %s, which runs no code on 10.9" %
-                              ("IR output" if "-emit-ir" in w else "output"))
-            raise Refused("RUN pipes %s into FileCheck, which runs no code on 10.9" % w[0])
         if w[0] == "%target-typecheck-verify-swift":
             verify = True
             continue
