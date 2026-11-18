@@ -8,7 +8,8 @@
 #   RUN: line. check must pass a list naming every candidate
 #   once (include, or exclude with a reason), and fail on a missing candidate, a duplicate, a stray path, an
 #   exclude without a reason, an unknown verb, and an include whose compile-line refuses. compile-line must
-#   translate each RUN form it knows into swiftc arguments, one per line, and refuse FileCheck, an unknown
+#   translate each RUN form it knows into swiftc arguments, one per line, accept a pipe into FileCheck (check-line prints its
+#   options), and refuse a FileCheck option off its allowlist, one that merges stderr or reads the compiler's IR, an unknown
 #   substitution, arguments or input handed to the test, and more than one executable step but for several
 #   %target-run-simple-* lines, each its own variant (variants counts them; compile-line <n> prints the nth).
 #   REQUIRES:/UNSUPPORTED: are lit's, comma lists included, against lit's default configuration (the
@@ -42,6 +43,27 @@ t test/stdlib/GybBuilt.swift.gyb '// RUN: %empty-directory(%t)' '// RUN: %gyb %s
   '// RUN: %line-directive %t/G.swift -- %target-run %t/a.out' 'import Darwin'
 t test/stdlib/Continued.swift '// RUN: %target-run-simple-swift( \' '// RUN:   -parse-as-library)' 'import Darwin'
 t test/stdlib/Checked.swift '// RUN: %target-run-simple-swift | %FileCheck %s' 'import Darwin'
+t test/Concurrency/Runtime/FC.swift '// RUN: %target-run-simple-swift(-parse-as-library) | %FileCheck %s --dump-input=always' \
+  '// RUN: %target-run-simple-swift(-parse-as-library -swift-version 5) | %FileCheck %s --dump-input always'
+t test/stdlib/FCPrefix.swift '// RUN: %target-run-simple-swift | %FileCheck --check-prefix=CHECK-A %s' 'import Darwin'
+t test/stdlib/FCPrefixes.swift '// RUN: %target-run-simple-swift | %FileCheck %s --check-prefixes=A,B -check-prefix=%target-cpu' 'import Darwin'
+t test/stdlib/FCBuilt.swift '// RUN: %empty-directory(%t)' '// RUN: %target-build-swift %s -o %t/a.out' '// RUN: %target-codesign %t/a.out' \
+  '// RUN: %target-run %t/a.out | %FileCheck %s' 'import Darwin'
+t test/stdlib/FCLine.swift.gyb '// RUN: %empty-directory(%t)' '// RUN: %gyb %s -o %t/G.swift' \
+  '// RUN: %line-directive %t/G.swift -- %target-build-swift %t/G.swift -o %t/a.out' '// RUN: %target-codesign %t/a.out' \
+  '// RUN: %line-directive %t/G.swift -- %target-run %t/a.out | %FileCheck %s' 'import Darwin'
+t test/stdlib/FCOpt.swift '// RUN: %target-run-simple-swift | %FileCheck %s --implicit-check-not=x' 'import Darwin'
+t test/stdlib/FCDump.swift '// RUN: %target-run-simple-swift | %FileCheck %s --dump-input=fail' 'import Darwin'
+t test/stdlib/FCMerge.swift '// RUN: %target-run-simple-swift 2>&1 | %FileCheck %s' 'import Darwin'
+t test/stdlib/FCMergeBuilt.swift '// RUN: %empty-directory(%t)' '// RUN: %target-build-swift %s -o %t/a.out' \
+  '// RUN: %target-run %t/a.out 2>&1 | %FileCheck %s' 'import Darwin'
+t test/stdlib/FCIR.swift '// RUN: %target-build-swift -emit-ir %s | %FileCheck -check-prefix=%target-cpu %s' 'import Darwin'
+t test/stdlib/FCBuildOut.swift '// RUN: %target-build-swift %s -o %t/a.out | %FileCheck %s' 'import Darwin'
+t test/stdlib/FCOther.swift '// RUN: %target-run-simple-swift | %FileCheck %S/Inputs/x.swift' 'import Darwin'
+t test/stdlib/FCNone.swift '// RUN: %target-run-simple-swift | %FileCheck' 'import Darwin'
+t test/stdlib/FCGrep.swift '// RUN: %target-run-simple-swift | grep x' 'import Darwin'
+t test/stdlib/FCTwice.swift '// RUN: %target-run-simple-swift | %FileCheck %s | %FileCheck %s' 'import Darwin'
+t test/stdlib/FCPrefixBad.swift '// RUN: %target-run-simple-swift | %FileCheck %s --check-prefix=a$b' 'import Darwin'
 t test/stdlib/Unknown.swift '// RUN: %target-run-simple-swift(%some-substitution)' 'import Darwin'
 t test/stdlib/Args.swift '// RUN: %target-run-simple-swift %t' 'import Darwin'
 t test/stdlib/Stdin.swift '// RUN: %empty-directory(%t)' '// RUN: %target-build-swift %s -o %t/a.out' \
@@ -98,12 +120,16 @@ ut survey "$R" concurrency > "$T/c" || fail "survey concurrency failed"
 printf '%s\n' test/stdlib/Args.swift test/stdlib/Built.swift test/stdlib/Checked.swift test/stdlib/Continued.swift \
   test/stdlib/Flags.swift test/stdlib/GybBuilt.swift.gyb test/stdlib/Gybbed.swift.gyb test/stdlib/Simple.swift \
   test/stdlib/Stdin.swift test/stdlib/Triple.swift test/stdlib/Twice.swift test/stdlib/Unknown.swift \
-  test/stdlib/Verify.swift test/stdlib/tgmath.swift validation-test/stdlib/Both.swift > "$T/d.want"
+  test/stdlib/Verify.swift test/stdlib/tgmath.swift validation-test/stdlib/Both.swift \
+  test/stdlib/FCPrefix.swift test/stdlib/FCPrefixes.swift test/stdlib/FCBuilt.swift test/stdlib/FCLine.swift.gyb \
+  test/stdlib/FCOpt.swift test/stdlib/FCDump.swift test/stdlib/FCMerge.swift test/stdlib/FCMergeBuilt.swift \
+  test/stdlib/FCIR.swift test/stdlib/FCBuildOut.swift test/stdlib/FCOther.swift test/stdlib/FCNone.swift \
+  test/stdlib/FCGrep.swift test/stdlib/FCTwice.swift test/stdlib/FCPrefixBad.swift | LC_ALL=C sort > "$T/d.want"
 printf '%s\n' test/Concurrency/Runtime/Objc.swift test/stdlib/Runtime.swift validation-test/stdlib/Both.swift > "$T/o.want"
 diff "$T/d.want" "$T/d" > "$T/diff" || fail "survey darwin: $(cat "$T/diff")"
 diff "$T/o.want" "$T/o" > "$T/diff" || fail "survey objectivec: $(cat "$T/diff")"
-printf '%s\n' test/Concurrency/Runtime/Conc.swift test/Concurrency/Runtime/Objc.swift test/stdlib/ConcReq.swift \
-  test/stdlib/ReqComma.swift > "$T/c.want"
+printf '%s\n' test/Concurrency/Runtime/Conc.swift test/Concurrency/Runtime/FC.swift test/Concurrency/Runtime/Objc.swift \
+  test/stdlib/ConcReq.swift test/stdlib/ReqComma.swift > "$T/c.want"
 diff "$T/c.want" "$T/c" > "$T/diff" || fail "survey concurrency: $(cat "$T/diff")"
 if ut survey "$R" nosuchlayer > /dev/null 2>&1; then fail "survey accepted an unknown layer"; fi
 
@@ -126,9 +152,9 @@ include test/stdlib/Simple.swift' 'test/stdlib/Simple.swift: not a objectivec ca
 bad "an exclude has no reason" 's/ -- needs Foundation.*//' 'test/stdlib/Runtime.swift: an exclude needs " -- <reason>"'
 bad "an exclude has an empty reason" 's/ -- needs Foundation.*/ -- /' 'test/stdlib/Runtime.swift: an exclude needs " -- <reason>"'
 bad "a verb is unknown" 's/^include validation/skip validation/' "unknown line"
-{ echo 'include test/stdlib/Checked.swift'; ut survey "$R" darwin | grep -v Checked | sed 's/$/ -- fixture/; s/^/exclude /'; } > "$T/d.list"
+{ echo 'include test/stdlib/Args.swift'; ut survey "$R" darwin | grep -v Args | sed 's/$/ -- fixture/; s/^/exclude /'; } > "$T/d.list"
 if ut check "$R" darwin "$T/d.list" > "$T/out" 2>&1; then fail "check passed an include whose compile-line refuses"; fi
-grep -q 'test/stdlib/Checked.swift: an include whose compile-line refuses: needs FileCheck' "$T/out" || fail "check did not name the refusal: $(cat "$T/out")"
+grep -q 'test/stdlib/Args.swift: an include whose compile-line refuses: RUN hands the test arguments' "$T/out" || fail "check did not name the refusal: $(cat "$T/out")"
 
 echo "-- compile-line: the forms it knows"
 AV='-Xfrontend
@@ -242,14 +268,13 @@ for v in x 0 3; do
   if ut compile-line "$R" test/stdlib/Twice.swift "$v" > "$T/cl" 2> "$T/err"; then fail "compile-line printed variant $v of 2: $(cat "$T/cl")"; fi
 done
 grep -q 'has 2 variants' "$T/err" || fail "compile-line did not say how many variants there are: $(cat "$T/err")"
-if ut variants "$R" test/stdlib/Checked.swift > /dev/null 2>&1; then fail "variants counted a test whose compile-line refuses"; fi
+if ut variants "$R" test/stdlib/Args.swift > /dev/null 2>&1; then fail "variants counted a test whose compile-line refuses"; fi
 
 echo "-- compile-line: what it refuses, and why"
 refuse() {  # refuse <path> <expected message>
   if ut compile-line "$R" "$1" > "$T/cl" 2> "$T/err"; then fail "compile-line translated $1: $(cat "$T/cl")"; fi
   grep -q -- "$2" "$T/err" || fail "compile-line $1: wanted '$2', got: $(cat "$T/err")"
 }
-refuse test/stdlib/Checked.swift 'needs FileCheck, which no 10.9 pkg ships'
 refuse test/stdlib/Unknown.swift 'RUN uses %some-substitution'
 refuse test/stdlib/Args.swift 'RUN hands the test arguments'
 refuse test/stdlib/Stdin.swift 'RUN redirects the test'
@@ -270,4 +295,53 @@ refuse test/stdlib/UnsMac.swift 'UNSUPPORTED: OS=macosx holds on 10.9'
 refuse test/stdlib/UnsNeg.swift 'holds on 10.9'
 refuse test/stdlib/ReqBad.swift 'does not parse'
 refuse test/stdlib/TripleFuture.swift 'RUN uses %target-swift-9999-abi-triple, which names no macOS release'
+echo "-- check-line: a variant's FileCheck pipe, option by option (nothing at all when it has none)"
+chk() {  # chk <path> <variant> <expected output, one line per argument>
+  ut check-line "$R" "$1" ${2:+"$2"} > "$T/ck" 2> "$T/err" || fail "check-line refused $1 ${2:-}: $(cat "$T/err")"
+  printf '%s\n' "$3" > "$T/want"
+  diff "$T/want" "$T/ck" > "$T/diff" || fail "check-line $1 ${2:-}: $(cat "$T/diff")"
+}
+chk test/Concurrency/Runtime/FC.swift 1 'filecheck
+--dump-input=always'
+chk test/Concurrency/Runtime/FC.swift 2 'filecheck
+--dump-input
+always'
+[ "$(ut variants "$R" test/Concurrency/Runtime/FC.swift)" = 2 ] || fail "variants of FC.swift"
+ut compile-line "$R" test/Concurrency/Runtime/FC.swift 1 | grep -qx -- '-parse-as-library' || fail "compile-line of FC.swift lost -parse-as-library"
+chk test/stdlib/FCPrefix.swift "" 'filecheck
+--check-prefix=CHECK-A'
+chk test/stdlib/FCPrefixes.swift "" 'filecheck
+--check-prefixes=A,B
+-check-prefix=x86_64'
+chk test/stdlib/Checked.swift "" 'filecheck'
+chk test/stdlib/FCBuilt.swift "" 'filecheck'
+chk test/stdlib/FCLine.swift.gyb "" 'filecheck'
+# no pipe: no output at all, so "no check" differs from "check with no options"
+ut check-line "$R" test/stdlib/Simple.swift > "$T/ck" 2> "$T/err" || fail "check-line refused Simple.swift: $(cat "$T/err")"
+[ ! -s "$T/ck" ] || fail "check-line printed for a test with no FileCheck pipe: $(cat "$T/ck")"
+ut check-line "$R" test/stdlib/Built.swift > "$T/ck" 2> "$T/err" || fail "check-line refused Built.swift"
+[ ! -s "$T/ck" ] || fail "check-line printed for a built test with no FileCheck pipe"
+ut compile-line "$R" test/stdlib/FCPrefix.swift > /dev/null 2> "$T/err" || fail "compile-line refused a FileCheck pipe: $(cat "$T/err")"
+[ "$(ut variants "$R" test/stdlib/Checked.swift)" = 1 ] || fail "variants of Checked.swift"
+if ut check-line "$R" test/stdlib/Twice.swift 3 > "$T/ck" 2> "$T/err"; then fail "check-line printed variant 3 of 2"; fi
+grep -q 'has 2 variants' "$T/err" || fail "check-line did not say how many variants there are: $(cat "$T/err")"
+if ut check-line "$R" test/stdlib/Twice.swift x > "$T/ck" 2> "$T/err"; then fail "check-line took a variant x"; fi
+
+echo "-- FileCheck: what both compile-line and check-line refuse, and why"
+fcrefuse() {  # fcrefuse <path> <expected message>
+  refuse "$1" "$2"
+  if ut check-line "$R" "$1" > "$T/ck" 2> "$T/err"; then fail "check-line accepted $1: $(cat "$T/ck")"; fi
+  grep -q -- "$2" "$T/err" || fail "check-line $1: wanted '$2', got: $(cat "$T/err")"
+}
+fcrefuse test/stdlib/FCOpt.swift 'FileCheck option --implicit-check-not=x'
+fcrefuse test/stdlib/FCDump.swift 'FileCheck option --dump-input=fail'
+fcrefuse test/stdlib/FCPrefixBad.swift 'FileCheck option --check-prefix=a$b'
+fcrefuse test/stdlib/FCMerge.swift "merges the test's stderr"
+fcrefuse test/stdlib/FCMergeBuilt.swift "merges the test's stderr"
+fcrefuse test/stdlib/FCIR.swift "checks the compiler's IR output"
+fcrefuse test/stdlib/FCBuildOut.swift "checks the compiler's output"
+fcrefuse test/stdlib/FCOther.swift 'FileCheck reads a file other than the test'
+fcrefuse test/stdlib/FCNone.swift 'FileCheck reads no test file'
+fcrefuse test/stdlib/FCGrep.swift 'RUN pipes into grep'
+fcrefuse test/stdlib/FCTwice.swift 'RUN pipes more than once'
 echo "PASS"

@@ -4,6 +4,7 @@
 #          upstream-tests.py check <tree> <layer> <list>
 #          upstream-tests.py variants <tree> <path>
 #          upstream-tests.py compile-line <tree> <path> [<variant>]
+#          upstream-tests.py check-line <tree> <path> [<variant>]
 #          Upstream Swift's own tests for a layer of the API stack, as the 10.9 gate runs them (spec: "Upstream
 #          tests"; the spike's 50-survey-tests.py, productized). <tree> is the pinned swift source; <layer> is
 #          darwin, objectivec or concurrency.
@@ -42,7 +43,7 @@
 #                          swift-corelibs-libdispatch). Beside an executable step it passes over a
 #                          %target-typecheck-verify-swift step: that runs no code, only the compiler's
 #                          diagnostics on the build host, which no 10.9 run can add to. It refuses,
-#                          saying why, anything else: FileCheck (no 10.9 pkg ships it), another substitution,
+#                          saying why, anything else: another substitution,
 #                          another command (env among them: the gate sets no variable), arguments or input
 #                          or a redirection handed to the test (but for upstream's stray
 #                          -strict-concurrency=complete, which the test ignores), more than one executable
@@ -50,7 +51,19 @@
 #                          compiler flag outside an explicit allowlist (PLAIN_FLAGS, VALUED_FLAGS), a
 #                          REQUIRES: that does not hold on 10.9 or an UNSUPPORTED: that does (FEATURES, each
 #                          comma-separated term as lit reads it); so the list must exclude that test.
-#          Exit 0, 1 (check failed, or compile-line refused), 2 usage.
+#                          An executable step may pipe into `%FileCheck %s` (check-line prints what it checks
+#                          with); the pipe is no argument or redirection handed to the test. The tail is
+#                          refused, saying why, unless its options are --dump-input=always (or --dump-input
+#                          always), --check-prefix=<P> (or -check-prefix=<P>) and --check-prefixes=<P,...>,
+#                          with %target-cpu as x86_64, and its one check file is %s; so are a step whose
+#                          stderr is merged into the pipe (2>&1), a build piped into it (it would check the
+#                          compiler's output, IR with -emit-ir: no code runs on 10.9) and a pipe into
+#                          anything but FileCheck.
+#            check-line    prints, for the same <variant>, `filecheck` and then the FileCheck options of that
+#                          variant's RUN step, one per line, less the check file (%s: the caller appends the
+#                          source); nothing, and exit 0, when the step has no FileCheck pipe, so "no check"
+#                          and "check with no options" differ. Refuses as compile-line does.
+#          Exit 0, 1 (check failed, or compile-line or check-line refused), 2 usage.
 import os
 import re
 import shlex
@@ -287,6 +300,62 @@ def split(s):
         raise Refused("RUN does not parse (%s)" % e)
 
 
+def split_pipe(c):
+    """c cut at its top-level | (outside quotes and parentheses; || is no pipe): (step, FileCheck tail or None)."""
+    quote, depth, cuts = None, 0, []
+    for i, ch in enumerate(c):
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "|" and depth == 0 and c[i - 1:i] != "|" and c[i + 1:i + 2] != "|":
+            cuts.append(i)
+    if not cuts:
+        return c.strip(), None
+    if len(cuts) > 1:
+        raise Refused("RUN pipes more than once")
+    return c[:cuts[0]].strip(), c[cuts[0] + 1:].strip()
+
+
+# platform: FileCheck's own option spellings (llvm FileCheck --help; it takes -x and --x alike). The allowlist:
+# no option beyond these is known to be what a gate test needs.
+PREFIX = r"[A-Za-z][A-Za-z0-9_-]*"
+
+
+def check_args(tail):
+    """The options of a `%FileCheck <opts> %s` tail, as the box passes them (%target-cpu is x86_64)."""
+    w = split(tail)
+    if not w or w[0] != "%FileCheck":
+        raise Refused("RUN pipes into %s" % (w[0] if w else "nothing"))
+    opts, files, i = [], [], 1
+    while i < len(w):
+        a = w[i]
+        a = a.replace("%target-cpu", "x86_64")
+        if a == "--dump-input" and i + 1 < len(w) and w[i + 1] == "always":
+            opts += [a, "always"]
+            i += 1
+        elif a == "--dump-input=always":
+            opts.append(a)
+        elif re.fullmatch(r"--?check-prefix=%s" % PREFIX, a):
+            opts.append(a)
+        elif re.fullmatch(r"--check-prefixes=%s(,%s)*" % (PREFIX, PREFIX), a):
+            opts.append(a)
+        elif a.startswith("-"):
+            raise Refused("RUN uses the FileCheck option %s, which no included test is known to need" % a)
+        else:
+            files.append(a)
+        i += 1
+    if not files:
+        raise Refused("RUN's FileCheck reads no test file")
+    if files != ["%s"]:
+        raise Refused("RUN's FileCheck reads a file other than the test (%s)" % " ".join(files))
+    return opts
+
+
 REDIRECT = re.compile(r"^(\||<|>|[0-9]>|&>|2>&1)")
 SIMPLE = re.compile(r"^%target-run-(simple|stdlib)-swift(gyb)?(?![\w-])")
 
@@ -302,19 +371,18 @@ def tail_refusal(rest):
     return "RUN hands the test arguments (%s)" % rest
 
 
-def compile_lines(tree, path):
-    """Every variant's compile-line, in RUN: order (see the usage's variants)."""
+def variants_of(tree, path):
+    """Every variant, in RUN: order, as (compile-line, FileCheck options or None) (see the usage's variants)."""
     text = read(os.path.join(tree, path))
     cmds = run_commands(text)
     if not cmds:
         raise Refused("no RUN: line")
     conditions(text)
-    if "FileCheck" in " ".join(cmds):
-        raise Refused("needs FileCheck, which no 10.9 pkg ships")
     base, abi = availability(tree)
     base = ["-swift-version", "4"] + base
-    runs, builds, flags, gyb_out, built, simple, verify = 0, 0, None, None, None, [], False
+    runs, builds, flags, gyb_out, built, simple, verify, run_check = 0, 0, None, None, None, [], False, None
     for c in cmds:
+        c, tail = split_pipe(c)
         m = re.match(r"^%line-directive\s+\S+\s+--\s+(.*)$", c)
         if m:
             c = m.group(1).strip()
@@ -331,6 +399,8 @@ def compile_lines(tree, path):
                 if depth != 0:
                     raise Refused("RUN has an unbalanced %s(" % m.group(0))
                 inner, rest = rest[1:i], rest[i + 1:]
+            if tail is not None and rest.strip().endswith("2>&1"):
+                raise Refused("RUN merges the test's stderr into FileCheck's input")
             why = tail_refusal(rest)
             if why:
                 raise Refused(why)
@@ -339,7 +409,7 @@ def compile_lines(tree, path):
             f = translate(split(inner), abi) + ["-module-name", "main"]
             if m.group(1) == "stdlib":
                 f += ["-Xfrontend", "-disable-access-control"]
-            simple.append(f)
+            simple.append((f, None if tail is None else check_args(tail)))
             continue
         if re.fullmatch(r"%empty-directory\(%t\)|mkdir -p %t", c):
             continue
@@ -348,6 +418,11 @@ def compile_lines(tree, path):
             gyb_out = m.group(1)
             continue
         w = split(c)
+        if tail is not None and w[0] != "%target-run":
+            if w[0] == "%target-build-swift":
+                raise Refused("RUN's FileCheck checks the compiler's %s, which runs no code on 10.9" %
+                              ("IR output" if "-emit-ir" in w else "output"))
+            raise Refused("RUN pipes %s into FileCheck, which runs no code on 10.9" % w[0])
         if w[0] == "%target-typecheck-verify-swift":
             verify = True
             continue
@@ -379,9 +454,13 @@ def compile_lines(tree, path):
             runs += 1
             if len(w) < 2 or w[1] != built:
                 raise Refused("RUN runs something it did not build")
-            why = tail_refusal(c.split(w[1], 1)[1])
+            rest = c.split(w[1], 1)[1]
+            if tail is not None and rest.strip().endswith("2>&1"):
+                raise Refused("RUN merges the test's stderr into FileCheck's input")
+            why = tail_refusal(rest)
             if why:
                 raise Refused(why)
+            run_check = None if tail is None else check_args(tail)
             continue
         if w[0].startswith("%"):
             raise Refused("RUN uses %s" % re.match(r"%[\w-]+", w[0]).group(0))
@@ -389,7 +468,7 @@ def compile_lines(tree, path):
     if simple and (runs or builds):
         raise Refused("more than one executable step")
     if simple:
-        return [base + f for f in simple]
+        return [(base + f, chk) for f, chk in simple]
     if runs > 1:
         raise Refused("more than one executable step")
     if builds > 1:
@@ -398,14 +477,22 @@ def compile_lines(tree, path):
         if verify:
             raise Refused("RUN uses %target-typecheck-verify-swift, and runs no executable")
         raise Refused("RUN runs no executable")
-    return [base + flags]
+    return [(base + flags, run_check)]
 
 
-def compile_line(tree, path, variant=1):
-    lines = compile_lines(tree, path)
-    if not 1 <= variant <= len(lines):
-        raise Refused("has %d variants, not a variant %d" % (len(lines), variant))
-    return lines[variant - 1]
+def compile_lines(tree, path):
+    return [line for line, _ in variants_of(tree, path)]
+
+
+def variant(tree, path, n):
+    vs = variants_of(tree, path)
+    if not 1 <= n <= len(vs):
+        raise Refused("has %d variants, not a variant %d" % (len(vs), n))
+    return vs[n - 1]
+
+
+def compile_line(tree, path, n=1):
+    return variant(tree, path, n)[0]
 
 
 def check(tree, layer, listfile):
@@ -449,7 +536,7 @@ def check(tree, layer, listfile):
 
 def usage():
     print("usage: upstream-tests.py survey <tree> <layer> | check <tree> <layer> <list> | variants <tree> <path>"
-          " | compile-line <tree> <path> [<variant>]", file=sys.stderr)
+          " | compile-line <tree> <path> [<variant>] | check-line <tree> <path> [<variant>]", file=sys.stderr)
     return 2
 
 
@@ -475,12 +562,18 @@ def main(argv):
             print("upstream-tests.py: %s: %s" % (argv[3], e), file=sys.stderr)
             return 1
         return 0
-    if cmd == "compile-line" and len(argv) in (4, 5):
+    if cmd in ("compile-line", "check-line") and len(argv) in (4, 5):
         if len(argv) == 5 and not re.fullmatch(r"[0-9]+", argv[4]):
             print("upstream-tests.py: %s: a variant is a number, not %s" % (argv[3], argv[4]), file=sys.stderr)
             return 1
         try:
-            for a in compile_line(tree, argv[3], int(argv[4]) if len(argv) == 5 else 1):
+            n = int(argv[4]) if len(argv) == 5 else 1
+            if cmd == "compile-line":
+                out = compile_line(tree, argv[3], n)
+            else:
+                chk = variant(tree, argv[3], n)[1]
+                out = [] if chk is None else ["filecheck"] + chk
+            for a in out:
                 print(a)
         except Refused as e:
             print("upstream-tests.py: %s: %s" % (argv[3], e), file=sys.stderr)
