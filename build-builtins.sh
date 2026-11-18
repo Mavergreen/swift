@@ -38,7 +38,12 @@ A="$B/lib/darwin/libclang_rt.osx.a"
 # path here is the building machine's path in every runtime.
 # The flags go through COMPILER_RT_DARWIN_BUILTIN_EXTRA_CFLAGS (patches/llvm 0004): compiler-rt's
 # darwin_add_builtin_libraries clears CMAKE_C_FLAGS and CMAKE_ASM_FLAGS, so those never reach a compile.
+# They land after the -mmacosx-version-min=10.7 compiler-rt hard-codes, so the floor given here is the
+# one that wins (clang takes the last). Neither CMAKE_OSX_DEPLOYMENT_TARGET nor clang22's clang.cfg can
+# set it: the macro clears CMake's flags, and the cfg's --target carries no version, so its own
+# -mmacosx-version-min=10.9 loses to any the command line gives.
 PM="$(prefix_map_flags c "$W")" || { echo "FAIL: no prefix maps for $W"; exit 1; }
+PM="-mmacosx-version-min=$DEPLOYMENT $PM"
 
 echo "==> 1. configure compiler-rt's builtins alone, x86_64 / $DEPLOYMENT, against the $DEPLOYMENT SDK ($MODE: $X)"
 # Configured from scratch every run: it takes seconds, and a reused cache would hide a changed knob.
@@ -46,8 +51,7 @@ rm -rf "$B"
 # CMAKE_OSX_ARCHITECTURES: else CMake's probes add this host's -arch arm64. DARWIN_osx_ARCHS and
 #   DARWIN_osx_BUILTIN_ARCHS: compiler-rt's two arch probes, which would add arm64 from the host SDK.
 # DARWIN_macosx_CACHED_SYSROOT: else compiler-rt asks xcrun for the HOST SDK and appends it as a second,
-#   winning -isysroot. CMAKE_OSX_DEPLOYMENT_TARGET: CMake's --target=x86_64-apple-macos10.9 overrides the
-#   -mmacosx-version-min=10.7 compiler-rt hard-codes (clang warns -Woverriding-option; minOS 10.9 ships).
+#   winning -isysroot. CMAKE_OSX_DEPLOYMENT_TARGET: CMake's own probes, at the floor the builtins get.
 # CMAKE_LIBTOOL and CMAKE_LIPO: llvm's UseLibtool.cmake archives each slice with CMAKE_LIBTOOL, and
 #   compiler-rt joins the slices with CMAKE_LIPO; without them it takes the host's Apple libtool, whose
 #   10.9 version writes each member's owner and date and whose symbol table differs from a modern one's.
