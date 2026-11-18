@@ -21,7 +21,8 @@ release or later, and each toolchain package requires it. Programs link Recaulk,
 are correct, with the notice duty described under "Recaulk in every program", below. Still owed, and not in
 this release's gate: upstream tests that set environment variables, that use Dispatch's Swift overlay or
 `Synchronization`, that use `@TaskLocal` (a macro; the toolchain has no macro plugins), or whose RUN: lines
-the gate does not translate.
+the gate does not translate. Known compiler bug: a `#isolation` default argument evaluates to nil in a
+MainActor caller (under investigation).
 
 An app that bundles this runtime must copy the `libswiftCompatibilitySpan.dylib` link, which points at
 `libswiftCore.dylib`, along with the libraries. Under an rpath that finds another Core first, 10.9's dyld

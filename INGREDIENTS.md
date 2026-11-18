@@ -359,14 +359,11 @@ until its blocker goes (the reasons are in `tests/upstream/*.list`):
   overlay, which this release does not ship.
 - `test/Concurrency/Runtime/cancellation_handler_only_once.swift` imports `Synchronization`, which this release does
   not ship.
-- The Concurrency tests that use `@TaskLocal` (9; 8 of them name `%swift-plugin-dir`): it is a macro, and the
-  toolchain is built without swift-syntax, so it has no macro plugins.
+- The 9 Concurrency tests that use `@TaskLocal` and that upstream's REQUIRES: would otherwise run on 10.9 (8 of
+  them name `%swift-plugin-dir`): it is a macro, and the toolchain is built without swift-syntax, so it has no
+  macro plugins.
 - The Concurrency tests whose RUN: line sets an environment variable with `env` (14, the isolation-mode
   overrides and `SWIFT_DEBUG_VALIDATE_UNCHECKED_CONTINUATIONS` among them): the gate sets no variable.
-- `test/Concurrency/Runtime/isolated_macro_in_nonisolated_nonsending_func.swift`: a `#isolation` default argument is
-  nil when a MainActor caller passes it, so the test prints nil where it checks for `Optional(Swift.MainActor)`.
-- `test/Concurrency/Runtime/custom_executors.swift`: its `unownedExecutor` is `@available(SwiftStdlib 5.1)`, macOS
-  10.15, and this toolchain's `Actor` asks for it from 10.9, so it does not compile for 10.9.
 - The tests whose RUN: line the gate does not translate: among them `%target-future-triple`, a dylib build, stderr
   merged into FileCheck's input, arguments handed to the test, and the flags `-enable-experimental-move-only`,
   `-enable-copy-propagation` and `-enable-actor-data-race-checks`.
@@ -375,6 +372,11 @@ until its blocker goes (the reasons are in `tests/upstream/*.list`):
 - Tests of the Dispatch Swift overlay and of the environment variables above are owed with their blockers, as listed.
 - `test/Concurrency/Runtime/actor_dynamic_subclass.swift`: the 10.9 SDK has no nullability, so it does not compile
   (line 32).
+
+Known compiler bug, under investigation: a `#isolation` default argument evaluates to nil in a MainActor caller,
+where upstream's compiler evaluates it to `MainActor.shared`; `withTaskGroup(isolation:)` and the like get nil too.
+The gate excludes `test/Concurrency/Runtime/isolated_macro_in_nonisolated_nonsending_func.swift`, which checks
+for `Optional(Swift.MainActor)` and prints nil.
 
 ## Why LLVM is pinned by release tag, and checked against the Swift pin
 

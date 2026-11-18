@@ -102,7 +102,7 @@ include test/Concurrency/Runtime/checked_continuation.swift
 exclude test/Concurrency/Runtime/class_resilience.swift -- RUN uses %target-build-swift-dylib
 include test/Concurrency/Runtime/clock.swift
 exclude test/Concurrency/Runtime/continuation_validation.swift -- RUN runs env
-exclude test/Concurrency/Runtime/custom_executors.swift -- does not compile for 10.9: its unownedExecutor (line 26) is @available(SwiftStdlib 5.1), macOS 10.15, and this toolchain's Actor asks for it from 10.9 ("protocol 'Actor' requires 'unownedExecutor' to be available in macOS 10.9 and newer")
+exclude test/Concurrency/Runtime/custom_executors.swift -- does not compile in the gate: its RUN line's %target-swift-5.1-abi-triple is macosx10.9 here, while SwiftStdlib 5.1 stays macOS 10.15, so its unownedExecutor (line 26), @available(SwiftStdlib 5.1), is narrower than Actor's requirement ("protocol 'Actor' requires 'unownedExecutor' to be available in macOS 10.9 and newer")
 exclude test/Concurrency/Runtime/custom_executors_complex_equality.swift -- RUN uses -Xfrontend -enable-experimental-move-only, which no included test is known to need
 exclude test/Concurrency/Runtime/custom_executors_complex_equality_crash.swift -- RUN runs env
 exclude test/Concurrency/Runtime/custom_executors_complex_equality_subclass.swift -- RUN uses -Xfrontend -enable-experimental-move-only, which no included test is known to need
