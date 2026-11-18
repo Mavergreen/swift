@@ -15,6 +15,9 @@
 #                       (test support) from this bundle's lib/ or the OS's own (/usr/lib, /System). The one mode that sets a DYLD
 #                       variable, and only on the test's own command.
 #          The default and --loads run upstream/bin/* too, once each, after bin/*.
+#          An upstream/bin/<N> (or <N>-Onone) with an upstream/check/<N>.args passes only when each run's
+#          stdout, its exit status checked first, matches upstream/check/<N>.swift under FileCheck with
+#          the options that file lists, one per line (make-selftest.sh); without a FileCheck the test fails.
 #          Every run is killed after SELFTEST_TIMEOUT seconds (default 60; upstream/bin/*, SELFTEST_UPSTREAM_TIMEOUT)
 #          and reported as a timeout:
 #          a hang must fail the gate, not stall it. That needs perl (10.9 has /usr/bin/perl); without
@@ -29,6 +32,8 @@
 #                                cancellation_handler_concurrent's 65 s, and a slower VM must not time them
 #                                out; a hang still fails, three minutes later (INGREDIENTS' gate paragraph)
 #          SELFTEST_PERL         the perl to time runs with; default /usr/bin/perl, else perl on PATH
+#          SELFTEST_FILECHECK    the FileCheck for upstream/check/; default /usr/local/mavergreen/clang22/bin/FileCheck,
+#                                timed like a run
 #          Exit 0 all pass, 1 any failure or any DYLD_* variable set, 2 any other argument, 77 no
 #          runtime installed (the family SKIP code: a CI runner never has one) or no bin/ here (the
 #          repo's own tests/, which is not a bundle).
@@ -47,6 +52,7 @@ RUNS="${SELFTEST_RUNS:-500}"
 UPRUNS="${SELFTEST_UPSTREAM_RUNS:-20}"
 TIMEOUT="${SELFTEST_TIMEOUT:-60}"
 UPTIMEOUT="${SELFTEST_UPSTREAM_TIMEOUT:-180}"
+FC="${SELFTEST_FILECHECK:-/usr/local/mavergreen/clang22/bin/FileCheck}"
 GMALLOC_RUNS=10
 
 [ -f "$CORE" ] || {
@@ -102,6 +108,16 @@ limited() {
 }
 # reason LABEL RC : the failure text for run LABEL that exited RC
 reason() { if [ "$2" = 142 ]; then echo "$1 timed out after $TIMEOUT s"; else echo "$1 exited non-zero"; fi; }
+OUT="$(mktemp "${TMPDIR:-/tmp}/selftest-out.XXXXXX")"
+trap 'rm -f "$OUT"' EXIT
+trap 'exit 1' HUP INT TERM
+matches() {
+  [ -n "$chk" ] || return 0
+  m_label="$1"
+  set --; while IFS= read -r a; do set -- "$@" "$a"; done < "$chk.args"
+  frc=0; limited "$FC" "$@" "$PWD/$chk.swift" < "$OUT" >/dev/null 2>&1 || frc=$?
+  [ "$frc" = 0 ] || { ok=0; why="$m_label: output does not match $chk.swift (FileCheck exited $frc)"; }
+}
 
 MODE="${1:-quick}"
 pass=0; fail=0; failed=""
@@ -113,11 +129,17 @@ if [ "$MODE" = "--loads" ]; then
 fi
 # run_one <test> <runs> <Guard Malloc runs> : runs one test as MODE says; counts and names it
 run_one() {
-  t="$1"; runs="$2"; gmruns="$3"; ok=1; why=""
-  if [ "$MODE" = "--loads" ]; then
+  t="$1"; runs="$2"; gmruns="$3"; ok=1; why=""; chk=""; sink=/dev/null
+  case "$t" in
+    upstream/bin/*) chk="upstream/check/${t##*/}"; chk="${chk%-Onone}"; [ -f "$chk.args" ] && sink="$OUT" || chk="" ;;
+  esac
+  if [ -n "$chk" ] && [ ! -x "$FC" ]; then
+    ok=0; why="no FileCheck at $FC to check this test's output"; label=""
+  elif [ "$MODE" = "--loads" ]; then
     # DYLD_PRINT_LIBRARIES goes to stderr (10.9's dyld; modern ones too).
-    rc=0; err="$(limited DYLD_PRINT_LIBRARIES=1 "./$t" 2>&1 >/dev/null)" || rc=$?
+    rc=0; err="$(limited DYLD_PRINT_LIBRARIES=1 "./$t" 2>&1 >"$sink")" || rc=$?
     [ "$rc" = 0 ] || { ok=0; why="$(reason "run 1 of 1" "$rc") with DYLD_PRINT_LIBRARIES=1"; }
+    [ "$ok" = 0 ] || matches "run 1 of 1"
     core=0
     for p in $(printf '%s\n' "$err" | sed -n 's/^[^/]*\(\/[^ ]*libswift[^ ]*\.dylib\).*$/\1/p' | sort -u); do
       [ "$ok" = 1 ] || break
@@ -141,28 +163,32 @@ run_one() {
   elif [ "$MODE" = "--gate" ]; then
     n=0
     while [ "$n" -lt "$runs" ]; do
-      rc=0; limited "./$t" >/dev/null 2>&1 || rc=$?
+      rc=0; limited "./$t" >"$sink" 2>/dev/null || rc=$?
       [ "$rc" = 0 ] || { ok=0; why="$(reason "run $((n + 1)) of $runs" "$rc")"; break; }
+      matches "run $((n + 1)) of $runs"; [ "$ok" = 1 ] || break
       n=$((n + 1))
     done
     g=0
     while [ "$ok" = 1 ] && [ "$g" -lt "$gmruns" ]; do
       # libgmalloc announces itself on stderr ("GuardMalloc[pid]: ...") on 10.9 and on modern macOS
       # alike; its absence means the run was not guarded, which must not read as a pass.
-      rc=0; err="$(MallocScribble=1 MallocGuardEdges=1 limited DYLD_INSERT_LIBRARIES="$GMALLOC" "./$t" 2>&1 >/dev/null)" || rc=$?
+      rc=0; err="$(MallocScribble=1 MallocGuardEdges=1 limited DYLD_INSERT_LIBRARIES="$GMALLOC" "./$t" 2>&1 >"$sink")" || rc=$?
       [ "$rc" = 0 ] || { ok=0; why="$(reason "Guard Malloc run $((g + 1)) of $gmruns" "$rc")"; break; }
       case "$err" in
         *'GuardMalloc['*) ;;
         *) ok=0; why="Guard Malloc did not load ($GMALLOC)"; break ;;
       esac
+      matches "Guard Malloc run $((g + 1)) of $gmruns"; [ "$ok" = 1 ] || break
       g=$((g + 1))
     done
     label="${runs}x + ${gmruns}x Guard Malloc"
   else
-    rc=0; limited "./$t" >/dev/null 2>&1 || rc=$?
+    rc=0; limited "./$t" >"$sink" 2>/dev/null || rc=$?
     [ "$rc" = 0 ] || { ok=0; why="$(reason "run 1 of 1" "$rc")"; }
+    [ "$ok" = 0 ] || matches "run 1 of 1"
     label="run"
   fi
+  [ -z "$chk" ] || label="$label, output checked"
   if [ "$ok" = 1 ]; then
     printf '  PASS (%s): %s\n' "$label" "$name"; pass=$((pass + 1))
   else

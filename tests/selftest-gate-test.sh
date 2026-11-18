@@ -6,7 +6,8 @@
 #   (--loads) programs that load the runtime's libswift*.dylib from the prefix or from elsewhere, or none (most
 #   print the dyld lines they model, so the host's own Swift cannot leak in);
 #   and a bundle's upstream/bin/, which runs after bin/, SELFTEST_UPSTREAM_RUNS times plus one Guard Malloc run,
-#   each run under SELFTEST_UPSTREAM_TIMEOUT instead of SELFTEST_TIMEOUT.
+#   each run under SELFTEST_UPSTREAM_TIMEOUT instead of SELFTEST_TIMEOUT; one with an upstream/check/<name>.args
+#   passes only when a fake FileCheck (SELFTEST_FILECHECK) accepts each run's stdout.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 command -v cc >/dev/null 2>&1 || { echo "no cc -- skipping"; exit 77; }
@@ -47,6 +48,13 @@ cc -o "$T/crasher" "$T/crasher.c"
 printf '%s\n' '#include <stdio.h>' '#include <stdlib.h>' \
   'int main(int c, char **v){FILE *f=fopen(getenv("SELFTEST_COUNT"),"a"); if(!f) return 2; fprintf(f,"%s\n",v[0]); fclose(f); return 0;}' > "$T/counter.c"
 cc -o "$T/counter" "$T/counter.c"
+printf '%s\n' '#include <stdio.h>' \
+  'int main(void){puts("to stdout"); fflush(stdout); fputs("to stderr\n", stderr); return 0;}' > "$T/talker.c"
+sed 's/return 0;/return 3;/' "$T/talker.c" > "$T/talk3.c"
+cc -o "$T/talker" "$T/talker.c"; cc -o "$T/talk3" "$T/talk3.c"
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" > "$FAKE_FC_DIR/argv"; cat > "$FAKE_FC_DIR/stdin"' \
+  'echo call >> "$FAKE_FC_DIR/calls"; exit "${FAKE_FC_RC:-0}"' > "$T/fakefc"
+chmod +x "$T/fakefc"; mkdir -p "$T/fc"
 # The --loads fixtures print, as dyld would under DYLD_PRINT_LIBRARIES, the loads they model, and link no
 # libswift* themselves: a real program that links libswiftCore loads whatever else the host's dyld adds, and
 # macOS 26's maps the OS's libswiftPrespecialized and, through it, /usr/lib/swift/libswiftCore into it,
@@ -87,20 +95,31 @@ cc -o "$T/real_stray" "$T/useBoth.c" -L"$T/stray" -lswiftDarwin -L"$T/prefix/lib
 cc -o "$T/real_support" "$T/useSupport.c" -L"$T/supportlib" -lswiftTestSupport -L"$T/prefix/lib/swift" -lswiftCore \
   -Wl,-rpath,@executable_path/../lib -Wl,-rpath,"$T/prefix/lib/swift"
 
-bundle() {  # $1.. = fixtures to put in a fresh bundle's bin/, or its upstream/bin/ as up:<fixture>; prints the bundle dir
+# bundle $1.. = fixtures to put in a fresh bundle's bin/, or its upstream/bin/ as up:<fixture>, or chk:<name> for an
+# upstream/check/<name>.args (two FileCheck options, one holding a space) and .swift; prints the bundle dir
+bundle() {
   b="$(mktemp -d "$T/bundle.XXXXXX")"; mkdir -p "$b/bin"
   cp "$REPO/tests/run-selftest.sh" "$b/"
   for f in "$@"; do
-    case "$f" in up:*) mkdir -p "$b/upstream/bin"; cp "$T/${f#up:}" "$b/upstream/bin/" ;; *) cp "$T/$f" "$b/bin/" ;; esac
+    case "$f" in
+      up:*) mkdir -p "$b/upstream/bin"; cp "$T/${f#up:}" "$b/upstream/bin/" ;;
+      chk:*) mkdir -p "$b/upstream/check"
+        printf '%s\n' '--check-prefix=CHECK' '--implicit-check-not=to stderr' > "$b/upstream/check/${f#chk:}.args"
+        printf '// CHECK: to stdout\n' > "$b/upstream/check/${f#chk:}.swift" ;;
+      *) cp "$T/$f" "$b/bin/" ;;
+    esac
   done
   mkdir -p "$b/lib"; cp "$T/supportlib/libswiftTestSupport.dylib" "$b/lib/"
   printf '%s\n' "$b"
 }
 RUNS=3
+FC="$T/fakefc"
 run() {  # $1 = bundle, rest = args; runs from / so the script must find its own bin/; sets rc, out
   b="$1"; shift
-  rc=0; out="$(cd / && SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_RUNS="$RUNS" sh "$b/run-selftest.sh" "$@" 2>&1)" || rc=$?
+  rc=0; out="$(cd / && SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_RUNS="$RUNS" SELFTEST_FILECHECK="$FC" FAKE_FC_DIR="$T/fc" \
+    sh "$b/run-selftest.sh" "$@" 2>&1)" || rc=$?
 }
+fcreset() { rm -f "$T/fc/argv" "$T/fc/stdin" "$T/fc/calls"; }
 
 echo "-- no runtime installed at the prefix: SKIP"
 b="$(bundle ok)"; rc=0; out="$(SWIFT_RUNTIME_PREFIX="$T/nowhere" sh "$b/run-selftest.sh" 2>&1)" || rc=$?
@@ -287,5 +306,64 @@ b="$(bundle ok)"; rc=0
 out="$(SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_UPSTREAM_RUNS=x sh "$b/run-selftest.sh" --gate 2>&1)" || rc=$?
 [ "$rc" = 1 ] || fail "SELFTEST_UPSTREAM_RUNS=x: rc=$rc: $out"
 case "$out" in *SELFTEST_UPSTREAM_RUNS*) ;; *) fail "SELFTEST_UPSTREAM_RUNS=x: not named: $out" ;; esac
+
+echo "-- upstream/check/: a run whose output FileCheck matches passes, checked"
+fcreset; b="$(bundle ok up:talker chk:talker)"; run "$b"
+[ "$rc" = 0 ] || fail "check match: rc=$rc: $out"
+case "$out" in *'PASS (run, output checked): upstream/bin/talker'*) ;; *) fail "check match: not reported as checked: $out" ;; esac
+[ "$(cat "$T/fc/argv")" = "$(printf '%s\n' '--check-prefix=CHECK' '--implicit-check-not=to stderr' "$(cd "$b" && pwd)/upstream/check/talker.swift")" ] \
+  || fail "check match: FileCheck's argv: $(cat "$T/fc/argv")"
+[ "$(cat "$T/fc/stdin")" = "to stdout" ] || fail "check match: FileCheck read, not the test's stdout alone: $(cat "$T/fc/stdin")"
+
+echo "-- upstream/check/: a mismatch fails, naming the check and FileCheck's status"
+fcreset; rc=0; out="$(cd / && SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_FILECHECK="$FC" FAKE_FC_DIR="$T/fc" FAKE_FC_RC=1 \
+  sh "$(bundle ok up:talker chk:talker)/run-selftest.sh" 2>&1)" || rc=$?
+[ "$rc" = 1 ] || fail "check mismatch: rc=$rc: $out"
+case "$out" in
+  *'FAIL: upstream/bin/talker -- run 1 of 1: output does not match upstream/check/talker.swift (FileCheck exited 1)'*) ;;
+  *) fail "check mismatch: wrong reason: $out" ;;
+esac
+
+echo "-- upstream/check/: the exit status and the match are both required"
+fcreset; run "$(bundle ok up:talk3 chk:talk3)"
+[ "$rc" = 1 ] || fail "check status: rc=$rc: $out"
+case "$out" in *'FAIL: upstream/bin/talk3 -- run 1 of 1 exited non-zero'*) ;; *) fail "check status: wrong reason: $out" ;; esac
+
+echo "-- upstream/check/: an empty output is still checked"
+fcreset; rc=0; out="$(cd / && SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_FILECHECK="$FC" FAKE_FC_DIR="$T/fc" FAKE_FC_RC=1 \
+  sh "$(bundle ok up:ok chk:ok)/run-selftest.sh" 2>&1)" || rc=$?
+[ -f "$T/fc/argv" ] || fail "check empty: FileCheck not run on an empty output: $out"
+[ "$rc" = 1 ] || fail "check empty: FileCheck's rc did not decide: rc=$rc: $out"
+fcreset; run "$(bundle ok up:ok chk:ok)"; [ "$rc" = 0 ] && [ -f "$T/fc/argv" ] || fail "check empty, match: rc=$rc: $out"
+
+echo "-- upstream/check/: no FileCheck to check with fails the test, never skips it"
+FC=/nonexistent; run "$(bundle ok up:talker chk:talker)"; FC="$T/fakefc"
+[ "$rc" = 1 ] || fail "no FileCheck: rc=$rc: $out"
+case "$out" in *"FAIL: upstream/bin/talker -- no FileCheck at /nonexistent to check this test's output"*) ;; *) fail "no FileCheck: wrong reason: $out" ;; esac
+
+echo "-- upstream/check/: --gate checks every run, the Guard Malloc one too"
+fcreset; rc=0; out="$(cd / && SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_RUNS=2 SELFTEST_UPSTREAM_RUNS=3 SELFTEST_FILECHECK="$FC" \
+  FAKE_FC_DIR="$T/fc" sh "$(bundle ok up:talker chk:talker)/run-selftest.sh" --gate 2>&1)" || rc=$?
+[ "$rc" = 0 ] || fail "check gate: rc=$rc: $out"
+[ "$(grep -c . "$T/fc/calls")" = 4 ] || fail "check gate: FileCheck ran $(grep -c . "$T/fc/calls") times, not 3 + 1: $out"
+[ "$(cat "$T/fc/stdin")" = "to stdout" ] || fail "check gate: the Guard Malloc run's FileCheck read: $(cat "$T/fc/stdin")"
+case "$out" in *'PASS (3x + 1x Guard Malloc, output checked): upstream/bin/talker'*) ;; *) fail "check gate: not reported as checked: $out" ;; esac
+b="$(bundle ok up:talker chk:talker)"; rc=0
+out="$(cd / && SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_RUNS=2 SELFTEST_UPSTREAM_RUNS=1 SELFTEST_GMALLOC="$T/notgmalloc.dylib" \
+  SELFTEST_FILECHECK="$FC" FAKE_FC_DIR="$T/fc" sh "$b/run-selftest.sh" --gate 2>&1)" || rc=$?
+case "$rc:$out" in 1:*'Guard Malloc did not load'*) ;; *) fail "check gate: an unguarded run passed: rc=$rc: $out" ;; esac
+
+echo "-- upstream/check/: a test with no check runs as before, with no FileCheck"
+fcreset; run "$(bundle ok up:talker)" --gate
+[ "$rc" = 0 ] && [ ! -f "$T/fc/calls" ] || fail "no check: rc=$rc, FileCheck ran: $out"
+case "$out" in *'output checked'*) fail "no check: reported as checked: $out" ;; esac
+FC=/nonexistent; run "$(bundle ok up:talker)"; FC="$T/fakefc"
+[ "$rc" = 0 ] || fail "no check, no FileCheck: rc=$rc: $out"
+
+echo "-- upstream/check/: the -Onone build is checked against the same <name>"
+fcreset; b="$(bundle ok up:talker chk:talker)"; cp "$b/upstream/bin/talker" "$b/upstream/bin/talker-Onone"; run "$b"
+[ "$rc" = 0 ] && [ "$(grep -c . "$T/fc/calls")" = 2 ] || fail "-Onone: rc=$rc: $out"
+case "$out" in *'PASS (run, output checked): upstream/bin/talker-Onone'*) ;; *) fail "-Onone: not checked: $out" ;; esac
+[ "$(sed -n '$p' "$T/fc/argv")" = "$(cd "$b" && pwd)/upstream/check/talker.swift" ] || fail "-Onone: checked against $(sed -n '$p' "$T/fc/argv")"
 
 echo "PASS"
