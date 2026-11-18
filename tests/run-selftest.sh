@@ -18,6 +18,7 @@
 #          An upstream/bin/<N> (or <N>-Onone) with an upstream/check/<N>.args passes only when each run's
 #          stdout, its exit status checked first, matches upstream/check/<N>.swift under FileCheck with
 #          the options that file lists, one per line (make-selftest.sh); without a FileCheck the test fails.
+#          A mismatch prints the first 20 lines of FileCheck's diagnostics under its FAIL line.
 #          Every run is killed after SELFTEST_TIMEOUT seconds (default 60; upstream/bin/*, SELFTEST_UPSTREAM_TIMEOUT)
 #          and reported as a timeout:
 #          a hang must fail the gate, not stall it. That needs perl (10.9 has /usr/bin/perl); without
@@ -115,8 +116,8 @@ matches() {
   [ -n "$chk" ] || return 0
   m_label="$1"
   set --; while IFS= read -r a; do set -- "$@" "$a"; done < "$chk.args"
-  frc=0; limited "$FC" "$@" "$PWD/$chk.swift" < "$OUT" >/dev/null 2>&1 || frc=$?
-  [ "$frc" = 0 ] || { ok=0; why="$m_label: output does not match $chk.swift (FileCheck exited $frc)"; }
+  frc=0; fcerr="$(limited "$FC" "$@" "$PWD/$chk.swift" < "$OUT" 2>&1 >/dev/null)" || frc=$?
+  [ "$frc" = 0 ] || { ok=0; why="$m_label: output does not match $chk.swift (FileCheck exited $frc)"; diag="$fcerr"; }
 }
 
 MODE="${1:-quick}"
@@ -129,7 +130,7 @@ if [ "$MODE" = "--loads" ]; then
 fi
 # run_one <test> <runs> <Guard Malloc runs> : runs one test as MODE says; counts and names it
 run_one() {
-  t="$1"; runs="$2"; gmruns="$3"; ok=1; why=""; chk=""; sink=/dev/null
+  t="$1"; runs="$2"; gmruns="$3"; ok=1; why=""; diag=""; chk=""; sink=/dev/null
   case "$t" in
     upstream/bin/*) chk="upstream/check/${t##*/}"; chk="${chk%-Onone}"; [ -f "$chk.args" ] && sink="$OUT" || chk="" ;;
   esac
@@ -193,6 +194,7 @@ run_one() {
     printf '  PASS (%s): %s\n' "$label" "$name"; pass=$((pass + 1))
   else
     printf '  FAIL: %s -- %s\n' "$name" "$why"; fail=$((fail + 1)); failed="$failed $name"
+    [ -z "$diag" ] || printf '%s\n' "$diag" | sed -n '1,20s/^/    /p'
   fi
 }
 for t in bin/*; do

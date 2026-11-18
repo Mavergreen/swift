@@ -53,7 +53,7 @@ printf '%s\n' '#include <stdio.h>' \
 sed 's/return 0;/return 3;/' "$T/talker.c" > "$T/talk3.c"
 cc -o "$T/talker" "$T/talker.c"; cc -o "$T/talk3" "$T/talk3.c"
 printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" > "$FAKE_FC_DIR/argv"; cat > "$FAKE_FC_DIR/stdin"' \
-  'echo call >> "$FAKE_FC_DIR/calls"; exit "${FAKE_FC_RC:-0}"' > "$T/fakefc"
+  'echo call >> "$FAKE_FC_DIR/calls"; [ -z "${FAKE_FC_ERR:-}" ] || echo "$FAKE_FC_ERR" >&2; exit "${FAKE_FC_RC:-0}"' > "$T/fakefc"
 chmod +x "$T/fakefc"; mkdir -p "$T/fc"
 # The --loads fixtures print, as dyld would under DYLD_PRINT_LIBRARIES, the loads they model, and link no
 # libswift* themselves: a real program that links libswiftCore loads whatever else the host's dyld adds, and
@@ -323,6 +323,19 @@ case "$out" in
   *'FAIL: upstream/bin/talker -- run 1 of 1: output does not match upstream/check/talker.swift (FileCheck exited 1)'*) ;;
   *) fail "check mismatch: wrong reason: $out" ;;
 esac
+
+echo "-- upstream/check/: a mismatch shows FileCheck's diagnostics after the FAIL line, at most 20 of them"
+fcreset; rc=0; out="$(cd / && SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_FILECHECK="$FC" FAKE_FC_DIR="$T/fc" FAKE_FC_RC=1 \
+  FAKE_FC_ERR="$(printf 'check.swift:1:11: error: CHECK: expected string not found in input\n'; i=2; while [ "$i" -le 30 ]; do echo "dump line $i"; i=$((i + 1)); done)" \
+  sh "$(bundle ok up:talker chk:talker)/run-selftest.sh" 2>&1)" || rc=$?
+[ "$rc" = 1 ] || fail "check diagnostics: rc=$rc: $out"
+case "$out" in
+  *'(FileCheck exited 1)
+    check.swift:1:11: error: CHECK: expected string not found in input'*) ;;
+  *) fail "check diagnostics: FileCheck's error not shown, indented, after the FAIL line: $out" ;;
+esac
+case "$out" in *'dump line 20'*) ;; *) fail "check diagnostics: fewer than 20 lines shown: $out" ;; esac
+case "$out" in *'dump line 21'*) fail "check diagnostics: more than 20 lines shown: $out" ;; esac
 
 echo "-- upstream/check/: the exit status and the match are both required"
 fcreset; run "$(bundle ok up:talk3 chk:talk3)"
