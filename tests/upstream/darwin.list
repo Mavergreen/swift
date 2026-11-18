@@ -31,8 +31,8 @@ exclude test/stdlib/ErrorBridged.swift -- imports Foundation, which no 10.9 pkg 
 exclude test/stdlib/FloatConstants.swift -- RUN uses %target-typecheck-verify-swift
 include test/stdlib/FloatingPoint.swift.gyb
 exclude test/stdlib/FloatingPointDiagnostics.swift -- RUN uses %target-typecheck-verify-swift
-exclude test/stdlib/FloatingPointIR.swift -- needs FileCheck, which no 10.9 pkg ships
-exclude test/stdlib/FloatingPointIR_FP80.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/stdlib/FloatingPointIR.swift -- RUN's FileCheck checks the compiler's IR output, which runs no code on 10.9
+exclude test/stdlib/FloatingPointIR_FP80.swift -- RUN's FileCheck checks the compiler's IR output, which runs no code on 10.9
 exclude test/stdlib/MathConstants.swift -- RUN uses %target-typecheck-verify-swift
 exclude test/stdlib/POSIX.swift -- RUN hands the test arguments (%t)
 include test/stdlib/PrintFloat.swift.gyb
@@ -40,7 +40,7 @@ exclude test/stdlib/PrintFloat16.swift -- does not compile on 10.9: its regex li
 exclude test/stdlib/PrintFloatLocale.swift.gyb -- RUN uses %gyb
 include test/stdlib/Runtime.swift.gyb
 include test/stdlib/ThreadLocalStorage.swift
-exclude test/stdlib/VarArgs.swift -- needs FileCheck, which no 10.9 pkg ships
+exclude test/stdlib/VarArgs.swift -- RUN hands the test arguments (-parse-stdlib %s)
 exclude test/stdlib/dlopen_race.swift -- RUN compiles more than the test file (%S/Inputs/dlopen_race_dylib.swift)
 exclude test/stdlib/mmap.swift -- RUN hands the test arguments (%t)
 exclude test/stdlib/tgmath.swift.gyb -- upstream disables it (REQUIRES: rdar94452524)

@@ -355,12 +355,21 @@ until its blocker goes (the reasons are in `tests/upstream/*.list`):
 - `validation-test/stdlib/ObjectiveC_without_Foundation.swift`: the 10.9 SDK has no nullability, so
   `NSObject()` is `NSObject!` and `var anNSObject` is not `CVarArg`.
 - POSIX.swift and mmap.swift hand the test a temp directory (`%t`), which the gate does not supply.
-- The Concurrency tests that use `DispatchQueue` or `DispatchTime` (7): the Dispatch Swift overlay, which this release
-  does not ship.
+- The Concurrency tests that use `DispatchQueue`, `DispatchTime` or `DispatchSemaphore` (12): the Dispatch Swift
+  overlay, which this release does not ship.
+- `test/Concurrency/Runtime/cancellation_handler_only_once.swift` imports `Synchronization`, which this release does
+  not ship.
+- The Concurrency tests that use `@TaskLocal` (9; 8 of them name `%swift-plugin-dir`): it is a macro, and the
+  toolchain is built without swift-syntax, so it has no macro plugins.
 - The Concurrency tests whose RUN: line sets an environment variable with `env` (14, the isolation-mode
   overrides and `SWIFT_DEBUG_VALIDATE_UNCHECKED_CONTINUATIONS` among them): the gate sets no variable.
-- The FileCheck tests (67 in Concurrency alone, and Darwin's and ObjectiveC's): no 10.9 pkg ships FileCheck. The
-  umbrella's "Next piece of work", after this release, brings them in and re-sizes `vm-test`.
+- `test/Concurrency/Runtime/isolated_macro_in_nonisolated_nonsending_func.swift`: a `#isolation` default argument is
+  nil when a MainActor caller passes it, so the test prints nil where it checks for `Optional(Swift.MainActor)`.
+- `test/Concurrency/Runtime/custom_executors.swift`: its `unownedExecutor` is `@available(SwiftStdlib 5.1)`, macOS
+  10.15, and this toolchain's `Actor` asks for it from 10.9, so it does not compile for 10.9.
+- The tests whose RUN: line the gate does not translate: among them `%target-future-triple`, a dylib build, stderr
+  merged into FileCheck's input, arguments handed to the test, and the flags `-enable-experimental-move-only`,
+  `-enable-copy-propagation` and `-enable-actor-data-race-checks`.
 - The site that reads Mirror's 6.2 availability: untested on 10.9, since the only upstream test that reaches it
   uses a C++ foreign reference, which this gate does not build.
 - Tests of the Dispatch Swift overlay and of the environment variables above are owed with their blockers, as listed.

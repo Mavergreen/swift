@@ -20,7 +20,7 @@ exclude test/stdlib/BridgeEquatableToObjC.swift -- imports Foundation, which no 
 exclude test/stdlib/BridgeIdAsAny.swift.gyb -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/BridgeNonVerbatim.swift -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/BridgeStorage.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/Bridgeable.swift -- needs FileCheck, which no 10.9 pkg ships
+include test/stdlib/Bridgeable.swift
 exclude test/stdlib/BridgedArrayNonContiguous.swift -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/BridgedObjectDebuggerSupport.swift -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/Bundle.swift -- imports Foundation, which no 10.9 pkg ships
