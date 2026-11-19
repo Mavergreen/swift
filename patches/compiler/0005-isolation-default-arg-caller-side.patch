@@ -1,0 +1,59 @@
+diff --git lib/AST/Decl.cpp lib/AST/Decl.cpp
+--- lib/AST/Decl.cpp
++++ lib/AST/Decl.cpp
+@@ -9410,6 +9410,13 @@
+   if (isa<MacroExpansionExpr>(init))
+     return DefaultArgumentKind::ExpressionMacro;
+ 
++  // Mavergreen: #isolation is the caller's, without swift-syntax too. A compiler built without it
++  // parses `#isolation` straight into this expression, not a macro expansion (ParseExpr.cpp), so it
++  // is a caller-side default, as the macro is; as a Normal default it was evaluated once, in the
++  // callee's nonisolated default-argument generator, and every caller passed nil.
++  if (isa<CurrentContextIsolationExpr>(init))
++    return DefaultArgumentKind::ExpressionMacro;
++
+   if (isa<SuperRefExpr>(init)) {
+     // The compiler does not synthesize inherited initializers when
+     // type-checking Swift module interfaces. Instead, module interfaces are
+@@ -9457,6 +9464,11 @@
+     ASSERT(defaultValueInitContext);
+     decl->setDefaultExpr(defaultValue);
+     decl->setDefaultArgumentKind(kind);
++    // Mavergreen: #isolation is the caller's, so each caller re-parses this text, which a module or
++    // interface carries. The expression's source range is the macro's name alone, which would make
++    // it `isolation`, so it is spelled out.
++    if (defaultValue && isa<CurrentContextIsolationExpr>(defaultValue))
++      decl->setDefaultValueStringRepresentation("#isolation");
+     if (defaultValue)
+       decl->setDefaultArgumentInitContext(defaultValueInitContext);
+   }
+diff --git lib/Sema/TypeCheckDeclPrimary.cpp lib/Sema/TypeCheckDeclPrimary.cpp
+--- lib/Sema/TypeCheckDeclPrimary.cpp
++++ lib/Sema/TypeCheckDeclPrimary.cpp
+@@ -1242,6 +1242,10 @@
+       &ctx.Diags, SF->getExportedSourceFile(),
+       initExpr->getLoc().getOpaquePointerValue());
+ #else
++  // Mavergreen: #isolation is the caller's: as a compiler without swift-syntax parses it
++  // (ParseExpr.cpp), it is no macro expansion to check, and a default argument upstream accepts.
++  if (isa<CurrentContextIsolationExpr>(initExpr))
++    return true;
+   ctx.Diags.diagnose(initExpr->getLoc(), diag::macro_unsupported);
+   return false;
+ #endif
+diff --git lib/Sema/TypeCheckExpr.cpp lib/Sema/TypeCheckExpr.cpp
+--- lib/Sema/TypeCheckExpr.cpp
++++ lib/Sema/TypeCheckExpr.cpp
+@@ -720,6 +720,12 @@
+           callerSideMacroExpansionExpr->setImplicit();
+           return callerSideMacroExpansionExpr;
+         }
++      // Mavergreen: #isolation is the caller's: without swift-syntax, "#isolation" re-parses as
++      // this expression (ParseExpr.cpp), implicit as the parser makes it, and the caller's
++      // isolation checking resolves it to the caller's actor.
++      if (auto *expr = item.dyn_cast<Expr *>())
++        if (auto *isolation = dyn_cast<CurrentContextIsolationExpr>(expr))
++          return isolation;
+     }
+     llvm_unreachable("default argument source file missing caller side macro "
+                      "expansion expression");

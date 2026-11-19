@@ -204,6 +204,9 @@ for f in lib/AST/Availability.cpp include/swift/AST/ASTContext.h lib/Serializati
 done
 grep -q 'Mavergreen: the length of the string passed, which is empty when optimizing' "$SC/lib/IRGen/GenHeap.cpp" \
   || { echo "FAIL: compiler patch 0004 not applied"; exit 1; }
+for f in lib/AST/Decl.cpp lib/Sema/TypeCheckExpr.cpp lib/Sema/TypeCheckDeclPrimary.cpp; do
+  grep -q "Mavergreen: #isolation is the caller's" "$SC/$f" || { echo "FAIL: compiler patch 0005 not applied ($f)"; exit 1; }
+done
 if [ "$HOST" = x86_64 ]; then
   grep -q "host tools run on the toolchain's own bundled runtime" "$SC/cmake/modules/AddSwift.cmake" || { echo "FAIL: compiler patch 0002 not applied"; exit 1; }
 elif grep -q "host tools run on the toolchain's own bundled runtime" "$SC/cmake/modules/AddSwift.cmake"; then

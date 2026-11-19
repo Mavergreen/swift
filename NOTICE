@@ -409,6 +409,10 @@ swift-frontend is modified: it is built with the patches in ./patches/compiler
         the runtime an empty file name, and now its length, 0, not that of the
         source's full path, which put the build directory's length into the
         binary.
+  0005  #isolation default arguments are the caller's — a parameter defaulted
+        to #isolation is evaluated at each call, in the caller's isolation, as
+        upstream's #isolation macro is; the toolchains' compiler, built without
+        swift-syntax, had evaluated it in the callee, where it is nil.
 
 The cross toolchain package (swift-toolchain-cross-*.pkg) contains the same
 components under the same licenses, built from the same sources and patches
