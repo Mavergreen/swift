@@ -128,7 +128,7 @@ exclude test/Concurrency/Runtime/executor_deinit3.swift -- REQUIRES: rdar7857662
 include test/Concurrency/Runtime/future_fibonacci.swift
 include test/Concurrency/Runtime/isolated_conformance.swift
 exclude test/Concurrency/Runtime/isolated_deinit_main_sync.swift -- RUN uses %target-future-triple
-exclude test/Concurrency/Runtime/isolated_macro_in_nonisolated_nonsending_func.swift -- fails on 10.9: at -O "CHECK: expected string not found in input" for "outerIsolation = #isolation = Optional(Swift.MainActor)" (it prints nil), at -Onone SIGILL, "BUG IN CLIENT OF LIBDISPATCH: Assertion failed: Block was expected to execute on queue [com.apple.main-thread ...]"; under investigation
+include test/Concurrency/Runtime/isolated_macro_in_nonisolated_nonsending_func.swift
 exclude test/Concurrency/Runtime/mainactor.swift -- uses DispatchQueue and dispatchPrecondition, of the Dispatch Swift overlay, which this release does not ship
 exclude test/Concurrency/Runtime/must_not_hop_withContinuation.swift -- REQUIRES: synchronization does not hold on 10.9
 exclude test/Concurrency/Runtime/noncopyable_continuation.swift -- RUN merges the test's stderr into FileCheck's input

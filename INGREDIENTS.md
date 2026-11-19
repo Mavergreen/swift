@@ -321,9 +321,9 @@ merges like any other, as the family's default has it.
 The gate is sized, so that upstream's tests can grow. `run-selftest.sh --gate` runs our own binaries
 500x plus 10x under Guard Malloc (28 of them) and upstream's, each included test at -O and -Onone and once per
 variant (`SELFTEST_UPSTREAM_RUNS`, default 20, plus 1 under Guard Malloc), after a `--loads` run. The lists
-include 12 Darwin and ObjectiveC tests and 61 Concurrency tests (most of those built twice: lit runs them again in
-Swift 5 mode with NonisolatedNonsendingByDefault), 124 builds, 248 upstream binaries, 276 with ours. 43 of those
-tests have their output checked with FileCheck, 160 of the binaries.
+include 12 Darwin and ObjectiveC tests and 62 Concurrency tests (most of those built twice: lit runs them again in
+Swift 5 mode with NonisolatedNonsendingByDefault), 126 builds, 252 upstream binaries, 280 with ours. 44 of those
+tests have their output checked with FileCheck, 164 of the binaries.
 
 Measured on the real box (ultimate-hat, 12 cores, shared: load 3 to 5.5): the whole `--gate`, 274 binaries,
 took 70 min 41 s and passed. Upstream's runs have their own limit, `SELFTEST_UPSTREAM_TIMEOUT`, 180 s. Every
@@ -335,13 +335,13 @@ async_task_cancellation_while_running takes 13.1 s a run, asleep. Everything els
 The VM estimate has to tell sleeping from computing, because a VM is no faster at sleeping. Three suites are
 sleep-bound: basic_future (4 binaries x 21 runs x 4.4 s, about 370 s), clock's unguarded runs (4 x 20 x 1.55 s,
 about 125 s) and async_task_cancellation_while_running (4 x 21 x 13.1 s, about 1100 s), so about 1595 s. The rest
-is CPU-bound: 465 s of the original upstream tests', 157 s of ours and 1635 s of the 43 FileCheck tests' (their
-130 s a run, less 52 s of that sleeping, x 21), 2257 s. At Release 1's VM-to-box CPU ratio of 0.42 (run
-40272925587), that rest takes about 950 s. The VM gate is then about 1595 + 950 = 2545 s, 42 min, and at the
-box's own pace 64 min (the measured 71 min is wall time on a shared box). Compiling in the VM is the larger cost: 276 binaries at a pessimistic 15 s each is 69 min.
+is CPU-bound: 465 s of the original upstream tests', 157 s of ours and 1722 s of the 44 FileCheck tests' (their
+134 s a run, less 52 s of that sleeping, x 21), 2344 s. At Release 1's VM-to-box CPU ratio of 0.42 (run
+40272925587), that rest takes about 985 s. The VM gate is then about 1595 + 985 = 2580 s, 43 min, and at the
+box's own pace 66 min (the measured 71 min is wall time on a shared box). Compiling in the VM is the larger cost: 280 binaries at a pessimistic 15 s each is 70 min.
 Install and smoke are allowed 18 min, a pessimistic allowance (the old estimate's hour less its compiles and gate; the whole
-old vm-test measured about 31 min). Install, compiles, gate and smoke total about 129 min at the worst, so
-`vm-test`'s `timeout-minutes` is 260, twice that, under GitHub's 360. 20 runs stay: 20 plus 1 under Guard Malloc
+old vm-test measured about 31 min). Install, compiles, gate and smoke total about 131 min at the worst, so
+`vm-test`'s `timeout-minutes` is 260, about twice that, under GitHub's 360. 20 runs stay: 20 plus 1 under Guard Malloc
 is a short, deterministic-test budget.
 
 The 260 minutes must be re-sized when more tests come in: each added binary is 15 s of compiles plus its run
@@ -372,11 +372,6 @@ until its blocker goes (the reasons are in `tests/upstream/*.list`):
 - Tests of the Dispatch Swift overlay and of the environment variables above are owed with their blockers, as listed.
 - `test/Concurrency/Runtime/actor_dynamic_subclass.swift`: the 10.9 SDK has no nullability, so it does not compile
   (line 32).
-
-Known compiler bug, under investigation: a `#isolation` default argument evaluates to nil in a MainActor caller,
-where upstream's compiler evaluates it to `MainActor.shared`; `withTaskGroup(isolation:)` and the like get nil too.
-The gate excludes `test/Concurrency/Runtime/isolated_macro_in_nonisolated_nonsending_func.swift`, which checks
-for `Optional(Swift.MainActor)` and prints nil.
 
 ## Why LLVM is pinned by release tag, and checked against the Swift pin
 

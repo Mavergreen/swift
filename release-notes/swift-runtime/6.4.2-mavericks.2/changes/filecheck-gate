@@ -1,1 +1,1 @@
-The 10.9 gate now checks the output of 43 more of upstream Swift's tests with FileCheck.
+The 10.9 gate now checks the output of 44 more of upstream Swift's tests with FileCheck.
