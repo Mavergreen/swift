@@ -60,6 +60,14 @@ mark 0013 Queue.swift "Mavericks: 10.9's dispatch_block_create drops DISPATCH_BL
 mark 0013 Block.swift "Mavericks: 10.9's dispatch_block_create drops its flags"
 mark 0013 Dispatch.swift "Mavericks: a barrier-flagged block is submitted as a barrier below 10.10"
 
+echo "-- patch 0014: DispatchGroup() and DispatchSemaphore(value:) are not failable (10.9's headers carry no nullability)"
+A="$T/out/apinotes/Dispatch.apinotes"; [ -f "$A" ] || fail "no $A"
+for f in dispatch_group_create dispatch_semaphore_create; do
+  grep -A4 "^- Name: $f\$" "$A" | grep -q '^  NullabilityOfRet: N$' || fail "patch 0014 not applied: Dispatch.apinotes' $f lacks NullabilityOfRet: N"
+done
+mark 0015 Dispatch.swift "Mavericks: 5.4 predates Sendable"
+grep -q '^extension DispatchObject : @unchecked Sendable {}$' "$D/Dispatch.swift" || fail "patch 0015: DispatchObject is not Sendable"
+
 echo "-- below macOS 10.10, every path that submits a barrier-flagged block routes it through a barrier function"
 # sync(execute:) and the three async forms (execute:, group:execute:, group:qos:flags:), asyncAfter (4), notify (2)
 n="$(grep -c '_blockFlagsAreHonored && .*flags.contains(.barrier)' "$D/Queue.swift" "$D/Dispatch.swift" | awk -F: '{s+=$2} END{print s}')"

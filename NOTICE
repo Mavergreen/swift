@@ -88,6 +88,10 @@ local patch in ./patches/overlays:
         dispatch_barrier_sync are marked NoEscape, and dispatch_block_flags_t
         is imported as a SwiftWrapper struct, as the 10.9 headers, which lack
         DISPATCH_NOESCAPE and the option-set declaration, do not say so.
+  0014  Dispatch.apinotes: dispatch_group_create and dispatch_semaphore_create
+        are marked to return non-nil, as the 10.9 headers, which carry no
+        nullability annotations, do not say so, and DispatchGroup() and
+        DispatchSemaphore(value:) would import as failable initializers.
 
 The Dispatch overlay's sources (its Swift files and Dispatch.mm) and its shims header
 (DispatchOverlayShims.h) are from swift-5.4-RELEASE's stdlib/public/Darwin/Dispatch and
@@ -119,6 +123,9 @@ project authors), with the local patches in ./patches/overlays:
         dispatch_block_create drops its flags; the other flags (detached,
         assignCurrentContext, noQoS, inheritQoS, enforceQoS) are dropped, 10.9
         having no vouchers or QoS.
+  0015  DispatchObject, DispatchWorkItem, DispatchSpecificKey and DispatchData, and
+        the time, QoS and flag value types, are declared Sendable (unchecked), as Apple's SDK
+        declares them and swift-5.4 predates the protocol.
 
 libswiftDarwin also contains, statically linked, the definition of openat from
 Recaulk (the release pinned in pins.env; its license is below), which Recaulk

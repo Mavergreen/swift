@@ -81,7 +81,13 @@ done
 #       0013 Recaulk's dispatch_block_create drops its flags, so below macOS 10.10 a .barrier work item or block is
 #         submitted with dispatch_barrier_async/_sync (a group's by enter and leave around it) rather than run
 #         alongside the readers; the other flags mean nothing without vouchers and QoS, and are dropped.
-OVERLAY_PATCHES="0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013"
+#  0014 apinotes -- Dispatch.apinotes again, after 0002: dispatch_group_create and dispatch_semaphore_create return
+#       non-nil (10.9's headers carry no nullability, so DispatchGroup() and DispatchSemaphore(value:) would be failable
+#       initializers, as no SDK's are).
+#  0015 Sendable -- 5.4 predates it: DispatchObject (so queues, groups, semaphores, sources, IO), DispatchWorkItem and
+#       DispatchData are @unchecked Sendable, and the time, QoS and flag value types too, as Apple's SDK has them, so
+#       a Swift 6 client can capture a queue or a semaphore in the @Sendable closures it hands a queue.
+OVERLAY_PATCHES="0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013 0014 0015"
 PATCHES_DIR="$HERE/patches/overlays"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $OVERLAY_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED" >&2
@@ -98,6 +104,7 @@ done
 grep -q 'Mavericks: the 10.9 SDK declares -hash a method' "$P/ObjectiveC.swift" || { echo "overlay-sources.sh: overlay patch 0001 (hash) not applied" >&2; exit 1; }
 AP="$OUT/.patch/apinotes/Dispatch.apinotes"
 [ "$(grep -c '^    NoEscape: true$' "$AP")" = 2 ] && grep -q '^  SwiftWrapper: struct$' "$AP" || { echo "overlay-sources.sh: overlay patch 0002 (Dispatch.apinotes) not applied" >&2; exit 1; }
+[ "$(grep -c '^  NullabilityOfRet: N$' "$AP")" = 2 ] || { echo "overlay-sources.sh: overlay patch 0014 (Dispatch.apinotes) not applied" >&2; exit 1; }
 # One marker per patch, in the file it patches; a grep that finds none means a patch applied to nothing it meant.
 dmark() { grep -q "$3" "$PD/$2" || { echo "overlay-sources.sh: overlay patch $1 ($4) not applied" >&2; exit 1; }; }
 dmark 0003 Queue.swift "Mavericks: 10.9's dispatch_get_global_queue" "global(qos:)"
@@ -117,6 +124,7 @@ dmark 0012 Source.swift "Mavericks: Recaulk defines and declares dispatch_activa
 dmark 0013 Queue.swift "Mavericks: 10.9's dispatch_block_create drops DISPATCH_BLOCK_BARRIER" "barrier routing"
 dmark 0013 Block.swift "Mavericks: 10.9's dispatch_block_create drops its flags" "barrier routing"
 dmark 0013 Dispatch.swift "Mavericks: a barrier-flagged block is submitted as a barrier below 10.10" "barrier routing"
+dmark 0015 Dispatch.swift "Mavericks: 5.4 predates Sendable" "Sendable"
 cp "$P/ObjectiveC.swift" "$OUT/ObjectiveC/"
 for f in $DFILES; do cp "$PD/$f" "$OUT/Dispatch/"; done
 cp "$PS/DispatchOverlayShims.h" "$OUT/Dispatch/shims/"

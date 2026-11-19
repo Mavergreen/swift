@@ -1,0 +1,29 @@
+--- stdlib/public/Darwin/Dispatch/Dispatch.swift
++++ stdlib/public/Darwin/Dispatch/Dispatch.swift
+@@ -164,3 +164,26 @@
+ 	}
+ }
+ 
++// Mavericks: 5.4 predates Sendable. A Swift 6 client captures a queue, a group or a semaphore in the
++// @Sendable closures it hands the queue, and passes a time, a QoS or a flag set across them, as Apple's
++// SDK lets it: the objects are thread-safe and the values are plain data (@unchecked, as a retroactive
++// conformance of another file's type must be).
++extension DispatchObject : @unchecked Sendable {}
++extension DispatchWorkItem : @unchecked Sendable {}
++extension DispatchSpecificKey : @unchecked Sendable {}
++extension DispatchData : @unchecked Sendable {}
++extension DispatchTime : @unchecked Sendable {}
++extension DispatchWallTime : @unchecked Sendable {}
++extension DispatchTimeInterval : @unchecked Sendable {}
++extension DispatchTimeoutResult : @unchecked Sendable {}
++extension DispatchQoS : @unchecked Sendable {}
++extension DispatchQoS.QoSClass : @unchecked Sendable {}
++extension DispatchWorkItemFlags : @unchecked Sendable {}
++extension DispatchQueue.Attributes : @unchecked Sendable {}
++extension DispatchSource.MachSendEvent : @unchecked Sendable {}
++extension DispatchSource.MemoryPressureEvent : @unchecked Sendable {}
++extension DispatchSource.ProcessEvent : @unchecked Sendable {}
++extension DispatchSource.TimerFlags : @unchecked Sendable {}
++extension DispatchSource.FileSystemEvent : @unchecked Sendable {}
++extension DispatchIO.CloseFlags : @unchecked Sendable {}
++extension DispatchIO.IntervalFlags : @unchecked Sendable {}
