@@ -634,8 +634,8 @@ jobs:
   # read from where it must load from), and upstream's own tests (build-cross's selftest-support) at 20x plus
   # 1x under Guard Malloc. Then the native toolchain's smoke runs, natively, its
   # load commands read with mavericks-clang-22's llvm-otool and llvm-nm (10.9's are Command Line Tools stubs),
-  # installed, with the Longboat its pkg requires, only after the gate so the gate ran on what a user's Mac
-  # has. publish waits for it.
+  # installed, with the Longboat its pkg requires, before the self-test is built: the gate checks upstream's
+  # tests' output with FileCheck, which only clang22 ships. publish waits for it.
   vm-test:
     needs: [version, build-cross, build]
     runs-on: ubuntu-latest
