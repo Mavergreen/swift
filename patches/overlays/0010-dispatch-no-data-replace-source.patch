@@ -1,0 +1,43 @@
+--- stdlib/public/Darwin/Dispatch/Source.swift
++++ stdlib/public/Darwin/Dispatch/Source.swift
+@@ -193,9 +193,7 @@
+ 		return _swift_dispatch_source_create(_swift_dispatch_source_type_DATA_OR(), 0, 0, queue) as DispatchSourceUserDataOr
+ 	}
+ 
+-	public class func makeUserDataReplaceSource(queue: DispatchQueue? = nil) -> DispatchSourceUserDataReplace {
+-		return _swift_dispatch_source_create(_swift_dispatch_source_type_DATA_REPLACE(), 0, 0, queue) as DispatchSourceUserDataReplace
+-	}
++	// Mavericks: no makeUserDataReplaceSource -- DISPATCH_SOURCE_TYPE_DATA_REPLACE is in no 10.9 header and no Recaulk one
+ 
+ 	public class func makeFileSystemObjectSource(
+ 		fileDescriptor: Int32, eventMask: FileSystemEvent, queue: DispatchQueue? = nil) -> DispatchSourceFileSystemObject 
+@@ -645,17 +643,4 @@
+ 	}
+ }
+ 
+-extension DispatchSourceUserDataReplace {
+-	/// @function replace
+-	///
+-	/// @abstract
+-	/// Merges data into a dispatch source of type DISPATCH_SOURCE_TYPE_DATA_REPLACE
+-	/// and submits its event handler block to its target queue.
+-	///
+-	/// @param data
+-	/// The value that will replace the current pending data. A value of zero will be stored
+-	/// but will not result in the submission of the event handler block.
+-	public func replace(data: UInt) {
+-		__dispatch_source_merge_data(self as! DispatchSource, data)
+-	}
+-}
++// Mavericks: no DispatchSourceUserDataReplace.replace(data:), as no makeUserDataReplaceSource
+--- stdlib/public/SwiftShims/DispatchOverlayShims.h
++++ stdlib/public/SwiftShims/DispatchOverlayShims.h
+@@ -81,7 +81,7 @@
+ 
+ SWIFT_DISPATCH_SOURCE_TYPE(DATA_ADD)
+ SWIFT_DISPATCH_SOURCE_TYPE(DATA_OR)
+-SWIFT_DISPATCH_SOURCE_TYPE(DATA_REPLACE)
++/* Mavericks: no DATA_REPLACE source type, which no 10.9 or Recaulk header declares */
+ SWIFT_DISPATCH_SOURCE_TYPE(READ)
+ SWIFT_DISPATCH_SOURCE_TYPE(SIGNAL)
+ SWIFT_DISPATCH_SOURCE_TYPE(TIMER)

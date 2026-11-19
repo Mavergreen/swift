@@ -85,6 +85,32 @@ local patch in ./patches/overlays:
         is imported as a SwiftWrapper struct, as the 10.9 headers, which lack
         DISPATCH_NOESCAPE and the option-set declaration, do not say so.
 
+The Dispatch overlay's sources (its Swift files and Dispatch.mm) and its shims header
+(DispatchOverlayShims.h) are from swift-5.4-RELEASE's stdlib/public/Darwin/Dispatch and
+stdlib/public/SwiftShims (pins.env's SWIFT54_SHA), under the same license (Apache License
+v2.0 with Runtime Library Exception; Copyright (c) 2014 - present Apple Inc. and the Swift
+project authors), with the local patches in ./patches/overlays:
+  0003  DispatchQueue.global(qos:) maps the QoS class to the 10.9 SDK's queue
+        priorities below macOS 10.10, whose dispatch_get_global_queue takes none.
+  0004  No AutoreleaseFrequency: no 10.9 header declares
+        dispatch_queue_attr_make_with_autorelease_frequency.
+  0005  No initially-inactive queue attribute: no 10.9 header declares
+        dispatch_queue_attr_make_initially_inactive.
+  0006  DispatchQueue.init(label:...target:) sets the target after creating the
+        queue: no 10.9 header declares dispatch_queue_create_with_target.
+  0007  DispatchWorkItem has no wait or notify, nor the shims their calls: no 10.9
+        header declares dispatch_block_wait or dispatch_block_notify.
+  0008  No DispatchPredicate or dispatchPrecondition: no 10.9 header declares the
+        dispatch_assert_queue functions.
+  0009  No DispatchQueue.qos: no 10.9 header declares dispatch_queue_get_qos_class.
+  0010  No DATA_REPLACE source (DispatchSourceUserDataReplace), nor its shim: no
+        10.9 header declares DISPATCH_SOURCE_TYPE_DATA_REPLACE.
+  0011  DispatchData and DispatchIO unwrap the results and arguments the 10.9
+        headers, which carry no nullability annotations, import as optionals.
+  0012  The availability of what uses the dispatch_block functions, dispatch_activate
+        and dispatch_queue_attr_make_with_qos_class is lowered to macOS 10.9, as
+        Recaulk defines and declares them.
+
 libswiftDarwin also contains, statically linked, the definition of openat from
 Recaulk (the release pinned in pins.env; its license is below), which Recaulk
 builds from two sources of MacPorts' legacy-support library

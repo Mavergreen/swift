@@ -1,0 +1,23 @@
+--- stdlib/public/Darwin/Dispatch/Queue.swift
++++ stdlib/public/Darwin/Dispatch/Queue.swift
+@@ -131,9 +131,18 @@
+ 		return __dispatch_get_global_queue(priority._translatedValue, 0)
+ 	}
+ 
+-	@available(macOS 10.10, iOS 8.0, *)
++	@available(macOS 10.9, iOS 8.0, *)
+ 	public class func global(qos: DispatchQoS.QoSClass = .default) -> DispatchQueue {
+-		return __dispatch_get_global_queue(Int(qos.rawValue.rawValue), 0)
++		if #available(macOS 10.10, iOS 8.0, *) {
++			return __dispatch_get_global_queue(Int(qos.rawValue.rawValue), 0)
++		}
++		// Mavericks: 10.9's dispatch_get_global_queue takes a priority, not a QoS class, and returns NULL for one
++		switch qos {
++		case .userInteractive, .userInitiated: return __dispatch_get_global_queue(2, 0) // DISPATCH_QUEUE_PRIORITY_HIGH
++		case .default, .unspecified: return __dispatch_get_global_queue(0, 0) // DISPATCH_QUEUE_PRIORITY_DEFAULT
++		case .utility: return __dispatch_get_global_queue(-2, 0) // DISPATCH_QUEUE_PRIORITY_LOW
++		case .background: return __dispatch_get_global_queue(Int(Int16.min), 0) // DISPATCH_QUEUE_PRIORITY_BACKGROUND
++		}
+ 	}
+ 
+ 	public class func getSpecific<T>(key: DispatchSpecificKey<T>) -> T? {

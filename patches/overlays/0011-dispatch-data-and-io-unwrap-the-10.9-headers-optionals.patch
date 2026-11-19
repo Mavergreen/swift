@@ -1,0 +1,58 @@
+--- stdlib/public/Darwin/Dispatch/Data.swift
++++ stdlib/public/Darwin/Dispatch/Data.swift
+@@ -156,7 +156,7 @@
+ 	/// - parameter data: The data to append to this data.
+ 	public mutating func append(_ other: DispatchData) {
+ 		let data = __dispatch_data_create_concat(__wrapped, other.__wrapped)
+-		__wrapped = data
++		__wrapped = data!  // Mavericks: the 10.9 headers carry no nullability; dispatch_data_create_concat returns non-NULL
+ 	}
+ 
+ 	/// Append a buffer of bytes to the data.
+@@ -170,7 +170,8 @@
+ 		var copiedCount = 0
+ 		if range.isEmpty { return }
+ 		let rangeSize = range.count
+-		__dispatch_data_apply(__wrapped) { (_, offset: Int, ptr: UnsafeRawPointer, size: Int) in
++		__dispatch_data_apply(__wrapped) { (_, offset: Int, ptr_: UnsafeRawPointer?, size: Int) in
++			let ptr = ptr_!  // Mavericks: the 10.9 headers carry no nullability; the applier's buffer is non-NULL
+ 			if offset >= range.endIndex { return false } // This region is after endIndex
+ 			let copyOffset = range.startIndex > offset ? range.startIndex - offset : 0 // offset of first byte, in this region
+ 			if copyOffset >= size { return true } // This region is before startIndex
+@@ -261,7 +262,7 @@
+ 
+ 		var ptr: UnsafeRawPointer?
+ 		var size = 0
+-		let map = __dispatch_data_create_map(subdata, &ptr, &size)
++		let map = __dispatch_data_create_map(subdata!, &ptr, &size)  // Mavericks: the 10.9 headers carry no nullability; non-NULL
+ 		defer { _fixLifetime(map) }
+ 
+ 		return ptr!.load(fromByteOffset: index - offset, as: UInt8.self)
+@@ -277,13 +278,13 @@
+ 	public func subdata(in range: Range<Index>) -> DispatchData {
+ 		let subrange = __dispatch_data_create_subrange(
+ 			__wrapped, range.startIndex, range.endIndex - range.startIndex)
+-		return DispatchData(data: subrange)
++		return DispatchData(data: subrange!)  // Mavericks: the 10.9 headers carry no nullability; non-NULL
+ 	}
+ 
+ 	public func region(location: Int) -> (data: DispatchData, offset: Int) {
+ 		var offset: Int = 0
+ 		let data = __dispatch_data_copy_region(__wrapped, location, &offset)
+-		return (DispatchData(data: data), offset)
++		return (DispatchData(data: data!), offset)  // Mavericks: the 10.9 headers carry no nullability; non-NULL
+ 	}
+ 
+ 	public var startIndex: Index {
+--- stdlib/public/Darwin/Dispatch/IO.swift
++++ stdlib/public/Darwin/Dispatch/IO.swift
+@@ -33,7 +33,8 @@
+ 	}
+ 
+ 	public class func read(fromFileDescriptor: Int32, maxLength: Int, runningHandlerOn queue: DispatchQueue, handler: @escaping (_ data: DispatchData, _ error: Int32) -> Void) {
+-		__dispatch_read(fromFileDescriptor, maxLength, queue) { (data: __DispatchData, error: Int32) in
++		__dispatch_read(fromFileDescriptor, maxLength, queue) { (data_: __DispatchData?, error: Int32) in
++			let data = data_!  // Mavericks: the 10.9 headers carry no nullability; the handler's data is non-NULL
+ 			handler(DispatchData(data: data), error)
+ 		}
+ 	}

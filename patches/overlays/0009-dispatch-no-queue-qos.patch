@@ -1,0 +1,31 @@
+--- stdlib/public/Darwin/Dispatch/Private.swift
++++ stdlib/public/Darwin/Dispatch/Private.swift
+@@ -176,11 +176,7 @@
+ 	fatalError()
+ }
+ 
+-@available(*, unavailable, renamed:"getter:DispatchQueue.qos(self:)")
+-public func dispatch_queue_get_qos_class(_ queue: DispatchQueue, _ relative_priority_ptr: UnsafeMutablePointer<Int32>?) -> qos_class_t
+-{
+-	fatalError()
+-}
++// Mavericks: no dispatch_queue_get_qos_class stub -- it names DispatchQueue.qos, which this overlay lacks
+ 
+ @available(*, unavailable, renamed:"DispatchQueue.asyncAfter(self:deadline:qos:flags:execute:)")
+ public func dispatch_after(_ when: dispatch_time_t, _ queue: DispatchQueue, _ block: () -> Void)
+--- stdlib/public/Darwin/Dispatch/Queue.swift
++++ stdlib/public/Darwin/Dispatch/Queue.swift
+@@ -435,12 +435,7 @@
+ 		_swift_dispatch_after(wallDeadline.rawValue, self, execute._block)
+ 	}
+ 
+-	@available(macOS 10.10, iOS 8.0, *)
+-	public var qos: DispatchQoS {
+-		var relPri: Int32 = 0
+-		let cls = DispatchQoS.QoSClass(rawValue: __dispatch_queue_get_qos_class(self, &relPri))!
+-		return DispatchQoS(qosClass: cls, relativePriority: Int(relPri))
+-	}
++	// Mavericks: no qos -- dispatch_queue_get_qos_class is in no 10.9 header and no Recaulk one
+ 
+ 	public func getSpecific<T>(key: DispatchSpecificKey<T>) -> T? {
+ 		let k = Unmanaged.passUnretained(key).toOpaque()
