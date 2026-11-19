@@ -25,11 +25,12 @@ check() {
   awk '/install libcxx\/libcxx22-\*\.pkg prev\/swift-runtime-\*\.pkg prev\/swift-toolchain-\[0-9\]\*\.pkg$/ { a = NR }
        /install dist\/swift-runtime-\*\.pkg dist\/swift-toolchain-\[0-9\]\*\.pkg$/ { b = NR }
        /\/usr\/local\/bin\/mavergreen check$/ { c = NR }
+       /sh make-selftest\.sh$/ { m = NR }
        /run-selftest\.sh --gate/ { g = NR }
        /install longboat\/longboat-\[0-9\]\*\.pkg clang22\/mavericks-clang-22-native-\*\.pkg$/ { k = NR }
        /sh tests\/toolchain-smoke-test\.sh/ { s = NR }
-       END { exit !(a && a < b && b < c && c < g && g < k && k < s) }' "$T/job" \
-    || { echo "vm-test does not install libcxx22 and the previous release, then this run's, check the install, gate, then install Longboat and clang22 and smoke, in that order"; return 1; }
+       END { exit !(a && a < b && b < c && c < k && k < m && m < g && g < s) }' "$T/job" \
+    || { echo "vm-test does not install libcxx22 and the previous release, then this run's, check the install, install Longboat and clang22 (FileCheck is the gate's), build the self-test, gate, then smoke, in that order"; return 1; }
   grep -q '\[ "\$got" = "\$SWIFT_FULL_VERSION" \]' "$T/job" && grep -q 'SWIFT_FULL_VERSION: \${{ needs.version.outputs.version }}' "$T/job" \
     || { echo "vm-test does not hold the upgraded receipts to this run's version"; return 1; }
   grep -q 'gh release download "\$prev" -R "\$GITHUB_REPOSITORY" -p "swift-runtime-\$prev.pkg" -p "swift-toolchain-\$prev.pkg" -p SHA256SUMS' "$T/job" \
@@ -66,7 +67,7 @@ mutant "vm-test does not upgrade from the previous release" 's| prev/swift-runti
 mutant "the previous release goes unfetched" 's|gh release download "\$prev"|echo "$prev"|'
 mutant "the upgraded receipts are not checked" 's/\[ "\$got" = "\$SWIFT_FULL_VERSION" \]/true/'
 mutant "the family install is not checked" 's|/usr/local/bin/mavergreen check$|true|'
-mutant "clang22 is installed before the gate" '/install longboat\/longboat-.*clang22\/mavericks-clang-22-native/d; s|^\(            install dist/swift-runtime-\*\.pkg.*\)$|\1\
+mutant "clang22 is installed only after the gate" '/install longboat\/longboat-.*clang22\/mavericks-clang-22-native/d; s|^\(              sh swift-runtime-selftest/run-selftest.sh --gate )\)$|\1\
             install longboat/longboat-[0-9]*.pkg clang22/mavericks-clang-22-native-*.pkg|'
 mutant "Longboat is not installed before clang22" 's|install longboat/longboat-\[0-9\]\*\.pkg clang22/|install clang22/|'
 mutant "Longboat goes unfetched" 's|gh release download "\$lb"|echo "$lb"|'
