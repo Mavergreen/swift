@@ -115,10 +115,15 @@ for t in clang clang++ ld64.lld llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-o
   printf '#!/bin/sh\n' > "$C22/bin/$t"; chmod +x "$C22/bin/$t"
 done
 # Recaulk: recaulk_subset reads the archive with clang22's llvm-nm -A and writes the subset with its llvm-ar.
+# fwd-97.o calls close, which a socket_close member shadows beside dup2, as in Recaulk 20261118.1: the
+# 10.9 SDK's libSystem stub (llvm-nm -gU, below) exports close, so the subset leaves socket_close out.
 cat > "$C22/bin/llvm-nm" <<'F'
 #!/bin/sh
+case "$*" in *libSystem.B.dylib) printf '%s\n' "0000000000001000 T _close" "0000000000001010 T _dup2" "0000000000001020 T _fma"; exit 0 ;; esac
 [ "$1" = -A ] || exit 0
 printf '%s\n' "$2:fwd-97.o: 0000000000000000 T _os_system_version_get_current_version" "$2:fwd-97.o:                  U ___recaulk_resolve" \
+  "$2:fwd-97.o:                  U _close" "$2:recaulk-socket_close.o: 0000000000000000 T _close" \
+  "$2:recaulk-socket_close.o: 0000000000000010 T _dup2" \
   "$2:fwd-resolve.o: 0000000000000000 T ___recaulk_resolve" "$2:fwd-9.o: 0000000000000000 T _os_signpost_enabled" \
   "$2:fwd-90.o: 0000000000000000 T _objc_readClassPair" "$2:fwd-90.o:                  U ___recaulk_resolve" \
   "$2:recaulk-libm_fma.o: 0000000000000000 T _fma" "$2:recaulk-libm_fma.o: 0000000000000010 T ___recaulk_fma" \
@@ -136,6 +141,10 @@ printf '%s\n' "$2:fwd-97.o: 0000000000000000 T _os_system_version_get_current_ve
 F
 printf '#!/bin/sh\ncase "$1" in rcs) : > "$2" ;; esac\n' > "$C22/bin/llvm-ar"; chmod +x "$C22/bin/llvm-nm" "$C22/bin/llvm-ar"
 printf '#!/bin/sh\necho "%s/sdk/MacOSX11.3.sdk"\n' "$T" > "$T/shipyard/fetch_sdk.sh"
+# The 10.9 SDK's stubs (lib.sh's sdk109_stubs), already in the cache, with the libSystem stub llvm-nm reads above.
+printf '%s\n' 'shipyard_sdk_pin() { echo https://example.invalid/sdk 0 MacOSX10.9.sdk.tar.xz MacOSX10.9.sdk; }' > "$T/shipyard/sdk-pins.sh"
+: > "$T/shipyard/mavericks_fetch.sh"
+mkdir -p "$T/sdk-cache/stubs/MacOSX10.9.sdk/usr/lib"; : > "$T/sdk-cache/stubs/MacOSX10.9.sdk/usr/lib/libSystem.B.dylib"
 # libcxx22: clang22's libc++ headers, and fetch-libcxx22.sh's pkg, unpacked where it names (its last argument)
 mkdir -p "$C22/include/c++/v1"; : > "$C22/include/c++/v1/__config"
 cat > "$T/shipyard/fetch_product_pkg.sh" <<'F'
@@ -194,7 +203,8 @@ receipt "$SWIFT_VERSION-mavericks.9"
 build_native() {  # build.sh's native mode past step 1, everything faked; ninja stops it after the configure
   : > "$T/log"
   if ( export PATH="$T/fakebin:$PATH" FAKE_LOG="$T/log" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=native \
-        SWIFT_HOST_TOOLCHAIN="$H" CLANG22_PREFIX="$C22" MAVERICKS_CLANG_CACHE="$T/clang-cache" MAVERGREEN_RECAULK_CACHE="$T/recaulk-cache"
+        SWIFT_HOST_TOOLCHAIN="$H" CLANG22_PREFIX="$C22" MAVERICKS_CLANG_CACHE="$T/clang-cache" MAVERGREEN_RECAULK_CACHE="$T/recaulk-cache" \
+        MAVERICKS_SDK_CACHE="$T/sdk-cache"
       unset SWIFT_WORK SWIFT_BUILTINS NM
       sh "$REPO/build.sh" ) > "$T/out" 2>&1; then fail "build.sh got past a build that failed: $(cat "$T/out")"; fi
 }

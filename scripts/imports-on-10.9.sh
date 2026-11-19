@@ -21,7 +21,7 @@
 set -eu
 
 HERE="$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)"
-. "$HERE/lib.sh"    # -> macho_imports
+. "$HERE/lib.sh"    # -> macho_imports, sdk_stub_exports
 
 [ $# -ge 3 ] || { echo "usage: $0 <sdk109-root> <allowlist> <dylib>..." >&2; exit 2; }
 SDK="$1"; ALLOW="$2"; shift 2
@@ -30,7 +30,7 @@ SDK="$1"; ALLOW="$2"; shift 2
 
 W="$(mktemp -d "${TMPDIR:-/tmp}/imports-on-109.XXXXXX")"
 trap 'rm -rf "$W"' EXIT
-mkdir "$W/exp" "$W/seen"
+mkdir "$W/exp"
 
 # Every line is a comment, blank, or `<dylib> <symbol> -- <file>:<line>`: a guard nobody can find is no guard.
 BAD="$(grep -Ev '^[[:space:]]*(#.*)?$|^[^[:space:]]+ [^[:space:]]+ -- [^[:space:]]+:[0-9]+$' "$ALLOW" || :)"
@@ -38,30 +38,12 @@ if [ -n "$BAD" ]; then
   printf '%s\n' "$BAD"; echo "FAIL: $ALLOW has the lines above, each needing ' -- <file>:<line>' for its guard" >&2; exit 1
 fi
 
-# collect <install-path> <outfile> -- appends the symbols the SDK's stub for <install-path> exports, and
-# those of each library it re-exports, to <outfile>. A stub the SDK lacks adds nothing: every import from
-# it then reads as absent. nm and otool take -arch because the stubs are fat (x86_64 and i386).
-collect() {
-  _c_key="$(printf '%s' "$1" | tr '/' '_')"
-  [ ! -e "$W/seen/$_c_key" ] || return 0
-  : > "$W/seen/$_c_key"
-  [ -f "$SDK$1" ] || return 0
-  # An alias prints as `I _memcpy (indirect for __platform_memmove)`: libsystem_c's memcpy is one.
-  # (nm's output is captured first: in a pipe, only awk's status would be seen.)
-  _c_nm="$("${NM:-nm}" -arch x86_64 -gU "$SDK$1")" || return 1
-  printf '%s\n' "$_c_nm" | awk '$1 == "I" { print $2; next } { print $NF }' >> "$2" || return 1
-  "${OTOOL:-otool}" -arch x86_64 -l "$SDK$1" > "$W/lc" || return 1
-  awk '$1 == "cmd" { r = ($2 == "LC_REEXPORT_DYLIB") } r && $1 == "name" { print $2 }' "$W/lc" > "$W/re.$_c_key"
-  while read -r _c_re; do collect "$_c_re" "$2" || return 1; done < "$W/re.$_c_key"
-}
-
 # exports_of <install-path> -- the file of that library's exported symbols, one per line.
 exports_of() {
   _e_key="$(printf '%s' "$1" | tr '/' '_')"
   if [ ! -f "$W/exp/$_e_key" ]; then
-    rm -rf "$W/seen"; mkdir "$W/seen"
     : > "$W/exp/$_e_key"
-    collect "$1" "$W/exp/$_e_key" || { echo "FAIL: could not read $SDK$1's exports" >&2; rm -f "$W/exp/$_e_key"; return 1; }
+    sdk_stub_exports "$SDK" "$1" "$W/exp/$_e_key" || { echo "FAIL: could not read $SDK$1's exports" >&2; rm -f "$W/exp/$_e_key"; return 1; }
   fi
   printf '%s\n' "$W/exp/$_e_key"
 }

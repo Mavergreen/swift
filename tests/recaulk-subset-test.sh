@@ -68,4 +68,29 @@ void __recaulk_copy_helper_block_8_32b(void) {} void __recaulk_mpls_best_fchdir(
 recaulk_subset "$T/p.a" "$T/pb.a" "$T/pb.unx" _api_pblk || fail "refused fwd-pblk.o's prefixed helpers"
 [ "$(tr '\n' ' ' < "$T/pb.unx")" = "___recaulk_copy_helper_block_8_32b ___recaulk_mpls_best_fchdir _api_pblk " ] \
   || fail "unexported list: $(tr '\n' ' ' < "$T/pb.unx")"
+echo "-- an unasked name OS X 10.9's libSystem defines binds there, never to the member that shadows it"
+# Recaulk 20261118.1's os_system_version member calls close, and its socket_close member defines close and
+# dup2: the subset leaves socket_close out when RECAULK_SYSTEM_EXPORTS (10.9's libSystem's exports) names close.
+o fwd-ver 'extern void *__recaulk_resolve(const char *); extern int close(int);
+int api_ver(void) { __recaulk_resolve("v"); return close(-1); }'
+o shadow-close 'int close(int fd) { return fd; } int dup2(int a, int b) { return a + b; }'
+( cd "$T" && ar rcs c.a fwd-ver.o fwd-resolve.o shadow-close.o ) || fail "cannot build c.a"
+printf '%s\n' _close _dup2 _open > "$T/sys.txt"
+if ( unset RECAULK_SYSTEM_EXPORTS; recaulk_subset "$T/c.a" "$T/c0.a" "$T/c0.unx" _api_ver ) 2> "$T/err"; then
+  fail "without RECAULK_SYSTEM_EXPORTS, took shadow-close.o's unasked close and dup2"
+fi
+grep -q 'shadow-close.o also defines _dup2' "$T/err" || fail "did not name shadow-close.o's _dup2: $(cat "$T/err")"
+RECAULK_SYSTEM_EXPORTS="$T/sys.txt" recaulk_subset "$T/c.a" "$T/c1.a" "$T/c1.unx" _api_ver || fail "refused _api_ver with close in 10.9's libSystem"
+[ "$(members "$T/c1.a")" = "fwd-resolve.o fwd-ver.o " ] || fail "picked: $(members "$T/c1.a")"
+! grep -qx _close "$T/c1.unx" || fail "the unexported list hides close, which binds to libSystem"
+echo "-- a name asked for comes from Recaulk even when 10.9's libSystem defines it, and its member is still held to the rule"
+RECAULK_SYSTEM_EXPORTS="$T/sys.txt" recaulk_subset "$T/c.a" "$T/c2.a" "$T/c2.unx" _close _dup2 || fail "refused the asked-for _close _dup2"
+[ "$(members "$T/c2.a")" = "shadow-close.o " ] || fail "picked: $(members "$T/c2.a")"
+if RECAULK_SYSTEM_EXPORTS="$T/sys.txt" recaulk_subset "$T/c.a" "$T/c3.a" "$T/c3.unx" _close 2> "$T/err"; then
+  fail "took shadow-close.o for _close with its unasked _dup2"
+fi
+grep -q 'shadow-close.o also defines _dup2' "$T/err" || fail "did not name the unasked _dup2: $(cat "$T/err")"
+if RECAULK_SYSTEM_EXPORTS="$T/none.txt" recaulk_subset "$T/c.a" "$T/c4.a" "$T/c4.unx" _api_ver 2> "$T/err"; then
+  fail "accepted a RECAULK_SYSTEM_EXPORTS that names no file"
+fi
 echo "PASS"

@@ -138,6 +138,15 @@ CXX_LIBCXX="-nostdinc++ -isystem $CXXINC -ffile-prefix-map=$CXXINC=/mavergreen-l
 #       turns tracing on over a NULL os_log_create on 10.9), so lib.sh's recaulk_subset picks the members
 #       by symbol, and the link hides every global they define.
 RECAULK_RUNTIME_SYMBOLS="_os_system_version_get_current_version _objc_readClassPair _fma _fmal _truncl"
+# spec: INGREDIENTS.md "Recaulk" -- what a subset's members need that OS X 10.9's libSystem defines binds to
+#       libSystem, as it always has, unless a RECAULK_*_SYMBOLS asks for it: Recaulk's socket_close shadows close
+#       and dup2, which its os_system_version and atcalls members call, and none of the dylibs takes it. The
+#       10.9 SDK's own stubs say what libSystem defines (lib.sh's sdk109_stubs, sdk_stub_exports).
+SDK109="$(sdk109_stubs)" || { echo "FAIL: could not fetch the 10.9 SDK's stubs"; exit 1; }
+RECAULK_SYSTEM_EXPORTS="$ROOT/libsystem-10.9.exports"; rm -f "$RECAULK_SYSTEM_EXPORTS"
+( NM="$X/llvm-nm"; OTOOL="${OTOOL:-otool}"; sdk_stub_exports "$SDK109" /usr/lib/libSystem.B.dylib "$RECAULK_SYSTEM_EXPORTS" ) \
+  && [ -s "$RECAULK_SYSTEM_EXPORTS" ] || { echo "FAIL: read no exports from $SDK109/usr/lib/libSystem.B.dylib"; exit 1; }
+export RECAULK_SYSTEM_EXPORTS
 RECAULK_PREFIX="$(sh "$HERE/fetch-recaulk.sh")" || { echo "FAIL: could not fetch Recaulk $RECAULK_VERSION"; exit 1; }
 RECAULK_A="$ROOT/recaulk-runtime.a"; RECAULK_UNX="$ROOT/recaulk-runtime.unexported"
 # shellcheck disable=SC2086  # space-free symbol names
@@ -627,7 +636,6 @@ done
 #       time against the 11.3 SDK. Every symbol the shipped dylibs import from /usr/lib or a framework is
 #       checked against the 10.9 SDK's own stubs (lib.sh's sdk109_stubs); a weak one the stubs lack must
 #       have a guard cited in the allowlist. Captured first: the output is the list of what failed.
-SDK109="$(sdk109_stubs)" || { echo "FAIL: could not fetch the 10.9 SDK's stubs"; exit 1; }
 # shellcheck disable=SC2086  # space-free paths
 IMPORTS_109="$(DYLDINFO="$DYLDINFO" NM="${NM:-nm}" OTOOL="${OTOOL:-otool}" sh "$HERE/scripts/imports-on-10.9.sh" "$SDK109" \
   "$HERE/scripts/resources/weak-absent-on-10.9.txt" $SHIPPED_DYLIBS)" \

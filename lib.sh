@@ -406,6 +406,31 @@ runtime_patches_unlisted() {
   [ "$_rp_bad" -eq 0 ]
 }
 
+# sdk_stub_exports <sdk-root> <install-path> <outfile> -- appends to <outfile>, one per line, every symbol
+# the SDK's stub for <install-path> exports, and those of each library it re-exports, as libSystem
+# re-exports /usr/lib/system/*. A stub the SDK lacks adds nothing. ${NM:-nm} and ${OTOOL:-otool} read the
+# stubs, with -arch x86_64 since they are fat (x86_64 and i386). scripts/imports-on-10.9.sh reads what
+# 10.9 has with it, and build.sh what recaulk_subset leaves to libSystem.
+sdk_stub_exports() {
+  _sx_w="$(mktemp -d "${TMPDIR:-/tmp}/sdk-stub-exports.XXXXXX")" || return 1
+  mkdir "$_sx_w/seen" && _sdk_stub_collect "$1" "$2" "$3" "$_sx_w"; _sx_rc=$?
+  rm -rf "$_sx_w"; return "$_sx_rc"
+}
+# _sdk_stub_collect <sdk-root> <install-path> <outfile> <workdir> -- sdk_stub_exports' recursion.
+_sdk_stub_collect() {
+  _c_key="$(printf '%s' "$2" | tr '/' '_')"
+  [ ! -e "$4/seen/$_c_key" ] || return 0
+  : > "$4/seen/$_c_key"
+  [ -f "$1$2" ] || return 0
+  # An alias prints as `I _memcpy (indirect for __platform_memmove)`: libsystem_c's memcpy is one.
+  # (nm's output is captured first: in a pipe, only awk's status would be seen.)
+  _c_nm="$("${NM:-nm}" -arch x86_64 -gU "$1$2")" || return 1
+  printf '%s\n' "$_c_nm" | awk '$1 == "I" { print $2; next } { print $NF }' >> "$3" || return 1
+  "${OTOOL:-otool}" -arch x86_64 -l "$1$2" > "$4/lc" || return 1
+  awk '$1 == "cmd" { r = ($2 == "LC_REEXPORT_DYLIB") } r && $1 == "name" { print $2 }' "$4/lc" > "$4/re.$_c_key"
+  while read -r _c_re; do _sdk_stub_collect "$1" "$_c_re" "$3" "$4" || return 1; done < "$4/re.$_c_key"
+}
+
 # recaulk_subset <librecaulk.a> <out.a> <out.unexported> <symbol>... -- writes <out.a>, the members of
 # <librecaulk.a> that define each <symbol> and, transitively, every symbol those members need that the
 # archive defines (a forwarder's ___recaulk_impl_ body, ___recaulk_resolve), chosen by symbol and never by
@@ -417,19 +442,26 @@ runtime_patches_unlisted() {
 # runtime reads as "the OS has this" (os_signpost_enabled turns tracing on over a NULL os_log_create on
 # 10.9). There are no exceptions: since 20261108.3 Recaulk prefixes its incidental globals too (clang's
 # block helpers in dispatch_modern, macports-legacy-support's best_fchdir in pthread_chdir), so a global
-# outside the rule is something to ask Recaulk to rename, not to hide here. ${NM:-nm} reads the archive
-# (-A), ${AR:-ar} extracts and writes it.
+# outside the rule is something to ask Recaulk to rename, not to hide here. A file RECAULK_SYSTEM_EXPORTS
+# names (sdk_stub_exports of 10.9's libSystem) lists what the OS defines itself: a member's need for one of
+# those names, unless a <symbol>, binds to libSystem at the link, so it picks no member (Recaulk's
+# socket_close defines close and dup2, which its os_system_version and macports-legacy-support's atcalls
+# call). A <symbol> is always Recaulk's, the OS's or not (fma, fmal, truncl), and every member picked is
+# still held to the rule above. ${NM:-nm} reads the archive (-A), ${AR:-ar} extracts and writes it.
 recaulk_subset() {
   _rs_in="$1"; _rs_out="$2"; _rs_unx="$3"; shift 3
   [ $# -gt 0 ] || { echo "recaulk_subset: no symbols named" >&2; return 2; }
   [ -f "$_rs_in" ] || { echo "recaulk_subset: no archive $_rs_in" >&2; return 1; }
   case "$_rs_in" in /*) ;; *) _rs_in="$PWD/$_rs_in" ;; esac
   case "$_rs_out" in /*) ;; *) _rs_out="$PWD/$_rs_out" ;; esac
+  _rs_sys="${RECAULK_SYSTEM_EXPORTS:-/dev/null}"
+  [ -f "$_rs_sys" ] || [ "$_rs_sys" = /dev/null ] || { echo "recaulk_subset: RECAULK_SYSTEM_EXPORTS names no file: $_rs_sys" >&2; return 1; }
   _rs_t="$(mktemp -d "${TMPDIR:-/tmp}/recaulk-subset.XXXXXX")" || return 1
   "${NM:-nm}" -A "$_rs_in" > "$_rs_t/nm" || { echo "recaulk_subset: ${NM:-nm} could not read $_rs_in" >&2; rm -rf "$_rs_t"; return 1; }
   # Each line is "<archive>:<member>: [value] <type> <name>": the member is the first word's second-last
   # colon-separated field.
-  awk -v want="$*" -v members="$_rs_t/members" -v globals="$_rs_t/globals" '
+  awk -v want="$*" -v members="$_rs_t/members" -v globals="$_rs_t/globals" -v sysf="$_rs_sys" '
+    BEGIN { while ((getline l < sysf) > 0) sys[l] = 1 }
     { np = split($1, p, ":"); m = p[np - 1]; ty = $(NF - 1); n = $NF
       if (ty == "U") { und[m] = und[m] " " n } else if (ty ~ /^[A-Z]$/) { def[n] = m; glob[m] = glob[m] " " n } }
     END {
@@ -440,7 +472,7 @@ recaulk_subset() {
       }
       for (j = 1; j <= nq; j++) {
         nu = split(und[q[j]], u, " ")
-        for (k = 1; k <= nu; k++) if ((u[k] in def) && !(def[u[k]] in sel)) { sel[def[u[k]]] = 1; q[++nq] = def[u[k]] }
+        for (k = 1; k <= nu; k++) if ((u[k] in def) && !(u[k] in sys) && !(def[u[k]] in sel)) { sel[def[u[k]]] = 1; q[++nq] = def[u[k]] }
       }
       for (m in sel) {
         print m > members
@@ -568,8 +600,8 @@ compiler_patches() {
 # wrapper links into every program) with its notices and version. The two toolchain pkgs must carry them byte for
 # byte: in CI build-cross builds them once and stages them in the cross toolchain, and build stages the
 # cross pkg's copy in the native one, so a difference is a staging fault; each job digests what it
-# staged, and collect compares the two. Fails, naming it, when an anchor (the five dylibs, Swift's, Darwin's,
-# ObjectiveC's, _Concurrency's and _Builtin_float's swiftmodule, the shims' module.modulemap, the builtins archive, Recaulk's archive and notices) is missing, or a tree holds a link, a
+# staged, and collect compares the two. Fails, naming it, when an anchor (the six dylibs, Swift's, Darwin's,
+# ObjectiveC's, Dispatch's, _Concurrency's and _Builtin_float's swiftmodule, the shims' module.modulemap, the builtins archive, Recaulk's archive and notices) is missing, or a tree holds a link, a
 # path with a space, or a file that cannot be hashed: two jobs that each printed nothing, or less than
 # the whole trees, must never compare equal.
 toolchain_digest() {
@@ -577,7 +609,8 @@ toolchain_digest() {
   _td_cl="lib/clang/$(basename "$(dirname "$_td_inc")")/lib"
   for _td_f in lib/swift/macosx/libswiftCore.dylib lib/swift/macosx/libswiftSwiftOnoneSupport.dylib \
                lib/swift/macosx/libswiftDarwin.dylib lib/swift/macosx/libswiftObjectiveC.dylib \
-               lib/swift/macosx/libswift_Concurrency.dylib \
+               lib/swift/macosx/libswiftDispatch.dylib lib/swift/macosx/libswift_Concurrency.dylib \
+               lib/swift/macosx/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule \
                lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule \
                lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule \
                lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule \
@@ -611,7 +644,7 @@ toolchain_digest_whole() {
   case "$1" in
     ' '*|*' '|*'  '*) echo "toolchain_digest: the line holds an empty entry" >&2; return 1 ;;
   esac
-  _tw_core=""; _tw_onone=""; _tw_mod=""; _tw_map=""; _tw_rt=""; _tw_dar=""; _tw_objc=""; _tw_dmod=""; _tw_omod=""; _tw_conc=""; _tw_cmod=""; _tw_bmod=""; _tw_rk=""; _tw_rkn=""
+  _tw_core=""; _tw_onone=""; _tw_mod=""; _tw_map=""; _tw_rt=""; _tw_dar=""; _tw_objc=""; _tw_dmod=""; _tw_omod=""; _tw_disp=""; _tw_dimod=""; _tw_conc=""; _tw_cmod=""; _tw_bmod=""; _tw_rk=""; _tw_rkn=""
   while IFS= read -r _tw_e; do
     _tw_h="${_tw_e#*=}"
     case "$_tw_e" in lib/?*=*) _tw_ok=1 ;; *) _tw_ok="" ;; esac
@@ -626,6 +659,8 @@ toolchain_digest_whole() {
       lib/swift/macosx/libswiftObjectiveC.dylib) _tw_objc=1 ;;
       lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_dmod=1 ;;
       lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_omod=1 ;;
+      lib/swift/macosx/libswiftDispatch.dylib) _tw_disp=1 ;;
+      lib/swift/macosx/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_dimod=1 ;;
       lib/swift/macosx/libswift_Concurrency.dylib) _tw_conc=1 ;;
       lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_cmod=1 ;;
       lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_bmod=1 ;;
@@ -645,6 +680,8 @@ EOF
   [ -n "$_tw_objc" ] || _tw_miss="$_tw_miss lib/swift/macosx/libswiftObjectiveC.dylib"
   [ -n "$_tw_dmod" ] || _tw_miss="$_tw_miss lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule"
   [ -n "$_tw_omod" ] || _tw_miss="$_tw_miss lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule"
+  [ -n "$_tw_disp" ] || _tw_miss="$_tw_miss lib/swift/macosx/libswiftDispatch.dylib"
+  [ -n "$_tw_dimod" ] || _tw_miss="$_tw_miss lib/swift/macosx/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule"
   [ -n "$_tw_conc" ] || _tw_miss="$_tw_miss lib/swift/macosx/libswift_Concurrency.dylib"
   [ -n "$_tw_cmod" ] || _tw_miss="$_tw_miss lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule"
   [ -n "$_tw_bmod" ] || _tw_miss="$_tw_miss lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule"

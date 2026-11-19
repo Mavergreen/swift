@@ -91,7 +91,10 @@ this", so `os_signpost_enabled` would turn its tracing on and then call the `os_
 `os_signpost_id_generate` no 10.9 has, and `objc_readClassPair` and `_objc_realizeClassFromSwift` would
 flip the realization paths upstream and patch 0005 choose by. `lib.sh`'s `recaulk_subset` picks, by symbol,
 the members that define each name in `RECAULK_RUNTIME_SYMBOLS` and what they need from the archive, and
-refuses a member that defines any other API; the link hides every global they define
+refuses a member that defines any other API. A name those members need that OS X 10.9's libSystem defines (the 10.9
+SDK's stubs say which) binds to libSystem unless a `RECAULK_*_SYMBOLS` names it: since 20261118.1
+Recaulk's `socket_close` member shadows `close` and `dup2`, which its `os_system_version` member and
+legacy-support's `atcalls.c` call, and no dylib here takes those shadows. The link hides every global they define
 (`-unexported_symbols_list`), so libswiftCore exports what it did before. Step 7 refuses a runtime that
 still imports a Recaulk-supplied API, does not define it, exports it or any `___recaulk_` name, or no
 longer weak-imports the APIs whose presence the runtime reads from the OS. The archive's SHA-256 is one of
