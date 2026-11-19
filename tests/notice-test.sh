@@ -21,13 +21,18 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 N="$REPO/NOTICE"
 
-echo "-- every runtime and overlay patch is named by its number"
-for d in runtime overlays; do
-  for p in "$REPO/patches/$d"/*.patch; do
-    n="$(basename "$p" | cut -c1-4)"
-    grep -Eq "^ +$n  " "$N" || fail "NOTICE lists no $d patch $n ($(basename "$p"))"
-  done
+echo "-- every runtime and overlay patch is named by its number, an overlay patch in NOTICE's overlays blocks"
+# Read from each line that names ./patches/overlays to the next blank line: runtime patch 0002 shares overlay patch 0002's number.
+awk '/patches\/overlays/{on=1} on&&/^$/{on=0} on' "$N" > "${TMPDIR:-/tmp}/notice-overlays.$$"
+for p in "$REPO/patches/runtime"/*.patch; do
+  n="$(basename "$p" | cut -c1-4)"
+  grep -Eq "^ +$n  " "$N" || fail "NOTICE lists no runtime patch $n ($(basename "$p"))"
 done
+for p in "$REPO/patches/overlays"/*.patch; do
+  n="$(basename "$p" | cut -c1-4)"
+  grep -Eq "^ +$n  " "${TMPDIR:-/tmp}/notice-overlays.$$" || { rm -f "${TMPDIR:-/tmp}/notice-overlays.$$"; fail "NOTICE's overlays blocks list no overlay patch $n ($(basename "$p"))"; }
+done
+rm -f "${TMPDIR:-/tmp}/notice-overlays.$$"
 grep -q "patches/overlays" "$N" || fail "NOTICE does not say where the overlay patches are"
 
 echo "-- the toolchains' swift-frontend: its modification statement (Apache-2.0 section 4(b)) names every compiler patch"

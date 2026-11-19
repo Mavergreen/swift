@@ -41,19 +41,34 @@ recaulk_vfs_yaml() {
     '  ]' '}' > "$3"
 }
 IMPORTER="$PREFIX/lib/swift/recaulk-importer"
+recaulk_vfs_yaml "$SDK" "$IMPORTER" /dev/null || exit 1
 [ -d "$IMPORTER" ] || { echo "swiftc: no $IMPORTER -- this toolchain's Recaulk declarations are missing" >&2; exit 1; }
-[ -n "${HOME:-}" ] || { echo "swiftc: HOME is not set, so there is nowhere to cache the importer's overlay" >&2; exit 1; }
 # platform: exec replaces this shell, so a trap would never remove a temporary file after a successful exec;
 #           the YAML is therefore a cache, one per user, SDK and toolchain (cksum of both paths names it),
 #           written to a temporary name beside its final one and renamed over it (atomic, so a concurrent
 #           swiftc never reads half of one, and each run leaves the file the right content for its own SDK even
 #           if two keys collided). The trap covers a failure before the rename; after it nothing is left.
-VFSDIR="$HOME/Library/Caches/mavergreen-swift"
-mkdir -p "$VFSDIR" || { echo "swiftc: could not create $VFSDIR" >&2; exit 1; }
+#           The cache is under $HOME; where there is no HOME, or it is no directory or is not writable (a
+#           sandboxed build, a read-only home), under ${TMPDIR:-/tmp}/mavergreen-swift-<uid>, mode 700 and
+#           ours, so another user cannot plant a YAML there.
 VFSKEY="$(printf '%s\n%s\n' "$SDK" "$IMPORTER" | cksum | sed 's/ /-/')"
-VFS="$VFSDIR/importer-$VFSKEY.yaml"; VFSTMP="$VFSDIR/.importer-$VFSKEY.$$"
+VFS=""
 trap 'rm -f "$VFSTMP"' EXIT
-{ recaulk_vfs_yaml "$SDK" "$IMPORTER" "$VFSTMP" && mv -f "$VFSTMP" "$VFS"; } || exit 1
+# vfs_cache <dir> -- writes the YAML into <dir> (made if need be), sets VFS; fails if it cannot.
+vfs_cache() {
+  VFSTMP="$1/.importer-$VFSKEY.$$"
+  { recaulk_vfs_yaml "$SDK" "$IMPORTER" "$VFSTMP" && mv -f "$VFSTMP" "$1/importer-$VFSKEY.yaml"; } 2>/dev/null \
+    || { rm -f "$VFSTMP"; return 1; }
+  VFS="$1/importer-$VFSKEY.yaml"
+}
+if [ -n "${HOME:-}" ] && mkdir -p "$HOME/Library/Caches/mavergreen-swift" 2>/dev/null; then
+  vfs_cache "$HOME/Library/Caches/mavergreen-swift" || :
+fi
+if [ -z "$VFS" ]; then
+  _d="${TMPDIR:-/tmp}/mavergreen-swift-$(id -u)"
+  mkdir -m 700 -p "$_d" 2>/dev/null && [ -O "$_d" ] && vfs_cache "$_d" || :
+fi
+[ -n "$VFS" ] || { echo "swiftc: could not write the importer's overlay under \$HOME/Library/Caches or ${TMPDIR:-/tmp}" >&2; exit 1; }
 SWIFT_AVOID_WARNING_USING_OLD_DRIVER=1; export SWIFT_AVOID_WARNING_USING_OLD_DRIVER
 # _Concurrency is imported implicitly, as Apple's swiftc does: the runtime pkg carries libswift_Concurrency.
 # _StringProcessing is not shipped, so its implicit import stays off.

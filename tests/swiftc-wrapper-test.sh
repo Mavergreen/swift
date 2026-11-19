@@ -14,7 +14,8 @@
 #   byte the YAML lib.sh's recaulk_vfs_yaml writes. The YAML is kept in a per-user, per-SDK, per-toolchain
 #   cache, written whole (atomically) before the driver replaces the shell, so no temporary file is left
 #   behind, whether the exec succeeds or fails; a toolchain without the importer's directory, or an SDK
-#   path the YAML could not quote, is refused before the driver runs.
+#   path the YAML could not quote, is refused before the driver runs. With HOME unset, not a directory or
+#   read-only the cache is ${TMPDIR:-/tmp}/mavergreen-swift-<uid> (mode 700) instead, and the compile goes on.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -110,10 +111,35 @@ mv "$P/lib/swift/recaulk-importer" "$T/importer-away"; rc=0
 [ "$rc" != 0 ] && [ ! -f "$T/frontend-ran" ] || fail "ran the driver without the importer's directory"
 grep -qF "no $P/lib/swift/recaulk-importer" "$T/err" || fail "a missing importer was not explained: $(cat "$T/err")"
 mv "$T/importer-away" "$P/lib/swift/recaulk-importer"
-rm -rf "$HOME"; rc=0
-env -u HOME "$P/bin/swiftc" x.swift > "$T/out" 2> "$T/err" || rc=$?
-[ "$rc" != 0 ] && [ ! -f "$T/frontend-ran" ] || fail "ran the driver with no HOME for the cache"
-grep -q 'HOME' "$T/err" || fail "a missing HOME was not explained: $(cat "$T/err")"
+# Without a usable HOME (unset, no directory, read-only) the cache moves to ${TMPDIR:-/tmp}/mavergreen-swift-<uid>,
+# mode 700, and the compile goes on, with the same YAML and nothing else left there.
+mkdir -p "$T/tmpdir"; U="$(id -u)"; FB="$T/tmpdir/mavergreen-swift-$U"
+fallback_check() {  # fallback_check <what> <command>... -- runs swiftc under it; the YAML must be in $FB
+  _fc_w="$1"; shift
+  rm -rf "$FB" "$T/frontend-ran"; rc=0
+  "$@" > "$T/out" 2> "$T/err" || rc=$?
+  [ "$rc" = 0 ] || fail "$_fc_w: swiftc failed: $(cat "$T/err")"
+  [ -f "$T/frontend-ran" ] || fail "$_fc_w: the driver did not run"
+  _fc_y="$(awk 'prev == "-ivfsoverlay" { getline; print; exit } { prev = $0 }' "$T/out")"
+  case "$_fc_y" in "$FB"/importer-*.yaml) ;; *) fail "$_fc_w: the YAML is at '$_fc_y', not in $FB" ;; esac
+  cmp -s "$T/lib.yaml" "$_fc_y" || fail "$_fc_w: the fallback YAML is not lib.sh's"
+  [ "$(ls -A "$FB" | wc -l | tr -d ' ')" = 1 ] || fail "$_fc_w: more than the YAML in $FB: $(ls -A "$FB")"
+  [ "$(ls -ld "$FB" | cut -c1-10)" = drwx------ ] || fail "$_fc_w: $FB is not mode 700: $(ls -ld "$FB")"
+}
+fallback_check "HOME unset" env -u HOME TMPDIR="$T/tmpdir" "$P/bin/swiftc" x.swift
+echo "not a directory" > "$T/home-file"
+fallback_check "HOME a file" env HOME="$T/home-file" TMPDIR="$T/tmpdir" "$P/bin/swiftc" x.swift
+mkdir -p "$T/ro-home"; chmod 555 "$T/ro-home"
+if [ "$U" != 0 ]; then fallback_check "HOME read-only" env HOME="$T/ro-home" TMPDIR="$T/tmpdir" "$P/bin/swiftc" x.swift; fi
+chmod 755 "$T/ro-home"
+# With a usable HOME the fallback is not touched.
+rm -rf "$FB"; "$P/bin/swiftc" x.swift > /dev/null
+[ ! -e "$FB" ] || fail "a usable HOME still made $FB"
+# Neither usable: refused, naming it, before the driver.
+rm -f "$T/frontend-ran"; rc=0
+env -u HOME TMPDIR="$T/home-file" "$P/bin/swiftc" x.swift > "$T/out" 2> "$T/err" || rc=$?
+[ "$rc" != 0 ] && [ ! -f "$T/frontend-ran" ] || fail "ran the driver with no place to cache the YAML"
+grep -q "could not write the importer's overlay" "$T/err" || fail "no cache place was not explained: $(cat "$T/err")"
 
 ln -s ../swift-toolchain/bin/swiftc "$T/mg/bin/swiftc"
 ln -s "$P/bin/swiftc" "$T/links/abs-swiftc"

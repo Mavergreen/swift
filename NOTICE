@@ -75,6 +75,16 @@ authors):
   0001  -hash is a method in the 10.9 SDK — call NSObject's hash() where the
         overlay, written for a later SDK, reads a hash property.
 
+Both toolchain packages also contain Dispatch.apinotes (lib/swift/apinotes), from
+the Swift open source project at pins.env's SWIFT_SHA (apinotes/Dispatch.apinotes),
+under the same license (Apache License v2.0 with Runtime Library Exception;
+Copyright (c) 2014 - present Apple Inc. and the Swift project authors), with the
+local patch in ./patches/overlays:
+  0002  Dispatch.apinotes: the 10.9 SDK's block-taking dispatch_sync and
+        dispatch_barrier_sync are marked NoEscape, and dispatch_block_flags_t
+        is imported as a SwiftWrapper struct, as the 10.9 headers, which lack
+        DISPATCH_NOESCAPE and the option-set declaration, do not say so.
+
 libswiftDarwin also contains, statically linked, the definition of openat from
 Recaulk (the release pinned in pins.env; its license is below), which Recaulk
 builds from two sources of MacPorts' legacy-support library
