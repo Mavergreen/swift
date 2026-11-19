@@ -84,9 +84,9 @@ done
 #  0014 apinotes -- Dispatch.apinotes again, after 0002: dispatch_group_create and dispatch_semaphore_create return
 #       non-nil (10.9's headers carry no nullability, so DispatchGroup() and DispatchSemaphore(value:) would be failable
 #       initializers, as no SDK's are).
-#  0015 Sendable -- 5.4 predates it: DispatchObject (so queues, groups, semaphores, sources, IO), DispatchWorkItem and
-#       DispatchData are @unchecked Sendable, and the time, QoS and flag value types too, as Apple's SDK has them, so
-#       a Swift 6 client can capture a queue or a semaphore in the @Sendable closures it hands a queue.
+#  0015 Sendable -- 5.4 predates it: DispatchObject (so queues, groups, semaphores, sources, IO), DispatchData, DispatchSpecificKey
+#       (where its value is) and the time, QoS and flag value types are @unchecked Sendable, exactly where Apple's newest
+#       SDK has them and nowhere else, so a Swift 6 client can capture a queue or a semaphore in a @Sendable closure.
 OVERLAY_PATCHES="0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013 0014 0015"
 PATCHES_DIR="$HERE/patches/overlays"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $OVERLAY_PATCHES)" || {

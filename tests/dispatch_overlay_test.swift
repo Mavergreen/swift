@@ -47,7 +47,7 @@ func mainQueue() {
   let s = DispatchSemaphore(value: 0)
   let onMain = Box(false)
   DispatchQueue.main.async { onMain.value = pthread_main_np() != 0; s.signal() }
-  check(waits(s), "a block async to DispatchQueue.main ran")
+  guard waits(s) else { check(false, "a block async to DispatchQueue.main ran (the main queue is not running)"); return }
   check(onMain.value, "DispatchQueue.main's block ran on the main thread")
   check(DispatchQueue.main.sync { pthread_main_np() != 0 }, "DispatchQueue.main.sync ran on the main thread")
 }
@@ -239,9 +239,11 @@ func workItems() {
 final class RW: Sendable {
   struct State: Sendable { var active = 0, maxActive = 0, barrier = false, violations = 0, barriers = 0 }
   let state = Box(State())
+  let readerMs: Int
+  init(readerMs: Int = 15) { self.readerMs = readerMs }
   func reader() {
     state.update { if $0.barrier { $0.violations += 1 }; $0.active += 1; $0.maxActive = max($0.maxActive, $0.active) }
-    ms(15)
+    ms(readerMs)
     state.update { if $0.barrier { $0.violations += 1 }; $0.active -= 1 }
   }
   func writer() {
@@ -250,9 +252,9 @@ final class RW: Sendable {
     state.update { if $0.active != 0 { $0.violations += 1 }; $0.barrier = false; $0.barriers += 1 }
   }
 }
-func barrierCase(_ name: String, _ submit: (DispatchQueue, RW, DispatchSemaphore) -> Void) {
+func barrierCase(_ name: String, readerMs: Int = 15, _ submit: (DispatchQueue, RW, DispatchSemaphore) -> Void) {
   let q = DispatchQueue(label: "dispatch-overlay-test.rw", attributes: .concurrent)
-  let rw = RW(), writerDone = DispatchSemaphore(value: 0)
+  let rw = RW(readerMs: readerMs), writerDone = DispatchSemaphore(value: 0)
   let readers = DispatchGroup()
   for _ in 0..<8 { q.async(group: readers) { rw.reader() } }
   submit(q, rw, writerDone)
@@ -284,7 +286,9 @@ func barriers() {
     q.sync(flags: .barrier) { rw.writer() }
     done.signal()
   }
-  barrierCase("asyncAfter(flags: .barrier)") { q, rw, done in
+  // The readers last 60 ms, so they are still running when the 25 ms deadline passes: a barrier that is not
+  // routed as one starts then, with readers active, and the writer's own check (active == 0 at its start) fails.
+  barrierCase("asyncAfter(flags: .barrier)", readerMs: 60) { q, rw, done in
     q.asyncAfter(deadline: .now() + .milliseconds(25), flags: .barrier) { rw.writer(); done.signal() }
   }
 }
@@ -321,6 +325,8 @@ suite.async {
     exit(0)
   }
 }
-// A backstop only: each wait above is bounded already.
-DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(45)) { print("FAIL: dispatch_overlay_test did not finish in 45 s"); exit(1) }
+// A backstop only (each wait above is bounded already), on a thread of its own: not the main queue, which
+// a broken dispatchMain would leave unserved, nor a dispatch queue, which would be what is broken.
+var watchdog: pthread_t? = nil
+pthread_create(&watchdog, nil, { _ in sleep(45); print("FAIL: dispatch_overlay_test did not finish in 45 s"); exit(1) }, nil)
 dispatchMain()
