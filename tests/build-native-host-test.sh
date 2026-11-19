@@ -178,6 +178,7 @@ case "$(basename "$p")" in
   0014-*) echo mav_globalQueueIdentifier >> stdlib/public/Concurrency/DispatchGlobalExecutor.cpp ;;
   0015-*) echo 'ENSURE_LOGS();  // Mavericks: the one trace call without it' >> stdlib/public/Concurrency/TracingSignpost.h ;;
   0016-*) echo "Mavericks: OS X 10.9's libdispatch does not know the bit-63 encoding" >> stdlib/public/Concurrency/DispatchGlobalExecutor.cpp ;;
+  0017-*) echo "Mavericks: weak, as OS X 10.9's libdispatch has no dispatch_async_swift_job" >> stdlib/public/Concurrency/DispatchGlobalExecutor.cpp ;;
 esac
 F
 # The stdlib configure records its arguments and leaves a cache; the build (ninja) stops the run.
@@ -200,7 +201,7 @@ build_native() {  # build.sh's native mode past step 1, everything faked; ninja 
 build_native
 grep -qxF "fetch_pinned_source https://github.com/swiftlang/swift.git $SWIFT_SHA $SWIFT_TARBALL_SHA256 swift" "$T/log" \
   || fail "did not fetch the swift tarball by its pin: $(cat "$T/out")"
-[ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0004 0005 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016 " ] \
+[ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0004 0005 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016 0017 " ] \
   || fail "patched in another order: $(grep '^patch' "$T/log" | tr '\n' ' ')"
 for a in "-DCMAKE_AR=$C22/bin/llvm-ar" "-DCMAKE_RANLIB=$C22/bin/llvm-ranlib" "-DSWIFT_LIPO=$C22/bin/llvm-lipo" -DSWIFT_ENABLE_LIBXML2=OFF \
          -DCMAKE_TAPI=/usr/bin/false "-DCMAKE_STRIP=$C22/bin/llvm-strip" -DLD64_EXECUTABLE=/usr/bin/false -DCMAKE_Swift_COMPILER=NOTFOUND \
@@ -221,8 +222,8 @@ grep -qxF -e "  -DSWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY=ON" "$T/log" || fail "th
 # Strict availability: StdlibDeploymentTarget N keeps SwiftStdlib N's OS versions in the shipped modules,
 # not the deployment target's (AddSwiftStdlib.cmake), so a client from 10.14.4 gets upstream's diagnostics.
 grep -qxF -e "  -DSWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY=ON" "$T/log" || fail "the stdlib configure does not turn strict availability on: $(cat "$T/log")"
-grep -qxF -e "  -DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$R/swift/work/recaulk-concurrency.a -Wl,-unexported_symbols_list,$R/swift/work/recaulk-concurrency.unexported" "$T/log" \
-  || fail "Concurrency's link does not take its Recaulk subset, hidden: $(grep MAVERGREEN_CONCURRENCY "$T/log")"
+grep -qxF -e "  -DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$R/swift/work/recaulk-concurrency.a -Wl,-unexported_symbols_list,$R/swift/work/recaulk-concurrency.unexported -Wl,-U,_dispatch_async_swift_job" "$T/log" \
+  || fail "Concurrency's link does not take its Recaulk subset, hidden, and dispatch_async_swift_job -U: $(grep MAVERGREEN_CONCURRENCY "$T/log")"
 [ "$(tr '\n' ' ' < "$R/swift/work/recaulk-concurrency.unexported")" = "___recaulk_copy_helper_block_8_32b ___recaulk_resolve _clock_getres _clock_gettime _dispatch_activate _dispatch_assert_queue\$V2 _os_release _qos_class_self _voucher_adopt _voucher_copy " ] \
   || fail "Recaulk's subset for Concurrency: $(cat "$R/swift/work/recaulk-concurrency.unexported")"
 # Test support only runs on this runtime: step 5b's test support (below) takes --runtime-floor (every released
@@ -309,7 +310,7 @@ done
 grep -qx "clang $(shasum -a 256 < "$H/bin/clang" | awk '{ print $1 }')" "$SB/mavergreen-inputs.stamp" \
   || fail "the stdlib-build's stamp does not record the toolchain's clang: $(cat "$SB/mavergreen-inputs.stamp")"
 # The runtime patches applied, in order (lib.sh's source_stamp): a changed patch set starts it afresh.
-[ "$(sed -n 's/^patch swift \([0-9]*\)-[^ ]*\.patch [0-9a-f]\{64\}$/\1/p' "$SB/mavergreen-inputs.stamp" | tr '\n' ' ')" = "0004 0005 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016 " ] \
+[ "$(sed -n 's/^patch swift \([0-9]*\)-[^ ]*\.patch [0-9a-f]\{64\}$/\1/p' "$SB/mavergreen-inputs.stamp" | tr '\n' ' ')" = "0004 0005 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016 0017 " ] \
   || fail "the stdlib-build's stamp does not record the runtime patches: $(cat "$SB/mavergreen-inputs.stamp")"
 
 echo "-- the stdlib-build's stamp records the swift source: the same commit keeps it, another commit's starts it afresh"

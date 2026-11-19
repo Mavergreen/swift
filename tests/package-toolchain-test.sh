@@ -94,7 +94,8 @@ echo "-- its preinstall requires swift-runtime of its own version or later, and 
 # all of them is the one built with this toolchain, so the minimum is the pkg's own version, whatever
 # release that turns out to be. Read from the VERSION the pkg was named from, never a literal here.
 RUNTIME_MIN="$(cat "$REPO/VERSION")"
-case "$RUNTIME_MIN" in 6.4.1-mavericks.[0-9]*) ;; *) fail "VERSION '$RUNTIME_MIN' is not a release version" ;; esac
+SV="$(sed -n 's/^SWIFT_VERSION="\([^"]*\)".*/\1/p' "$REPO/pins.env")"
+case "$RUNTIME_MIN" in "$SV"-mavericks.[0-9]*) ;; *) fail "VERSION '$RUNTIME_MIN' is not a release version" ;; esac
 case "$pkg" in *"swift-toolchain-$RUNTIME_MIN.pkg") ;; *) fail "the pkg $pkg is not named for VERSION $RUNTIME_MIN" ;; esac
 PRE="$comp/Scripts/preinstall"; [ -f "$PRE" ] || fail "the toolchain component has no preinstall"
 L22="$(sed -n 's/^CLANG22_VERSION="\([^"]*\)".*/\1/p' "$REPO/pins.env")"

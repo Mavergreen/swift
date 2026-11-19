@@ -24,7 +24,7 @@ Local modifications (full diffs in ./patches/runtime) — 0004-0007 all confined
 Swift's runtime work on 10.9's objc4-532, all gated to the 10.9/10.10 code path; 0008
 keeps a runtime built on OS X 10.9 identical to the one CI builds; 0009 keeps one libc++;
 0010 is for the self-test only; 0011 fixes a call the 10.9 deployment target misresolves;
-0012-0016 build libswift_Concurrency for 10.9 and make it work with 10.9's libdispatch:
+0012-0017 build libswift_Concurrency for 10.9 and make it work with 10.9's libdispatch:
   0004  realization-aware getROData — follow rw->ro when RW_REALIZED, because
         objc4-532 realizes classes eagerly at image load.
   0005  objc-super instance-size fix — size subclasses from
@@ -57,6 +57,9 @@ keeps a runtime built on OS X 10.9 identical to the one CI builds; 0009 keeps on
   0016  Concurrency continuous deadline as uptime — below 10.15, give
         libdispatch a continuous-clock deadline as an uptime one, the only form
         10.9's libdispatch fires.
+  0017  Concurrency dispatch_async_swift_job weak — declare this libdispatch
+        call weak, as 10.9's libdispatch lacks it; it is called only on macOS 12
+        and later.
 
 The runtime package also contains libswiftDarwin.dylib and libswiftObjectiveC.dylib,
 and both toolchain packages contain them and their modules (Darwin.swiftmodule,
@@ -174,7 +177,7 @@ components/macports-legacy-support/version pins). They keep their own licenses:
     SOFTWARE.
 
 libswift_Concurrency, the Swift concurrency runtime (built from the same Swift
-sources as libswiftCore, under the same license, with the patches 0012-0016
+sources as libswiftCore, under the same license, with the patches 0012-0017
 above), contains, statically linked, the definitions of clock_gettime,
 clock_getres, qos_class_self, voucher_copy, voucher_adopt, os_release,
 dispatch_activate and dispatch_assert_queue from Recaulk (the release pinned in pins.env; its license is
