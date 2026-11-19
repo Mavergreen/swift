@@ -6,7 +6,11 @@
 #          A test's leading comment lines may hold `// swiftc: <flags>`, flags its compiles take after the
 #          compiler's own: only -parse-as-library (for @main in a one-file program), as anything else
 #          (-disable-availability-checking, say) would test another program than its users compile; any
-#          other flag fails the bundle. A test whose first line is `// selftest: skip: <reason>` is built
+#          other flag fails the bundle. A leading comment line `// selftest: also -swift-version 6` (the one
+#          language-mode change allowed, and the only flags that line may name) builds the test a second time
+#          in Swift 6 mode, after the first build's flags, into bin/<name>-swift6 and bin/<name>-swift6-Onone,
+#          for a test whose code must compile as a Swift 6 client too; any other flags there fail the bundle.
+#          A test whose first line is `// selftest: skip: <reason>` is built
 #          in neither mode, saying why (none is so marked today).
 #          Two compilers:
 #            default          the swift.org toolchain build.sh expanded, for x86_64-apple-macosx10.9,
@@ -29,7 +33,10 @@
 #                             lib/swift/apinotes) give this compiler's importer what the toolchain's swiftc
 #                             gives it, as build-module.sh's options of those names do: the VFS overlay of
 #                             Recaulk's dispatch declarations, written to a temporary directory, and
-#                             Dispatch.apinotes. Both are optional; the tests that need them are owed.
+#                             Dispatch.apinotes. Unset, each is what build.sh left under the build root
+#                             ($WORK/overlays/recaulk-importer, $WORK/overlays/src/apinotes: the Dispatch
+#                             overlay's own, patched), when there; the tests that import Dispatch need both.
+#                             Each run's module cache is its own, as the importer's is keyed on neither.
 #            SWIFTC=<swiftc>  exactly `$SWIFTC -O|-Onone <file> -o <out>`: this repo's own toolchain,
 #                             on 10.9, whose defaults supply target, SDK and rpath. With SWIFT_RUNTIME_PREFIX
 #                             also set (a staged, uninstalled runtime), each compile adds
@@ -93,12 +100,20 @@ else
   [ -f "$RES/macosx/x86_64/libswiftCore.dylib" ] || { echo "make-selftest: no stdlib build at $RES -- run build.sh first" >&2; exit 1; }
   RUNTIME_LIB="${SWIFT_RUNTIME_PREFIX:-/usr/local/mavergreen/swift-runtime}/lib/swift"
   SKIP_MARK="// selftest: needs this repo's compiler"
-  IMPFLAGS=""
+  # platform: the clang importer's module cache is keyed on neither the apinotes' contents nor the VFS overlay's,
+  #           so one shared with other compiles (the host's default) can hand these tests a Dispatch imported
+  #           another way (DispatchSemaphore(value:) failable, say); a private one, afresh each run, cannot.
+  VFSD="$(mktemp -d "${TMPDIR:-/tmp}/make-selftest-vfs.XXXXXX")"; trap 'rm -rf "$VFSD"' EXIT
+  IMPFLAGS="-module-cache-path $VFSD/module-cache"
+  # What build.sh left for the importer, where the variables are not set: its Dispatch overlay's Recaulk importer
+  # directory and its patched Dispatch.apinotes, the ones that overlay was built with.
+  WORK="${SWIFT_WORK:-$SWIFT_BUILD/work}"
+  [ -n "${RECAULK_IMPORTER:-}" ] || ! [ -d "$WORK/overlays/recaulk-importer" ] || RECAULK_IMPORTER="$WORK/overlays/recaulk-importer"
+  [ -n "${APINOTES:-}" ] || ! [ -d "$WORK/overlays/src/apinotes" ] || APINOTES="$WORK/overlays/src/apinotes"
   if [ -n "${RECAULK_IMPORTER:-}" ]; then
     [ -d "$RECAULK_IMPORTER" ] || { echo "make-selftest: RECAULK_IMPORTER=$RECAULK_IMPORTER is no directory" >&2; exit 1; }
-    VFSD="$(mktemp -d "${TMPDIR:-/tmp}/make-selftest-vfs.XXXXXX")"; trap 'rm -rf "$VFSD"' EXIT
     recaulk_vfs_yaml "$SDK" "$RECAULK_IMPORTER" "$VFSD/recaulk-vfs.yaml" || { echo "make-selftest: could not write the importer's overlay for $SDK" >&2; exit 1; }
-    IMPFLAGS="-Xcc -ivfsoverlay -Xcc $VFSD/recaulk-vfs.yaml"
+    IMPFLAGS="$IMPFLAGS -Xcc -ivfsoverlay -Xcc $VFSD/recaulk-vfs.yaml"
   fi
   if [ -n "${APINOTES:-}" ]; then
     [ -d "$APINOTES" ] || { echo "make-selftest: APINOTES=$APINOTES is no directory" >&2; exit 1; }
@@ -159,8 +174,17 @@ for src in "${SELFTEST_SRC:-$REPO/tests}"/*.swift; do
       *) echo "make-selftest: $n's // swiftc: line asks for $w; only -parse-as-library is allowed (see the usage)" >&2; exit 1 ;;
     esac
   done
+  also="$(sed -n '/^\/\//!q; s/^\/\/ selftest: also //p' "$src")"
+  case "$also" in
+    ""|"-swift-version 6") ;;
+    *) echo "make-selftest: $n's // selftest: also line asks for '$also'; only -swift-version 6 is allowed (see the usage)" >&2; exit 1 ;;
+  esac
   compile O "$src" "$B/bin/$n" "$@"; echo "built: $n" >&2
   compile Onone "$src" "$B/bin/$n-Onone" "$@"; echo "built: $n-Onone" >&2
+  if [ -n "$also" ]; then
+    compile O "$src" "$B/bin/$n-swift6" "$@" -swift-version 6; echo "built: $n-swift6" >&2
+    compile Onone "$src" "$B/bin/$n-swift6-Onone" "$@" -swift-version 6; echo "built: $n-swift6-Onone" >&2
+  fi
 done
 [ -n "$(ls -A "$B/bin")" ] || { echo "make-selftest: nothing was built" >&2; exit 1; }
 if [ -n "${SELFTEST_SUPPORT:-}" ]; then

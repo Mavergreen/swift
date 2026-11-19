@@ -6,7 +6,8 @@
 #   never an SDK's /usr/lib/swift), and has exactly one rpath: the runtime prefix. Every tests/*.swift
 #   must compile there, the overlays' tests included, but those whose first line says they need this
 #   repo's compiler (compiler patch 0003), or that skip themselves (`// selftest: skip: <reason>`), which must
-#   be skipped. SKIP when build.sh has not run.
+#   be skipped; a test with a leading `// selftest: also -swift-version 6` line must have its -swift6 and
+#   -swift6-Onone builds checked the same. SKIP when build.sh has not run.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 : "${MAVERICKS_BUILD_ROOT:=${TMPDIR:-/tmp}/mm-build}"
@@ -44,13 +45,16 @@ for src in "$REPO"/tests/*.swift; do
   n="$(basename "$src" .swift)"
   case "$(sed -n 1p "$src")" in
     "// selftest: needs this repo's compiler"*)
-      [ ! -e "$B/bin/$n" ] && [ ! -e "$B/bin/$n-Onone" ] || fail "built $n, which needs this repo's compiler"
+      [ ! -e "$B/bin/$n" ] && [ ! -e "$B/bin/$n-Onone" ] && [ ! -e "$B/bin/$n-swift6" ] && [ ! -e "$B/bin/$n-swift6-Onone" ] || fail "built $n, which needs this repo's compiler"
       continue ;;
     "// selftest: skip: "*)
-      [ ! -e "$B/bin/$n" ] && [ ! -e "$B/bin/$n-Onone" ] || fail "built $n, whose first line skips it"
+      [ ! -e "$B/bin/$n" ] && [ ! -e "$B/bin/$n-Onone" ] && [ ! -e "$B/bin/$n-swift6" ] && [ ! -e "$B/bin/$n-swift6-Onone" ] || fail "built $n, whose first line skips it"
       continue ;;
   esac
-  for bin in "$B/bin/$n" "$B/bin/$n-Onone"; do
+  bins="$B/bin/$n $B/bin/$n-Onone"
+  # a leading `// selftest: also -swift-version 6` line makes two more
+  if [ -n "$(sed -n '/^\/\//!q; s/^\/\/ selftest: also //p' "$src")" ]; then bins="$bins $B/bin/$n-swift6 $B/bin/$n-swift6-Onone"; fi
+  for bin in $bins; do
     [ -x "$bin" ] || fail "missing $bin"
     plat="$("$DI" -platform "$bin")" || fail "dyld_info -platform $bin"
     printf '%s\n' "$plat" | awk 'NR==4{ if ($2 != "10.9" || $3 != "10.9") exit 1 }' || fail "$bin is not minOS 10.9 and SDK 10.9: $plat"

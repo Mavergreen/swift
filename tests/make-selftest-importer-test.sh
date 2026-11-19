@@ -4,7 +4,7 @@
 #   make-selftest.sh's default mode (the swift.org compiler, whose swiftc is not this repo's wrapper) must hand
 #   the compiler `-Xcc -ivfsoverlay -Xcc <yaml>` when RECAULK_IMPORTER names a toolchain's
 #   lib/swift/recaulk-importer, the YAML lib.sh's recaulk_vfs_yaml writes for the 10.9 SDK and that directory,
-#   and `-Xcc -iapinotes-modules -Xcc <dir>` when APINOTES does, on every compile; neither, when neither is set;
+#   and `-Xcc -iapinotes-modules -Xcc <dir>` when APINOTES does, on every compile; neither, when neither is set and the build root has no overlays/ (else that root's importer directory and apinotes); every compile has its own private -module-cache-path, which is removed;
 #   a name that is no directory is refused before anything is compiled; and no temporary YAML is left behind.
 #   A fake compiler records its arguments and reads the YAML while it runs. SKIPs without a shipyard.
 set -eu
@@ -43,6 +43,18 @@ done < "$T/argv"
 recaulk_vfs_yaml "$SDK" "$T/imp" "$T/want.yaml" || fail "recaulk_vfs_yaml failed"
 cmp -s "$T/want.yaml" "$T/yaml-seen" || fail "the compiler read another YAML than lib.sh's: $(cat "$T/yaml-seen")"
 [ -z "$(ls -A "$T/tmp")" ] || fail "a temporary file is left in TMPDIR: $(ls -A "$T/tmp")"
+
+# Unset, the build root's own (build.sh leaves them under work/overlays), and always a private module cache.
+grep -q '<-module-cache-path><' "$T/argv" || fail "no private -module-cache-path: $(cat "$T/argv")"
+mkdir -p "$T/work/overlays/recaulk-importer" "$T/work/overlays/src/apinotes"
+rm -f "$T/argv" "$T/yaml-seen"
+run || { cat "$T/log"; fail "make-selftest.sh failed with the build root's importer"; }
+while IFS= read -r line; do
+  case "$line" in *"<-Xcc><-ivfsoverlay><-Xcc><"*"><-Xcc><-iapinotes-modules><-Xcc><$T/work/overlays/src/apinotes>"*) ;; *) fail "a compile lacks the build root's importer flags: $line" ;; esac
+done < "$T/argv"
+[ -s "$T/yaml-seen" ] || fail "the compiler read no YAML from the build root's importer"
+[ -z "$(ls -A "$T/tmp")" ] || fail "a temporary file is left in TMPDIR: $(ls -A "$T/tmp")"
+rm -rf "$T/work/overlays"
 
 for v in RECAULK_IMPORTER APINOTES; do
   rm -f "$T/argv"

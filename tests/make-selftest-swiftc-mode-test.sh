@@ -4,7 +4,9 @@
 #   make-selftest.sh with SWIFTC= must invoke that compiler with nothing but -O|-Onone, the source and
 #   -o, for every tests/*.swift (this repo's toolchain has the Darwin and ObjectiveC overlays), and after
 #   them the flags of a `// swiftc: <flags>` line among the test's leading comment lines, which may name
-#   only -parse-as-library (any other flag fails the bundle); a test whose first line is
+#   only -parse-as-library (any other flag fails the bundle); a leading `// selftest: also -swift-version 6`
+#   line builds the test again, those flags last, into <name>-swift6 and <name>-swift6-Onone (any other
+#   flags on that line fail the bundle); a test whose first line is
 #   `// selftest: skip: <reason>` is not built, in any mode, and the reason is printed. With
 #   SWIFT_RUNTIME_PREFIX set too, each
 #   compile must also ask for header padding, and each binary's installed-runtime rpath must be replaced
@@ -47,10 +49,12 @@ B="$T/dist/swift-runtime-selftest/bin"
 mkdir -p "$T/src"; cp "$REPO"/tests/*.swift "$T/src/"
 printf '%s\n' '// zz_flags_test.swift -- a fixture' '// swiftc: -parse-as-library' '' '@main struct M { static func main() {} }' \
   > "$T/src/zz_flags_test.swift"
+printf '%s\n' '// zz_also_test.swift -- a fixture' '// selftest: also -swift-version 6' '' 'print(1)' > "$T/src/zz_also_test.swift"
 printf '%s\n' '// selftest: skip: waits for a fixture library' 'print(1)' > "$T/src/zz_skip_test.swift"
 SELFTEST_SRC="$T/src"; export SELFTEST_SRC
 # flags_of <src> -- what its `// swiftc:` line asks for, among its leading comment lines
 flags_of() { sed -n '/^\/\//!q; s/^\/\/ swiftc: //p' "$1"; }
+also_of() { sed -n '/^\/\//!q; s/^\/\/ selftest: also //p' "$1"; }
 skipped() { sed -n 1p "$1" | grep -q '^// selftest: skip: '; }
 
 echo "-- SWIFTC alone: exactly -O|-Onone <file> -o <out>, no rpath rewrite"
@@ -66,6 +70,18 @@ for src in "$T/src"/*.swift; do
   grep -qx -- "-Onone $src -o $B/$n-Onone${f:+ $f}" "$T/calls" || fail "no exact -Onone call for $n"
 done
 grep -qx -- "-O $T/src/zz_flags_test.swift -o $B/zz_flags_test -parse-as-library" "$T/calls" || fail "the // swiftc: line's flag was not passed"
+for src in "$T/src"/*.swift; do
+  n="$(basename "$src" .swift)"; a="$(also_of "$src")"
+  if [ -z "$a" ]; then
+    ! grep -q -- "$B/$n-swift6" "$T/calls" || fail "built $n-swift6 without the marker"
+    continue
+  fi
+  f="$(flags_of "$src")"
+  grep -qx -- "-O $src -o $B/$n-swift6${f:+ $f} $a" "$T/calls" || fail "no exact -O Swift 6 call for $n: $(cat "$T/calls")"
+  grep -qx -- "-Onone $src -o $B/$n-swift6-Onone${f:+ $f} $a" "$T/calls" || fail "no exact -Onone Swift 6 call for $n"
+done
+grep -q -- "$B/zz_also_test-swift6 -swift-version 6" "$T/calls" || fail "the fixture's marker built no Swift 6 binary"
+tar -tzf "$tarball" | grep -q 'bin/zz_also_test-swift6-Onone$' || fail "bundle lacks zz_also_test-swift6-Onone"
 tarball_err="$(unset SWIFT_RUNTIME_PREFIX; PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" DIST="$T/dist" sh "$REPO/make-selftest.sh" 2>&1 >/dev/null)"
 printf '%s\n' "$tarball_err" | grep -qxF 'skipped: zz_skip_test (waits for a fixture library)' || fail "did not say why zz_skip_test was skipped: $tarball_err"
 if tar -tzf "$tarball" | grep -q 'bin/zz_skip_test'; then fail "the bundle has the skipped test"; fi
@@ -105,6 +121,15 @@ mkdir -p "$T/src2"; printf '%s\n' '// swiftc: -Xfrontend -disable-availability-c
 if ( unset SWIFT_RUNTIME_PREFIX; PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" SELFTEST_SRC="$T/src2" DIST="$T/dist" \
      sh "$REPO/make-selftest.sh" > /dev/null 2> "$T/err" ); then fail "made a bundle whose test asks for -disable-availability-checking"; fi
 grep -q 'bad_test.*-Xfrontend' "$T/err" || fail "did not name the refused flag: $(cat "$T/err")"
+
+echo "-- a // selftest: also line naming any flags but -swift-version 6 fails the bundle"
+for bad in '-swift-version 5' '-swift-version 6 -Ounchecked' '-Xfrontend -disable-availability-checking'; do
+  printf '%s\n' "// selftest: also $bad" 'print(1)' > "$T/src2/bad_test.swift"
+  if ( unset SWIFT_RUNTIME_PREFIX; PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" SELFTEST_SRC="$T/src2" DIST="$T/dist" \
+       sh "$REPO/make-selftest.sh" > /dev/null 2> "$T/err" ); then fail "made a bundle whose test asks to also build with '$bad'"; fi
+  grep -q "bad_test.*also.*$bad" "$T/err" || fail "did not name the refused flags '$bad': $(cat "$T/err")"
+done
+rm -f "$T/src2/bad_test.swift"
 
 echo "-- a replacement that fails fails the bundle"
 if PATH="$T/bin:$PATH" FAKE_INT_RC=1 SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFIX="$P" DIST="$T/dist" \
