@@ -1,1 +1,0 @@
-Programs built with either toolchain now take Recaulk 20261118.1, whose close and dup2 no longer hang on a socket another thread is reading on 10.9.
