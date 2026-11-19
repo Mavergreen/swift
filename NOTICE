@@ -57,9 +57,9 @@ keeps a runtime built on OS X 10.9 identical to the one CI builds; 0009 keeps on
   0016  Concurrency continuous deadline as uptime — below 10.15, give
         libdispatch a continuous-clock deadline as an uptime one, the only form
         10.9's libdispatch fires.
-  0017  Concurrency dispatch_async_swift_job weak — declare this libdispatch
-        call weak, as 10.9's libdispatch lacks it; it is called only on macOS 12
-        and later.
+  0017  Concurrency dispatch_async_swift_job lookup — look this libdispatch
+        call up at run time, as 6.4.1 did, since 10.9's libdispatch lacks it; it
+        is asked for only on macOS 12 and later.
 
 The runtime package also contains libswiftDarwin.dylib and libswiftObjectiveC.dylib,
 and both toolchain packages contain them and their modules (Darwin.swiftmodule,

@@ -1,0 +1,43 @@
+diff --git stdlib/public/Concurrency/DispatchGlobalExecutor.cpp stdlib/public/Concurrency/DispatchGlobalExecutor.cpp
+--- stdlib/public/Concurrency/DispatchGlobalExecutor.cpp
++++ stdlib/public/Concurrency/DispatchGlobalExecutor.cpp
+@@ -50,10 +50,19 @@
+ #if __has_include(<dispatch/private.h>)
+ #include <dispatch/private.h>
+ #else
+-/// Apple's libdispatch always exports this, but the public SDK doesn't declare
+-/// it.
+-extern "C" void dispatch_async_swift_job(dispatch_queue_t queue, void *obj,
+-                                        dispatch_qos_class_t qos);
++// Mavericks: looked up at run time, as 6.4.1 did: OS X 10.9's libdispatch has no
++// dispatch_async_swift_job, so a link-time import of it, even a weak one, has no
++// library to bind to. dispatchEnqueue asks for it only on macOS 12 and later.
++#include <dlfcn.h>
++typedef void (*mav_dispatchAsyncSwiftJobFn)(dispatch_queue_t queue, void *obj,
++                                            dispatch_qos_class_t qos);
++static mav_dispatchAsyncSwiftJobFn mav_dispatchAsyncSwiftJob() {
++  static const mav_dispatchAsyncSwiftJobFn fn =
++      reinterpret_cast<mav_dispatchAsyncSwiftJobFn>(
++          dlsym(RTLD_DEFAULT, "dispatch_async_swift_job"));
++  return fn;
++}
++#define MAV_DISPATCH_ASYNC_SWIFT_JOB_LOOKED_UP 1
+ #endif
+ #endif
+ 
+@@ -83,8 +92,15 @@
+   // dispatch_async_swift_job is SPI available in macOS 12 and iOS 15, so older
+   // deployment targets need the dispatch_async_f fallback below.
+   if (__builtin_available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, *)) {
++#if MAV_DISPATCH_ASYNC_SWIFT_JOB_LOOKED_UP
++    if (auto fn = mav_dispatchAsyncSwiftJob()) {
++      fn(queue, job, qos);
++      return;
++    }
++#else
+     dispatch_async_swift_job(queue, job, qos);
+     return;
++#endif
+   }
+ #endif
+   dispatch_async_f(queue, job, __swift_run_job);
