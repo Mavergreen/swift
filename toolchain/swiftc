@@ -25,6 +25,35 @@ if [ -z "$SDK" ]; then
   SDK="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$LIBEXEC/fetch_sdk.sh")" || { echo "swiftc: could not obtain the Mac OS X 10.9 SDK" >&2; exit 1; }
 fi
 [ -d "$SDK" ] || { echo "swiftc: no Mac OS X 10.9 SDK at '$SDK'" >&2; exit 1; }
+# spec: INGREDIENTS.md "Recaulk in every program" -- the importer reads Recaulk's dispatch declarations, not the
+#       SDK's alone, through a clang VFS overlay (lib.sh's recaulk_vfs_yaml, whose lines these are: this
+#       script cannot source lib.sh once installed). Its roots are the SDK's absolute path, so the YAML is
+#       written for each SDK. recaulk_vfs_yaml <sdk> <importer> <out.yaml>
+recaulk_vfs_yaml() {
+  case "$1$2" in *\'*|*'
+'*) echo "swiftc: a quote or newline in '$1' or '$2' cannot be written to a YAML string" >&2; return 1 ;; esac
+  printf '%s\n' '{' "  'version': 0," "  'case-sensitive': 'false'," "  'use-external-names': false," "  'roots': [" \
+    "    { 'name': '$1/usr/include/dispatch', 'type': 'directory'," \
+    "      'contents': [ { 'name': 'module.map', 'type': 'file', 'external-contents': '$2/Dispatch.modulemap' }," \
+    "                    { 'name': 'recaulk-dispatch.h', 'type': 'file', 'external-contents': '$2/dispatch/dispatch.h' } ] }," \
+    "    { 'name': '$1/usr/include/pthread', 'type': 'directory'," \
+    "      'contents': [ { 'name': 'qos.h', 'type': 'file', 'external-contents': '$2/pthread/qos.h' } ] }" \
+    '  ]' '}' > "$3"
+}
+IMPORTER="$PREFIX/lib/swift/recaulk-importer"
+[ -d "$IMPORTER" ] || { echo "swiftc: no $IMPORTER -- this toolchain's Recaulk declarations are missing" >&2; exit 1; }
+[ -n "${HOME:-}" ] || { echo "swiftc: HOME is not set, so there is nowhere to cache the importer's overlay" >&2; exit 1; }
+# platform: exec replaces this shell, so a trap would never remove a temporary file after a successful exec;
+#           the YAML is therefore a cache, one per user, SDK and toolchain (cksum of both paths names it),
+#           written to a temporary name beside its final one and renamed over it (atomic, so a concurrent
+#           swiftc never reads half of one, and each run leaves the file the right content for its own SDK even
+#           if two keys collided). The trap covers a failure before the rename; after it nothing is left.
+VFSDIR="$HOME/Library/Caches/mavergreen-swift"
+mkdir -p "$VFSDIR" || { echo "swiftc: could not create $VFSDIR" >&2; exit 1; }
+VFSKEY="$(printf '%s\n%s\n' "$SDK" "$IMPORTER" | cksum | sed 's/ /-/')"
+VFS="$VFSDIR/importer-$VFSKEY.yaml"; VFSTMP="$VFSDIR/.importer-$VFSKEY.$$"
+trap 'rm -f "$VFSTMP"' EXIT
+{ recaulk_vfs_yaml "$SDK" "$IMPORTER" "$VFSTMP" && mv -f "$VFSTMP" "$VFS"; } || exit 1
 SWIFT_AVOID_WARNING_USING_OLD_DRIVER=1; export SWIFT_AVOID_WARNING_USING_OLD_DRIVER
 # _Concurrency is imported implicitly, as Apple's swiftc does: the runtime pkg carries libswift_Concurrency.
 # _StringProcessing is not shipped, so its implicit import stays off.
@@ -34,4 +63,5 @@ exec "$BIN/swift-frontend" --driver-mode=swiftc \
   -runtime-compatibility-version none \
   -Xfrontend -disable-implicit-string-processing-module-import \
   -no-stdlib-rpath -Xlinker -rpath -Xlinker /usr/local/mavergreen/swift-runtime/lib/swift \
+  -Xcc -ivfsoverlay -Xcc "$VFS" \
   "$@"

@@ -9,6 +9,12 @@
 #   -lobjc and -lSystem, so that every program and dylib swiftc links defines the Recaulk fixes and
 #   back-fills it uses; leave a line without -lSystem as it was; and refuse to link without the archive,
 #   or a line with a response file (@file), which could hide the -lSystem.
+#   The driver is also given the importer's view of Recaulk's dispatch declarations: -Xcc -ivfsoverlay
+#   with a YAML that names the SDK it was given and the toolchain's lib/swift/recaulk-importer, byte for
+#   byte the YAML lib.sh's recaulk_vfs_yaml writes. The YAML is kept in a per-user, per-SDK, per-toolchain
+#   cache, written whole (atomically) before the driver replaces the shell, so no temporary file is left
+#   behind, whether the exec succeeds or fails; a toolchain without the importer's directory, or an SDK
+#   path the YAML could not quote, is refused before the driver runs.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -20,6 +26,8 @@ T="$(cd "$T" && pwd -P)"
 P="$T/mg/swift-toolchain"; mkdir -p "$P/bin" "$P/libexec/mavergreen-swift" "$T/mg/bin" "$T/links/deeper" \
   "$T/fake-sdk" "$T/other-sdk"
 cp "$REPO/toolchain/swiftc" "$P/bin/swiftc"
+mkdir -p "$P/lib/swift/recaulk-importer"
+HOME="$T/home"; export HOME; CACHE="$HOME/Library/Caches/mavergreen-swift"
 cat > "$P/bin/swift-frontend" <<EOF
 #!/bin/sh
 : > "$T/frontend-ran"
@@ -36,6 +44,9 @@ EOF
 chmod +x "$P/bin/"*
 
 out="$("$P/bin/swiftc" foo.swift -o foo)"
+# The importer's flags are the one thing whose value (the cache's YAML) the test reads back from the argv.
+VFS="$(printf '%s\n' "$out" | awk 'prev == "-ivfsoverlay" { getline; print; exit } { prev = $0 }')"
+[ -n "$VFS" ] || fail "no -ivfsoverlay in the driver's argv: $out"
 want="OLD_DRIVER_QUIET=1
 --driver-mode=swiftc
 -target
@@ -53,6 +64,10 @@ none
 -rpath
 -Xlinker
 /usr/local/mavergreen/swift-runtime/lib/swift
+-Xcc
+-ivfsoverlay
+-Xcc
+$VFS
 foo.swift
 -o
 foo"
@@ -62,6 +77,43 @@ wanted
 $want"
 # Swift's driver reads the SDK version only from SDKSettings.json: without it every link records SDK 0.
 [ "$(cat "$T/fetched")" = 1 ] || fail "fetched the SDK with MAVERICKS_SDK_SETTINGS_JSON=$(cat "$T/fetched"), not 1"
+
+echo "-- the importer's overlay: the SDK it was given, lib.sh's YAML, one cached file, no temporary left"
+case "$VFS" in "$CACHE"/*) ;; *) fail "the YAML is at $VFS, not in $CACHE" ;; esac
+[ -f "$VFS" ] || fail "the YAML $VFS is not there afterwards"
+grep -qF "'$T/fake-sdk/usr/include/dispatch'" "$VFS" || fail "the YAML does not name the SDK's usr/include/dispatch: $(cat "$VFS")"
+grep -qF "'$P/lib/swift/recaulk-importer/dispatch/dispatch.h'" "$VFS" || fail "the YAML does not name the toolchain's importer: $(cat "$VFS")"
+. "$REPO/lib.sh"
+recaulk_vfs_yaml "$T/fake-sdk" "$P/lib/swift/recaulk-importer" "$T/lib.yaml" || fail "recaulk_vfs_yaml failed"
+cmp -s "$T/lib.yaml" "$VFS" || fail "the wrapper's YAML is not recaulk_vfs_yaml's:
+$(diff "$T/lib.yaml" "$VFS")"
+[ "$(ls -A "$CACHE" | wc -l | tr -d ' ')" = 1 ] || fail "the cache holds more than the YAML: $(ls -A "$CACHE")"
+"$P/bin/swiftc" foo.swift | awk 'prev == "-ivfsoverlay" { getline; print; exit } { prev = $0 }' | grep -qxF "$VFS" || fail "a second run named another YAML"
+[ "$(ls -A "$CACHE" | wc -l | tr -d ' ')" = 1 ] || fail "a second run left more in the cache: $(ls -A "$CACHE")"
+VFS2="$(SDKROOT="$T/other-sdk" "$P/bin/swiftc" foo.swift | awk 'prev == "-ivfsoverlay" { getline; print; exit } { prev = $0 }')"
+[ -n "$VFS2" ] && [ "$VFS2" != "$VFS" ] || fail "another SDK shares the first's YAML ($VFS2)"
+grep -qF "'$T/other-sdk/usr/include/pthread'" "$VFS2" || fail "the other SDK's YAML does not name it: $(cat "$VFS2")"
+[ "$(ls -A "$CACHE" | wc -l | tr -d ' ')" = 2 ] || fail "two SDKs, not two files: $(ls -A "$CACHE")"
+# Whether or not exec succeeds, nothing but the cached YAMLs is left: it is written before the exec.
+chmod -x "$P/bin/swift-frontend"; rc=0
+"$P/bin/swiftc" foo.swift > "$T/out" 2> "$T/err" || rc=$?
+chmod +x "$P/bin/swift-frontend"
+[ "$rc" != 0 ] || fail "a swiftc whose driver cannot run succeeded"
+[ "$(ls -A "$CACHE" | wc -l | tr -d ' ')" = 2 ] || fail "a failed exec left a file in the cache: $(ls -A "$CACHE")"
+# A path with a quote would end the YAML's string early; refused, as a missing importer is, before the driver.
+mkdir "$T/it's-sdk"; rm -f "$T/frontend-ran"; rc=0
+SDKROOT="$T/it's-sdk" "$P/bin/swiftc" x.swift > "$T/out" 2> "$T/err" || rc=$?
+[ "$rc" != 0 ] && [ ! -f "$T/frontend-ran" ] || fail "ran the driver with a quote in the SDK's path"
+grep -q "quote" "$T/err" || fail "a quoted SDK path was not explained: $(cat "$T/err")"
+mv "$P/lib/swift/recaulk-importer" "$T/importer-away"; rc=0
+"$P/bin/swiftc" x.swift > "$T/out" 2> "$T/err" || rc=$?
+[ "$rc" != 0 ] && [ ! -f "$T/frontend-ran" ] || fail "ran the driver without the importer's directory"
+grep -qF "no $P/lib/swift/recaulk-importer" "$T/err" || fail "a missing importer was not explained: $(cat "$T/err")"
+mv "$T/importer-away" "$P/lib/swift/recaulk-importer"
+rm -rf "$HOME"; rc=0
+env -u HOME "$P/bin/swiftc" x.swift > "$T/out" 2> "$T/err" || rc=$?
+[ "$rc" != 0 ] && [ ! -f "$T/frontend-ran" ] || fail "ran the driver with no HOME for the cache"
+grep -q 'HOME' "$T/err" || fail "a missing HOME was not explained: $(cat "$T/err")"
 
 ln -s ../swift-toolchain/bin/swiftc "$T/mg/bin/swiftc"
 ln -s "$P/bin/swiftc" "$T/links/abs-swiftc"

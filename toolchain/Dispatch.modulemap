@@ -1,0 +1,9 @@
+module Dispatch [system] {
+  header "recaulk-dispatch.h"
+  header "dispatch.h"
+  export *
+  module introspection {
+    header "introspection.h"
+    export *
+  }
+}

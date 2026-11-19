@@ -24,7 +24,12 @@
 #                             which the swift.org compiler refuses (typed_throws_test,
 #                             parameter_packs_test, stdlib_availability_test); so, with SELFTEST_SUPPORT,
 #                             are upstream's concurrency tests, saying so: their async code for 10.9
-#                             needs patch 0003 too. SWIFTC= mode builds every test.
+#                             needs patch 0003 too. SWIFTC= mode builds every test. RECAULK_IMPORTER=<dir>
+#                             (a toolchain's lib/swift/recaulk-importer) and APINOTES=<dir> (its
+#                             lib/swift/apinotes) give this compiler's importer what the toolchain's swiftc
+#                             gives it, as build-module.sh's options of those names do: the VFS overlay of
+#                             Recaulk's dispatch declarations, written to a temporary directory, and
+#                             Dispatch.apinotes. Both are optional; the tests that need them are owed.
 #            SWIFTC=<swiftc>  exactly `$SWIFTC -O|-Onone <file> -o <out>`: this repo's own toolchain,
 #                             on 10.9, whose defaults supply target, SDK and rpath. With SWIFT_RUNTIME_PREFIX
 #                             also set (a staged, uninstalled runtime), each compile adds
@@ -46,7 +51,7 @@
 #          one pair for both builds; and <dir>/lib, the test-support dylibs,
 #          is copied to the bundle's lib/, which that rpath reaches from upstream/bin/. The support
 #          modules are binary .swiftmodule files: the compiler here must be the release that built them.
-#          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, TC (toolchain usr/), DIST (output dir),
+#          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, TC (toolchain usr/), DIST (output dir), RECAULK_IMPORTER, APINOTES,
 #          SWIFT_RUNTIME_PREFIX, SWIFTC, INSTALL_NAME_TOOL, CLANG22_PREFIX, SELFTEST_SRC (the dir whose
 #          *.swift are the tests, default this repo's tests/), SELFTEST_SUPPORT.
 set -eu
@@ -88,9 +93,21 @@ else
   [ -f "$RES/macosx/x86_64/libswiftCore.dylib" ] || { echo "make-selftest: no stdlib build at $RES -- run build.sh first" >&2; exit 1; }
   RUNTIME_LIB="${SWIFT_RUNTIME_PREFIX:-/usr/local/mavergreen/swift-runtime}/lib/swift"
   SKIP_MARK="// selftest: needs this repo's compiler"
+  IMPFLAGS=""
+  if [ -n "${RECAULK_IMPORTER:-}" ]; then
+    [ -d "$RECAULK_IMPORTER" ] || { echo "make-selftest: RECAULK_IMPORTER=$RECAULK_IMPORTER is no directory" >&2; exit 1; }
+    VFSD="$(mktemp -d "${TMPDIR:-/tmp}/make-selftest-vfs.XXXXXX")"; trap 'rm -rf "$VFSD"' EXIT
+    recaulk_vfs_yaml "$SDK" "$RECAULK_IMPORTER" "$VFSD/recaulk-vfs.yaml" || { echo "make-selftest: could not write the importer's overlay for $SDK" >&2; exit 1; }
+    IMPFLAGS="-Xcc -ivfsoverlay -Xcc $VFSD/recaulk-vfs.yaml"
+  fi
+  if [ -n "${APINOTES:-}" ]; then
+    [ -d "$APINOTES" ] || { echo "make-selftest: APINOTES=$APINOTES is no directory" >&2; exit 1; }
+    IMPFLAGS="$IMPFLAGS -Xcc -iapinotes-modules -Xcc $APINOTES"
+  fi
   compile() {
     _c_o="$1" _c_s="$2" _c_out="$3"; shift 3
-    "$TC/bin/swiftc" -sdk "$SDK" -resource-dir "$RES" -L "$RES/macosx/x86_64" -runtime-compatibility-version none \
+    # shellcheck disable=SC2086  # IMPFLAGS' words are space-free (paths, as build-module.sh's)
+    "$TC/bin/swiftc" -sdk "$SDK" -resource-dir "$RES" -L "$RES/macosx/x86_64" -runtime-compatibility-version none $IMPFLAGS \
       -target x86_64-apple-macosx10.9 "-$_c_o" -no-stdlib-rpath \
       -Xlinker -rpath -Xlinker "$RUNTIME_LIB" "$_c_s" -o "$_c_out" "$@" >&2
   }

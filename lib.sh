@@ -139,6 +139,27 @@ source_stamp() {
   done
 }
 
+# recaulk_vfs_yaml <sdk> <importer> <out.yaml> -- writes the clang VFS overlay (-Xcc -ivfsoverlay) that gives
+# the importer Recaulk's dispatch declarations: <sdk>'s usr/include/dispatch/module.map is replaced by
+# <importer>/Dispatch.modulemap (a toolchain's lib/swift/recaulk-importer), whose Dispatch lists, in this
+# order, recaulk-dispatch.h (the virtual name here of <importer>/dispatch/dispatch.h, which the module map
+# cannot name by an absolute path) and the SDK's dispatch.h; and <sdk>'s usr/include/pthread/qos.h, which the
+# 10.9 SDK lacks, is <importer>/pthread/qos.h. The roots are the SDK's absolute path, so this is written for
+# each SDK. toolchain/swiftc carries a copy of these lines, which it cannot source this file to share
+# (tests/swiftc-wrapper-test.sh keeps them the same). Fails for a path holding a quote, which would end a YAML
+# string early.
+recaulk_vfs_yaml() {
+  case "$1$2" in *\'*|*'
+'*) echo "recaulk_vfs_yaml: a quote or newline in '$1' or '$2' cannot be written to a YAML string" >&2; return 1 ;; esac
+  printf '%s\n' '{' "  'version': 0," "  'case-sensitive': 'false'," "  'use-external-names': false," "  'roots': [" \
+    "    { 'name': '$1/usr/include/dispatch', 'type': 'directory'," \
+    "      'contents': [ { 'name': 'module.map', 'type': 'file', 'external-contents': '$2/Dispatch.modulemap' }," \
+    "                    { 'name': 'recaulk-dispatch.h', 'type': 'file', 'external-contents': '$2/dispatch/dispatch.h' } ] }," \
+    "    { 'name': '$1/usr/include/pthread', 'type': 'directory'," \
+    "      'contents': [ { 'name': 'qos.h', 'type': 'file', 'external-contents': '$2/pthread/qos.h' } ] }" \
+    '  ]' '}' > "$3"
+}
+
 # patch_source <dir> <patch>... -- applies each <patch> (an absolute path, -p0 paths as patches/ holds
 # them) to the source tree <dir>, in order, with the OS's patch: OS X 10.9's GNU patch 2.5.8 and a modern
 # Mac's BSD patch 2.0 write the same bytes. Each is first tried with --dry-run, so one that does not

@@ -3,9 +3,9 @@
 #          Lays out, under <work-dir>, a fake of every build output scripts/stage-toolchain.sh reads for
 #          that toolchain host (default x86_64): build.sh's stdlib-build, build-toolchain.sh's swift-x86
 #          and llvm-x86 (arm64: swift-arm64 and llvm-arm64), build-builtins.sh's builtins-x86, the
-#          llvm-project checkout; each file holds its own relative path. Called for both hosts, the two
+#          llvm-project checkout, overlays/src/apinotes (overlay-sources.sh's patched Dispatch.apinotes); each file holds its own relative path. Called for both hosts, the two
 #          share the rest. And <work-dir>/recaulk, a Recaulk prefix as fetch-recaulk.sh prints one, at
-#          $REPO/pins.env's RECAULK_VERSION (the caller sets REPO). Run stage-toolchain.sh over it with
+#          $REPO/pins.env's RECAULK_VERSION, with its include/recaulk/dispatch/dispatch.h and pthread/qos.h (the caller sets REPO). Run stage-toolchain.sh over it with
 #          SWIFT_WORK=<work-dir> and --recaulk <work-dir>/recaulk. Shared, so a test
 #          that needs a staged payload gets the one stage-toolchain.sh really lays out, not a copy that
 #          could drift from it.
@@ -36,7 +36,9 @@ fake_toolchain_build() {
     $_fs/share/swift/compatibility-symbols $_fs/share/swift/diagnostics/en.db \
     $_fs/share/swift/diagnostics/en.strings $_fs/share/swift/diagnostics/.gitkeep \
     $_fs/share/swift/diagnostics/generated llvm-project/llvm/LICENSE.TXT \
-    builtins-x86/lib/darwin/libclang_rt.osx.a recaulk/lib/librecaulk.a recaulk/share/recaulk/notices.tsv; do
+    builtins-x86/lib/darwin/libclang_rt.osx.a recaulk/lib/librecaulk.a recaulk/share/recaulk/notices.tsv \
+    recaulk/include/recaulk/dispatch/dispatch.h recaulk/include/recaulk/pthread/qos.h \
+    overlays/src/apinotes/Dispatch.apinotes; do
     mkdir -p "$(dirname "$_fw/$_ff")"; echo "$_ff" > "$_fw/$_ff"
   done
   fake_recaulk_plist "$(sed -n 's/^RECAULK_VERSION="\([^"]*\)".*/\1/p' "$REPO/pins.env")" > "$_fw/recaulk/mavergreen.plist"

@@ -349,7 +349,7 @@ RECAULK_DARWIN_A="$ROOT/recaulk-darwin.a"; RECAULK_DARWIN_UNX="$ROOT/recaulk-dar
   recaulk_subset "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_DARWIN_A" "$RECAULK_DARWIN_UNX" $RECAULK_DARWIN_SYMBOLS ) \
   || { echo "FAIL: could not take $RECAULK_DARWIN_SYMBOLS from $RECAULK_PREFIX/lib/librecaulk.a"; exit 1; }
 echo "    Recaulk $RECAULK_VERSION for Darwin: $RECAULK_DARWIN_SYMBOLS, $(grep -c . "$RECAULK_DARWIN_UNX") globals, all unexported"
-PYTHON="${PY:-python3}" sh "$HERE/scripts/overlay-sources.sh" "$ROOT/swift-6.2" "$ROOT/swift-5.4" "$ROOT/swift/utils/gyb" "$OVS" \
+PYTHON="${PY:-python3}" sh "$HERE/scripts/overlay-sources.sh" "$ROOT/swift-6.2" "$ROOT/swift-5.4" "$ROOT/swift" "$ROOT/swift/utils/gyb" "$OVS" \
   || { echo "FAIL: could not lay out the overlays' sources"; exit 1; }
 # One line per module: build-module.sh <module> <link-name> [its options --] <sources>...
 build_overlay() {

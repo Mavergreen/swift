@@ -11,7 +11,9 @@
 #   staged toolchain's (CI stages the native toolchain with the cross pkg's, self-host.sh a stage with the
 #   previous stage's), the same payload either way; a --stdlib that is neither, or an unknown option, is
 #   refused before anything is written. Recaulk's librecaulk.a and notices.tsv (--recaulk, a prefix
-#   fetch-recaulk.sh prints) go to lib/recaulk with its version, which must be pins.env's RECAULK_VERSION.
+#   fetch-recaulk.sh prints) go to lib/recaulk with its version, which must be pins.env's RECAULK_VERSION;
+#   its dispatch/dispatch.h and pthread/qos.h go to lib/swift/recaulk-importer, with the module map that
+#   lists them and the same VERSION, and Dispatch.apinotes (overlay-sources.sh's) to lib/swift/apinotes.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -63,12 +65,19 @@ cp -R "$W/recaulk" "$T/rk-old"; fake_recaulk_plist 19990101.1 > "$T/rk-old/maver
 if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$T/rk-old" "$T/out-rk" 2> "$T/err"; then fail "staged Recaulk 19990101.1"; fi
 grep -q "19990101.1" "$T/err" && grep -q "$RECAULK_VERSION" "$T/err" || fail "did not name both Recaulk versions: $(cat "$T/err")"
 [ ! -e "$T/out-rk" ] || fail "wrote a payload before refusing Recaulk 19990101.1"
-for f in lib/librecaulk.a share/recaulk/notices.tsv mavergreen.plist; do
+for f in lib/librecaulk.a share/recaulk/notices.tsv mavergreen.plist include/recaulk/dispatch/dispatch.h include/recaulk/pthread/qos.h; do
   rm -rf "$T/rk-part"; cp -R "$W/recaulk" "$T/rk-part"; rm "$T/rk-part/$f"
   if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$T/rk-part" "$T/out-rk" 2> "$T/err"; then fail "staged a Recaulk without $f"; fi
   grep -q "$T/rk-part/$f" "$T/err" || fail "did not name the missing $f: $(cat "$T/err")"
   [ ! -e "$T/out-rk" ] || fail "wrote a payload before refusing a Recaulk without $f"
 done
+
+echo "-- refuses a build root with no Dispatch.apinotes, naming it, before writing anything"
+mv "$W/overlays/src/apinotes/Dispatch.apinotes" "$T/apinotes-away"
+if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" "$T/out-an" 2> "$T/err"; then fail "staged without Dispatch.apinotes"; fi
+grep -q "$W/overlays/src/apinotes/Dispatch.apinotes" "$T/err" || fail "did not name the missing Dispatch.apinotes: $(cat "$T/err")"
+[ ! -e "$T/out-an" ] || fail "wrote a payload before refusing a missing Dispatch.apinotes"
+mv "$T/apinotes-away" "$W/overlays/src/apinotes/Dispatch.apinotes"
 
 echo "-- refuses, naming them, when a reused build root holds more than one clang resource dir"
 mkdir -p "$W/llvm-x86/lib/clang/22/include"
@@ -88,6 +97,9 @@ got="$(cd "$T/out" && find usr Library -type f | sort)"
 want="$(printf '%s\n' "$P/bin/clang" "$P/bin/clang.cfg" "$P/bin/clang++.cfg" "$P/bin/ld64.lld" "$P/bin/swift-frontend" "$P/bin/swiftc" \
   "$P/lib/clang/21/include/stdint.h" "$P/lib/clang/21/lib/darwin/libclang_rt.osx.a" \
   "$P/lib/recaulk/librecaulk.a" "$P/lib/recaulk/notices.tsv" "$P/lib/recaulk/VERSION" \
+  "$P/lib/swift/apinotes/Dispatch.apinotes" "$P/lib/swift/recaulk-importer/Dispatch.modulemap" \
+  "$P/lib/swift/recaulk-importer/VERSION" "$P/lib/swift/recaulk-importer/dispatch/dispatch.h" \
+  "$P/lib/swift/recaulk-importer/pthread/qos.h" \
   "$P/lib/swift/macosx/SwiftOnoneSupport.swiftmodule/x86_64-apple-macos.swiftmodule" \
   "$P/lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule" \
   "$P/lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule" \
@@ -114,6 +126,15 @@ $want"
 cmp -s "$W/recaulk/lib/librecaulk.a" "$T/out/$P/lib/recaulk/librecaulk.a" || fail "lib/recaulk/librecaulk.a is not --recaulk's archive"
 cmp -s "$W/recaulk/share/recaulk/notices.tsv" "$T/out/$P/lib/recaulk/notices.tsv" || fail "lib/recaulk/notices.tsv is not --recaulk's notices"
 [ "$(cat "$T/out/$P/lib/recaulk/VERSION")" = "$RECAULK_VERSION" ] || fail "lib/recaulk/VERSION is $(cat "$T/out/$P/lib/recaulk/VERSION"), not $RECAULK_VERSION"
+# What swiftc's importer reads of Recaulk: its two headers, the module map that lists them, and the patched
+# Dispatch.apinotes, which the driver finds at lib/swift/apinotes (the resource dir's).
+RI="$T/out/$P/lib/swift/recaulk-importer"
+cmp -s "$W/recaulk/include/recaulk/dispatch/dispatch.h" "$RI/dispatch/dispatch.h" || fail "recaulk-importer/dispatch/dispatch.h is not --recaulk's"
+cmp -s "$W/recaulk/include/recaulk/pthread/qos.h" "$RI/pthread/qos.h" || fail "recaulk-importer/pthread/qos.h is not --recaulk's"
+cmp -s "$REPO/toolchain/Dispatch.modulemap" "$RI/Dispatch.modulemap" || fail "recaulk-importer/Dispatch.modulemap is not toolchain/Dispatch.modulemap"
+[ "$(cat "$RI/VERSION")" = "$RECAULK_VERSION" ] || fail "recaulk-importer/VERSION is $(cat "$RI/VERSION"), not $RECAULK_VERSION"
+[ "$(cat "$T/out/$P/lib/swift/apinotes/Dispatch.apinotes")" = overlays/src/apinotes/Dispatch.apinotes ] \
+  || fail "lib/swift/apinotes/Dispatch.apinotes is not overlay-sources.sh's"
 for c in clang.cfg clang++.cfg; do
   cmp -s "$REPO/toolchain/clang.cfg" "$T/out/$P/bin/$c" || fail "bin/$c is not toolchain/clang.cfg"
 done

@@ -11,7 +11,12 @@
 #          builtins (--builtins, default build-builtins.sh's archive), where that clang looks for them;
 #          Recaulk's librecaulk.a and its notices.tsv (--recaulk: a Recaulk prefix, default the one
 #          fetch-recaulk.sh prints), in lib/recaulk with its VERSION, which must be pins.env's
-#          RECAULK_VERSION (the ld wrapper links that archive into every program swiftc links);
+#          RECAULK_VERSION (the ld wrapper links that archive into every program swiftc links); its
+#          include/recaulk/dispatch/dispatch.h and pthread/qos.h, with toolchain/Dispatch.modulemap and the same
+#          VERSION, in lib/swift/recaulk-importer (what the swiftc wrapper's VFS overlay shows the clang
+#          importer, instead of the SDK's Dispatch module map alone); Dispatch.apinotes, overlay-sources.sh's
+#          patched copy ($SWIFT_WORK/overlays/src/apinotes, or the staged toolchain --stdlib names), in lib/swift/apinotes,
+#          the resource dir's apinotes the driver reads without a flag (skipped with the overlays under --overlays-optional);
 #          the swiftc and ld wrappers; shipyard's SDK fetcher and the two scripts it sources; clang's
 #          clang.cfg and clang++.cfg. STAGE_HOST x86_64 (the default) is the native toolchain,
 #          swift-toolchain; arm64 the cross toolchain, swift-toolchain-cross. Everything but what each
@@ -58,6 +63,12 @@ done
 # A stdlib build keeps its dylibs in macosx/x86_64/, a staged toolchain in macosx/ (lib.sh).
 LAYOUT="$(stdlib_layout "$STDLIB")" || { echo "stage-toolchain: $STDLIB is no stdlib -- run build.sh, or name one with --stdlib" >&2; exit 1; }
 if [ "$LAYOUT" = build ]; then DYLIBS="$STDLIB/macosx/x86_64"; else DYLIBS="$STDLIB/macosx"; fi
+# Dispatch.apinotes: overlay-sources.sh's patched copy in a build root; a staged toolchain's own beside its stdlib.
+APINOTES=""
+if [ "$LAYOUT" = build ]; then _an="$W/overlays/src/apinotes"; else _an="$STDLIB/apinotes"; fi
+if [ -f "$_an/Dispatch.apinotes" ]; then APINOTES="$_an"
+elif [ -n "$OVERLAYS_OPTIONAL" ]; then echo "stage-toolchain: no $_an/Dispatch.apinotes; --overlays-optional stages without" >&2
+else echo "stage-toolchain: no $_an/Dispatch.apinotes -- run build.sh" >&2; exit 1; fi
 # The Darwin and ObjectiveC overlays (step 5b of build.sh) and _Concurrency (step 5): a module and a dylib each, in the
 # same two places, and _Concurrency's _Builtin_float module beside it, with no dylib (it re-exports symbols
 # libswiftDarwin defines, so nothing links it). Each is wanted whole. --overlays-optional stages those it finds
@@ -86,7 +97,7 @@ done
 if [ -z "$RECAULK" ]; then
   RECAULK="$(sh "$HERE/fetch-recaulk.sh")" || { echo "stage-toolchain: could not fetch Recaulk $RECAULK_VERSION" >&2; exit 1; }
 fi
-for f in lib/librecaulk.a share/recaulk/notices.tsv mavergreen.plist; do
+for f in lib/librecaulk.a share/recaulk/notices.tsv mavergreen.plist include/recaulk/dispatch/dispatch.h include/recaulk/pthread/qos.h; do
   [ -f "$RECAULK/$f" ] || { echo "stage-toolchain: no $RECAULK/$f -- is $RECAULK a Recaulk prefix?" >&2; exit 1; }
 done
 RK_V="$(sed -n '/<key>version<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' "$RECAULK/mavergreen.plist")"
@@ -97,7 +108,7 @@ P="$OUT/usr/local/mavergreen/$TH_PRODUCT"
 rm -rf "$OUT/usr"
 CLANG_V="$(basename "$(dirname "$CLANG_INC")")"
 mkdir -p "$P/bin" "$P/libexec/mavergreen-swift" "$P/lib/swift/macosx" "$P/lib/clang/$CLANG_V/lib/darwin" "$P/lib/recaulk" \
-  "$P/share/swift/diagnostics" "$P/share/doc"
+  "$P/lib/swift/recaulk-importer/dispatch" "$P/lib/swift/recaulk-importer/pthread" "$P/share/swift/diagnostics" "$P/share/doc"
 cp "$SB/bin/swift-frontend" "$P/bin/swift-frontend"
 cp "$LB/bin/lld" "$P/bin/ld64.lld"
 cp "$LB/bin/clang" "$P/bin/clang"
@@ -126,6 +137,12 @@ ln -s "../clang/$CLANG_V" "$P/lib/swift/clang"
 cp "$RECAULK/lib/librecaulk.a" "$P/lib/recaulk/librecaulk.a"
 cp "$RECAULK/share/recaulk/notices.tsv" "$P/lib/recaulk/notices.tsv"
 echo "$RK_V" > "$P/lib/recaulk/VERSION"
+RI="$P/lib/swift/recaulk-importer"
+cp "$RECAULK/include/recaulk/dispatch/dispatch.h" "$RI/dispatch/dispatch.h"
+cp "$RECAULK/include/recaulk/pthread/qos.h" "$RI/pthread/qos.h"
+cp "$HERE/toolchain/Dispatch.modulemap" "$RI/Dispatch.modulemap"
+echo "$RK_V" > "$RI/VERSION"
+if [ -n "$APINOTES" ]; then mkdir -p "$P/lib/swift/apinotes" && cp "$APINOTES/Dispatch.apinotes" "$P/lib/swift/apinotes/"; fi
 cp "$SB/share/swift/compatibility-symbols" "$P/share/swift/"
 for f in "$SB"/share/swift/diagnostics/*.db "$SB"/share/swift/diagnostics/*.strings \
          "$SB"/share/swift/diagnostics/*.yaml; do

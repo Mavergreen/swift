@@ -1,0 +1,27 @@
+--- apinotes/Dispatch.apinotes
++++ apinotes/Dispatch.apinotes
+@@ -43,6 +43,7 @@
+   Availability: nonswift
+ - Name: dispatch_block_flags_t
+   SwiftPrivate: true
++  SwiftWrapper: struct
+ - Name: dispatch_source_type_t
+   SwiftPrivate: true
+ - Name: dispatch_source_mach_send_flags_t
+@@ -131,10 +132,16 @@
+   Availability: nonswift
+ - Name: dispatch_sync
+   SwiftName: 'DispatchQueue.sync(self:execute:)'
++  Parameters:
++  - Position: 1
++    NoEscape: true
+ - Name: dispatch_sync_f
+   Availability: nonswift
+ - Name: dispatch_barrier_sync
+   SwiftPrivate: true
++  Parameters:
++  - Position: 1
++    NoEscape: true
+ - Name: dispatch_barrier_sync_f
+   Availability: nonswift
+ - Name: dispatch_queue_get_label
