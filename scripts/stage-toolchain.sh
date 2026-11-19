@@ -4,7 +4,7 @@
 #          Lays out a toolchain .pkg's payload under <out-dir>/usr/local/mavergreen/<product> from this
 #          build: build-toolchain.sh --host $STAGE_HOST's lld, clang and clang's headers, and its compiler
 #          and helper outputs (--frontend: the swift build dir holding bin/swift-frontend and
-#          share/swift, default $SWIFT_WORK/<host's swift dir>); the stdlib, and the Darwin and ObjectiveC
+#          share/swift, default $SWIFT_WORK/<host's swift dir>); the stdlib, and the Darwin, ObjectiveC and Dispatch
 #          overlays' and _Concurrency's modules and dylibs beside it (_Concurrency's with _Builtin_float's module, whose
 #          dylib ships nowhere) (--stdlib: a stdlib build's lib/swift, default build.sh's $SWIFT_WORK/stdlib-build/lib/swift, or a staged toolchain's
 #          lib/swift: CI's build job takes the cross toolchain pkg's, self-host.sh a stage's); compiler-rt's
@@ -22,7 +22,7 @@
 #          swift-toolchain; arm64 the cross toolchain, swift-toolchain-cross. Everything but what each
 #          host's build makes itself (the three binaries, clang's headers, the helper outputs) is the same
 #          bytes in both. <out-dir> persists between builds, so its usr/ is removed first;
-#          <out-dir>/Library belongs to package-toolchain.sh and is left alone. A stdlib without either
+#          <out-dir>/Library belongs to package-toolchain.sh and is left alone. A stdlib without an
 #          overlay or without Concurrency is refused unless --overlays-optional (self-host.sh's pre toolchain only) says to
 #          stage it without them.
 #          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, STAGE_HOST.
@@ -46,7 +46,7 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 . "$HERE/scripts/outdir.sh"
 refuse_root_outdir stage-toolchain "$OUT"
 . "$HERE/pins.env"   # -> $RECAULK_VERSION
-. "$HERE/lib.sh"     # -> $SWIFT_BUILD, clang_resource_include, toolchain_host_select, stdlib_layout
+. "$HERE/lib.sh"     # -> $SWIFT_BUILD, clang_resource_include, toolchain_host_select, stdlib_layout, recaulk_importer_layout
 toolchain_host_select "${STAGE_HOST:-x86_64}" || exit 2
 . "$HERE/msc.sh"     # -> $SHIPYARD (fetch_sdk.sh, mavericks_fetch.sh, sdk-pins.sh)
 W="${SWIFT_WORK:-$SWIFT_BUILD/work}"
@@ -69,14 +69,14 @@ if [ "$LAYOUT" = build ]; then _an="$W/overlays/src/apinotes"; else _an="$STDLIB
 if [ -f "$_an/Dispatch.apinotes" ]; then APINOTES="$_an"
 elif [ -n "$OVERLAYS_OPTIONAL" ]; then echo "stage-toolchain: no $_an/Dispatch.apinotes; --overlays-optional stages without" >&2
 else echo "stage-toolchain: no $_an/Dispatch.apinotes -- run build.sh" >&2; exit 1; fi
-# The Darwin and ObjectiveC overlays (step 5b of build.sh) and _Concurrency (step 5): a module and a dylib each, in the
+# The Darwin, ObjectiveC and Dispatch overlays (step 5b of build.sh) and _Concurrency (step 5): a module and a dylib each, in the
 # same two places, and _Concurrency's _Builtin_float module beside it, with no dylib (it re-exports symbols
 # libswiftDarwin defines, so nothing links it). Each is wanted whole. --overlays-optional stages those it finds
 # and skips the rest: self-host.sh's pre toolchain, whose stdlib (a seed's from before the overlays, 6.4.1-mavericks.8
 # say) only makes the stage's compiler run, since build.sh compiles the overlays against the stdlib it builds. A
 # toolchain that ships or is compared never passes it.
 MODULES=""; LIBS_STAGED=""
-for o in Darwin ObjectiveC _Concurrency _Builtin_float; do
+for o in Darwin ObjectiveC Dispatch _Concurrency _Builtin_float; do
   case "$o" in
     _Builtin_float) lib="" ;;
     _Concurrency) lib="libswift_Concurrency.dylib" ;;
@@ -108,7 +108,7 @@ P="$OUT/usr/local/mavergreen/$TH_PRODUCT"
 rm -rf "$OUT/usr"
 CLANG_V="$(basename "$(dirname "$CLANG_INC")")"
 mkdir -p "$P/bin" "$P/libexec/mavergreen-swift" "$P/lib/swift/macosx" "$P/lib/clang/$CLANG_V/lib/darwin" "$P/lib/recaulk" \
-  "$P/lib/swift/recaulk-importer/dispatch" "$P/lib/swift/recaulk-importer/pthread" "$P/share/swift/diagnostics" "$P/share/doc"
+  "$P/share/swift/diagnostics" "$P/share/doc"
 cp "$SB/bin/swift-frontend" "$P/bin/swift-frontend"
 cp "$LB/bin/lld" "$P/bin/ld64.lld"
 cp "$LB/bin/clang" "$P/bin/clang"
@@ -137,11 +137,8 @@ ln -s "../clang/$CLANG_V" "$P/lib/swift/clang"
 cp "$RECAULK/lib/librecaulk.a" "$P/lib/recaulk/librecaulk.a"
 cp "$RECAULK/share/recaulk/notices.tsv" "$P/lib/recaulk/notices.tsv"
 echo "$RK_V" > "$P/lib/recaulk/VERSION"
-RI="$P/lib/swift/recaulk-importer"
-cp "$RECAULK/include/recaulk/dispatch/dispatch.h" "$RI/dispatch/dispatch.h"
-cp "$RECAULK/include/recaulk/pthread/qos.h" "$RI/pthread/qos.h"
-cp "$HERE/toolchain/Dispatch.modulemap" "$RI/Dispatch.modulemap"
-echo "$RK_V" > "$RI/VERSION"
+recaulk_importer_layout "$RECAULK" "$HERE/toolchain/Dispatch.modulemap" "$RK_V" "$P/lib/swift/recaulk-importer" \
+  || { echo "stage-toolchain: could not lay out $P/lib/swift/recaulk-importer" >&2; exit 1; }
 if [ -n "$APINOTES" ]; then mkdir -p "$P/lib/swift/apinotes" && cp "$APINOTES/Dispatch.apinotes" "$P/lib/swift/apinotes/"; fi
 cp "$SB/share/swift/compatibility-symbols" "$P/share/swift/"
 for f in "$SB"/share/swift/diagnostics/*.db "$SB"/share/swift/diagnostics/*.strings \

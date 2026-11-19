@@ -3,9 +3,9 @@
 # build.sh — from-source build of the Swift runtime (libswiftCore + libswiftSwiftOnoneSupport) for
 # OS X 10.9 / x86_64, staged as the runtime .pkg's payload, and beside it, in the stdlib build's tree,
 # libswift_Concurrency (the runtime pkg's third dylib, with its _Builtin_float module) and the
-# Darwin and ObjectiveC overlays (libswiftDarwin, libswiftObjectiveC and their modules: swift-6.2's
-# Platform and swift-5.4's ObjectiveC sources, pinned tarballs, compiled against the 10.9 SDK by
-# scripts/build-module.sh with the stdlib's flags). No Apple prebuilt runtime bytes ship.
+# Darwin, ObjectiveC and Dispatch overlays (libswiftDarwin, libswiftObjectiveC, libswiftDispatch and their
+# modules: swift-6.2's Platform and swift-5.4's ObjectiveC and Dispatch sources, pinned tarballs, compiled
+# against the 10.9 SDK by scripts/build-module.sh with the stdlib's flags). No Apple prebuilt runtime bytes ship.
 #
 # One recipe, two modes (MAVERICKS_MODE, else shipyard's mavericks_mode.sh), the same bytes from both.
 # The host Swift compiler and clang are a Mavergreen toolchain's, run bare through a shim dir, with the
@@ -329,7 +329,7 @@ if [ -n "$PY" ]; then echo "    gyb runs $PY: $("$PY" --version 2>&1 || :)"; els
 echo "==> 5. build libswiftCore (+ SwiftOnoneSupport, and _Concurrency)"
 ninja -C "$ROOT/stdlib-build" swiftCore-macosx-$ARCH swiftSwiftOnoneSupport-macosx-$ARCH swift_Concurrency-macosx-$ARCH
 
-echo "==> 5b. the Darwin and ObjectiveC overlays, beside libswiftCore (against the 10.9 SDK)"
+echo "==> 5b. the Darwin, ObjectiveC and Dispatch overlays, beside libswiftCore (against the 10.9 SDK)"
 # spec: "The overlays" -- written into the stdlib build's tree beside Core (lib/swift/macosx/<M>.swiftmodule,
 #       macosx/x86_64/lib<swiftM>.dylib), so every later stage reads one tree. Compiled by the host
 #       compiler that built Core, against the stdlib just built (its Swift module and libswiftCore) and the
@@ -351,6 +351,17 @@ RECAULK_DARWIN_A="$ROOT/recaulk-darwin.a"; RECAULK_DARWIN_UNX="$ROOT/recaulk-dar
 echo "    Recaulk $RECAULK_VERSION for Darwin: $RECAULK_DARWIN_SYMBOLS, $(grep -c . "$RECAULK_DARWIN_UNX") globals, all unexported"
 PYTHON="${PY:-python3}" sh "$HERE/scripts/overlay-sources.sh" "$ROOT/swift-6.2" "$ROOT/swift-5.4" "$ROOT/swift" "$ROOT/swift/utils/gyb" "$OVS" \
   || { echo "FAIL: could not lay out the overlays' sources"; exit 1; }
+# host_object <object> clang|clang++ <source> [<flag>...] -- <source> compiled by the host clang against the
+# 10.9 SDK, with the stdlib's threading package and the runtime's headers, the build root prefix-mapped.
+host_object() {
+  _ho_o="$1"; _ho_cc="$2"; _ho_s="$3"; shift 3
+  mkdir -p "$(dirname "$_ho_o")"
+  # shellcheck disable=SC2086  # space-free words
+  "$TC/bin/$_ho_cc" -c -target "$ARCH-apple-macosx$DEPLOYMENT" -isysroot "$SDK_OVERLAYS" $PM_C -O2 -g0 -fPIC -fvisibility=hidden \
+    -DNDEBUG -DSWIFT_THREADING_PTHREADS -DSWIFT_LIBRARY_EVOLUTION=1 -I"$ROOT/stdlib-build/include" -I"$ROOT/swift/include" \
+    -I"$ROOT/swift/stdlib/include" -I"$ROOT/swift/stdlib/public/SwiftShims" "$@" -o "$_ho_o" "$_ho_s" \
+    || { echo "FAIL: could not compile $_ho_s"; exit 1; }
+}
 # One line per module: build-module.sh <module> <link-name> [its options --] <sources>...
 build_overlay() {
   _bo_m="$1"; _bo_l="$2"; shift 2
@@ -365,6 +376,42 @@ build_overlay Darwin swiftDarwin --link "$RECAULK_DARWIN_A" --unexported "$RECAU
   "$OVS/Darwin/tgmath.swift" "$OVS/Darwin/POSIXError.swift" "$OVS/Darwin/MachError.swift"
 # ObjectiveC imports Darwin, found in --out, where Darwin was just written.
 build_overlay ObjectiveC swiftObjectiveC --I "$OVS/ObjectiveC/shims" -- "$OVS/ObjectiveC/ObjectiveC.swift"
+# spec: INGREDIENTS.md "Recaulk" -- libswiftDispatch calls these APIs 10.9 lacks, which Recaulk defines and
+#       declares and overlay patch 0012 makes 10.9 API: dispatch_block_create and
+#       dispatch_block_create_with_qos_class for every DispatchWorkItem (Block.swift, through the shims),
+#       dispatch_block_cancel and dispatch_block_testcancel for its cancel() and isCancelled,
+#       dispatch_queue_attr_make_with_qos_class for a queue given a QoS (Queue.swift) and dispatch_activate for
+#       activate() (Source.swift). Recaulk's, linked and hidden, as Darwin takes openat: one copy in the
+#       overlay, so a block the overlay creates is the one it cancels.
+RECAULK_DISPATCH_SYMBOLS="_dispatch_block_create _dispatch_block_create_with_qos_class _dispatch_block_cancel _dispatch_block_testcancel _dispatch_activate _dispatch_queue_attr_make_with_qos_class"
+RECAULK_DISPATCH_A="$ROOT/recaulk-dispatch.a"; RECAULK_DISPATCH_UNX="$ROOT/recaulk-dispatch.unexported"
+# shellcheck disable=SC2086  # space-free symbol names
+( NM="$X/llvm-nm"; AR="$X/llvm-ar"
+  recaulk_subset "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_DISPATCH_A" "$RECAULK_DISPATCH_UNX" $RECAULK_DISPATCH_SYMBOLS ) \
+  || { echo "FAIL: could not take $RECAULK_DISPATCH_SYMBOLS from $RECAULK_PREFIX/lib/librecaulk.a"; exit 1; }
+echo "    Recaulk $RECAULK_VERSION for Dispatch: $RECAULK_DISPATCH_SYMBOLS, $(grep -c . "$RECAULK_DISPATCH_UNX") globals, all unexported"
+# spec: INGREDIENTS.md "Recaulk" -- the clang importer reads Dispatch as the toolchains' swiftc shows it to every
+#       program: Recaulk's dispatch declarations over the SDK's (lib.sh's recaulk_vfs_yaml), from an importer dir
+#       laid out from the Recaulk just fetched as stage-toolchain.sh lays out lib/swift/recaulk-importer, and
+#       overlay-sources.sh's patched Dispatch.apinotes, which the stdlib build's resource dir lacks.
+DISPATCH_IMPORTER="$ROOT/overlays/recaulk-importer"
+recaulk_importer_layout "$RECAULK_PREFIX" "$HERE/toolchain/Dispatch.modulemap" "$RECAULK_VERSION" "$DISPATCH_IMPORTER" \
+  || { echo "FAIL: could not lay out $DISPATCH_IMPORTER from $RECAULK_PREFIX"; exit 1; }
+# spec: "The overlays" -- Dispatch.mm, which adds the dispatch source protocols to 10.9's OS_dispatch_source class
+#       and reports a NULL dispatch_source_create through swift_reportError (swift/Runtime/Debug.h), is compiled
+#       as 5.4's CMake compiled it, Objective-C++ without ARC, and handed to the link; it calls nothing of a C++
+#       library, so no libc++ is linked, as for the other overlays.
+# shellcheck disable=SC2086  # space-free words
+host_object "$ROOT/overlays/obj/Dispatch.mm.o" clang++ "$OVS/Dispatch/Dispatch.mm" -x objective-c++ -std=c++17 -fno-exceptions -fno-rtti \
+  $CXX_LIBCXX -DSWIFT_INLINE_NAMESPACE=__runtime -DLLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1
+# Dispatch imports Darwin and ObjectiveC, found in --out, where they were just written. Recaulk's dispatch member
+# keeps a block's cancel flag in a CFData, so the link takes CoreFoundation, as libswift_Concurrency's does.
+D="$OVS/Dispatch"
+build_overlay Dispatch swiftDispatch --I "$D/shims" --recaulk-importer "$DISPATCH_IMPORTER" --apinotes "$OVS/apinotes" \
+  --flag -framework --flag CoreFoundation --link "$RECAULK_DISPATCH_A" --link "$ROOT/overlays/obj/Dispatch.mm.o" \
+  --unexported "$RECAULK_DISPATCH_UNX" -- \
+  "$D/Block.swift" "$D/Data.swift" "$D/Dispatch.swift" "$D/IO.swift" "$D/Private.swift" "$D/Queue.swift" \
+  "$D/Source.swift" "$D/Time.swift"
 
 # spec: "Upstream tests" -- upstream's own Darwin, ObjectiveC and Concurrency tests run on the 10.9 gate; most import
 #       StdlibUnittest: it, and the three modules it imports, are built here with build-module.sh, as their
@@ -414,11 +461,7 @@ fi
 # support_object clang|clang++ <source> [<flag>...] -- $SUW/obj/<source's name>.o
 support_object() {
   _so_cc="$1"; _so_s="$2"; shift 2
-  # shellcheck disable=SC2086  # space-free words
-  "$TC/bin/$_so_cc" -c -target "$ARCH-apple-macosx$DEPLOYMENT" -isysroot "$SDK_OVERLAYS" $PM_C -O2 -g0 -fPIC -fvisibility=hidden \
-    -DNDEBUG -DSWIFT_THREADING_PTHREADS -DSWIFT_LIBRARY_EVOLUTION=1 -I"$ROOT/stdlib-build/include" -I"$ROOT/swift/include" \
-    -I"$ROOT/swift/stdlib/include" -I"$ROOT/swift/stdlib/public/SwiftShims" "$@" -o "$SUW/obj/${_so_s##*/}.o" "$_so_s" \
-    || { echo "FAIL: could not compile $_so_s"; exit 1; }
+  host_object "$SUW/obj/${_so_s##*/}.o" "$_so_cc" "$_so_s" "$@"
 }
 support_object clang "$PRIV/SwiftPrivateLibcExtras/Subprocess.c"
 for f in InspectValue InterceptTraps OpaqueIdentityFunctions; do
@@ -478,7 +521,8 @@ echo "==> 7. self pre-flight (must show minOS 10.9 and NO os_unfair_lock)"
 # stdlib build's tree where steps 5 and 5b wrote them (space-free paths: lib.sh refuses a root with whitespace).
 DARWIN="$RES/macosx/$ARCH/libswiftDarwin.dylib"
 CONCURRENCY="$RES/macosx/$ARCH/libswift_Concurrency.dylib"
-SHIPPED_DYLIBS="$CORE $(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib $DARWIN $RES/macosx/$ARCH/libswiftObjectiveC.dylib $CONCURRENCY"
+DISPATCH="$RES/macosx/$ARCH/libswiftDispatch.dylib"
+SHIPPED_DYLIBS="$CORE $(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib $DARWIN $RES/macosx/$ARCH/libswiftObjectiveC.dylib $DISPATCH $CONCURRENCY"
 for lib in $SHIPPED_DYLIBS; do [ -f "$lib" ] || { echo "FAIL: no $lib to check"; exit 1; }; done
 # platform: dyld_info reads an x86_64 Mach-O natively on an arm64 host. `arch -x86_64 dyld_info`
 #           needs Rosetta AND an x86_64 slice in dyld_info, and Command Line Tools 27 ships it arm64-only.
@@ -517,11 +561,13 @@ recaulk_hidden "$CORE" "$RECAULK_UNX" $RECAULK_RUNTIME_SYMBOLS
 recaulk_hidden "$DARWIN" "$RECAULK_DARWIN_UNX" $RECAULK_DARWIN_SYMBOLS
 # shellcheck disable=SC2086  # space-free symbol names
 recaulk_hidden "$CONCURRENCY" "$RECAULK_CONC_UNX" $RECAULK_CONCURRENCY_SYMBOLS
+# shellcheck disable=SC2086  # space-free symbol names
+recaulk_hidden "$DISPATCH" "$RECAULK_DISPATCH_UNX" $RECAULK_DISPATCH_SYMBOLS
 # spec: INGREDIENTS.md "Recaulk" -- APSL 2.0 section 2.3 wants the "source is available" notice in the code
 #       itself and in the documentation. Recaulk embeds it in each Apple-derived member and lists it in
-#       share/recaulk/notices.tsv: every dylib that links a Recaulk subset (libswiftCore, libswiftDarwin and
-#       libswift_Concurrency; the other two link none) must still carry the notice of each APSL member it
-#       links after our link (dead-stripping, -S, the unexported list), and NOTICE must carry it too
+#       share/recaulk/notices.tsv: every dylib that links a Recaulk subset (libswiftCore, libswiftDarwin,
+#       libswift_Concurrency and libswiftDispatch; the other two link none) must still carry the notice of each
+#       APSL member it links after our link (dead-stripping, -S, the unexported list), and NOTICE must carry it too
 #       (lib.sh's recaulk_notices).
 #       The tsv lists only APSL members, so a linked MacPorts mp-* member without a row passes only when
 #       named here, its licence read and carried in NOTICE: pthread_chdir.c is under legacy-support's MIT
@@ -537,6 +583,7 @@ recaulk_notices_in() {
 recaulk_notices_in "$CORE" "$RECAULK_A"
 recaulk_notices_in "$DARWIN" "$RECAULK_DARWIN_A"
 recaulk_notices_in "$CONCURRENCY" "$RECAULK_CONC_A"
+recaulk_notices_in "$DISPATCH" "$RECAULK_DISPATCH_A"
 # spec: INGREDIENTS.md "Recaulk in every program" -- both toolchain pkgs ship this librecaulk.a whole
 #       (stage-toolchain.sh's lib/recaulk), so NOTICE carries the notice of every APSL member in it (the
 #       archive's strings hold each one), and every other MacPorts member is named here, its source's
@@ -659,4 +706,4 @@ IMPORTS_SUP="$(DYLDINFO="$DYLDINFO" NM="${NM:-nm}" OTOOL="${OTOOL:-otool}" sh "$
   "$HERE/scripts/resources/weak-absent-on-10.9.txt" $SUPPORT_DYLIBS)" \
   || { printf '%s\n' "$IMPORTS_SUP"; echo "FAIL: a test-support library imports what OS X 10.9 lacks (listed above)"; exit 1; }
 printf '%s\n' "$IMPORTS_SUP"
-echo "OK: minOS $DEPLOYMENT; no os_unfair_lock; Recaulk's $RECAULK_RUNTIME_SYMBOLS (libswiftCore), $RECAULK_DARWIN_SYMBOLS (libswiftDarwin) and $RECAULK_CONCURRENCY_SYMBOLS (libswift_Concurrency) defined and hidden; Recaulk's APSL notices in the code and NOTICE; no debug strings; no build paths; checked $(for lib in $SHIPPED_DYLIBS; do printf '%s ' "${lib##*/}"; done); staged in $OUT; no test support in it"
+echo "OK: minOS $DEPLOYMENT; no os_unfair_lock; Recaulk's $RECAULK_RUNTIME_SYMBOLS (libswiftCore), $RECAULK_DARWIN_SYMBOLS (libswiftDarwin), $RECAULK_CONCURRENCY_SYMBOLS (libswift_Concurrency) and $RECAULK_DISPATCH_SYMBOLS (libswiftDispatch) defined and hidden; Recaulk's APSL notices in the code and NOTICE; no debug strings; no build paths; checked $(for lib in $SHIPPED_DYLIBS; do printf '%s ' "${lib##*/}"; done); staged in $OUT; no test support in it"

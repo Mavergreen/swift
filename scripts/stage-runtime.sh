@@ -2,8 +2,8 @@
 # platform: host-agnostic
 #   usage: stage-runtime.sh <built-lib-dir> <out-dir> <license-file> <notice-file>
 #          Lays out the runtime .pkg's payload under <out-dir>: libswiftCore.dylib,
-#          libswiftSwiftOnoneSupport.dylib, libswiftDarwin.dylib and libswiftObjectiveC.dylib (the
-#          overlays every program importing Darwin or ObjectiveC loads) and libswift_Concurrency.dylib (every program
+#          libswiftSwiftOnoneSupport.dylib, libswiftDarwin.dylib, libswiftObjectiveC.dylib and libswiftDispatch.dylib
+#          (the overlays every program importing Darwin, ObjectiveC or Dispatch loads) and libswift_Concurrency.dylib (every program
 #          that uses Concurrency loads it; swiftc imports _Concurrency implicitly) from <built-lib-dir> in
 #          usr/local/mavergreen/swift-runtime/lib/swift/, with libswiftCompatibilitySpan.dylib beside them
 #          as a link to libswiftCore.dylib, and <license-file> as
@@ -20,9 +20,9 @@ set -eu
 BUILT="$1"; OUT="$2"; LICENSE="$3"; NOTICE="$4"
 . "$(dirname "$0")/outdir.sh"
 refuse_root_outdir stage-runtime "$OUT"
-# One list for the refusal and the copy. build.sh's SHIPPED_DYLIBS names the same five by path, for its
+# One list for the refusal and the copy. build.sh's SHIPPED_DYLIBS names the same six by path, for its
 # pre-flight; it reads them from two places, so it stays its own variable.
-RUNTIME_DYLIBS="libswiftCore.dylib libswiftSwiftOnoneSupport.dylib libswiftDarwin.dylib libswiftObjectiveC.dylib libswift_Concurrency.dylib"
+RUNTIME_DYLIBS="libswiftCore.dylib libswiftSwiftOnoneSupport.dylib libswiftDarwin.dylib libswiftObjectiveC.dylib libswiftDispatch.dylib libswift_Concurrency.dylib"
 for lib in $RUNTIME_DYLIBS; do
   [ -f "$BUILT/$lib" ] || { echo "stage-runtime: $BUILT has no $lib" >&2; exit 1; }
 done

@@ -160,6 +160,20 @@ recaulk_vfs_yaml() {
     '  ]' '}' > "$3"
 }
 
+# recaulk_importer_layout <recaulk-prefix> <Dispatch.modulemap> <version> <dir> -- lays out <dir> as
+# recaulk_vfs_yaml's <importer> reads it: <recaulk-prefix>'s include/recaulk/dispatch/dispatch.h and
+# pthread/qos.h, the module map (toolchain/Dispatch.modulemap) and a VERSION file holding <version>. A
+# toolchain's lib/swift/recaulk-importer (stage-toolchain.sh) and the one build.sh's step 5b compiles the
+# Dispatch overlay with are both made here, so the overlay sees the declarations every program will.
+recaulk_importer_layout() {
+  for _ril_f in "$1/include/recaulk/dispatch/dispatch.h" "$1/include/recaulk/pthread/qos.h" "$2"; do
+    [ -f "$_ril_f" ] || { echo "recaulk_importer_layout: no $_ril_f" >&2; return 1; }
+  done
+  rm -rf "$4" && mkdir -p "$4/dispatch" "$4/pthread" || return 1
+  cp "$1/include/recaulk/dispatch/dispatch.h" "$4/dispatch/dispatch.h" && cp "$1/include/recaulk/pthread/qos.h" "$4/pthread/qos.h" \
+    && cp "$2" "$4/Dispatch.modulemap" && echo "$3" > "$4/VERSION"
+}
+
 # patch_source <dir> <patch>... -- applies each <patch> (an absolute path, -p0 paths as patches/ holds
 # them) to the source tree <dir>, in order, with the OS's patch: OS X 10.9's GNU patch 2.5.8 and a modern
 # Mac's BSD patch 2.0 write the same bytes. Each is first tried with --dry-run, so one that does not

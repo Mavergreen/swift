@@ -113,10 +113,11 @@ done
 echo "-- each Recaulk symbol build.sh links is named"
 # By its API's name, as a whole word (fma is not fmax): a \$V2-style suffix, escaped in build.sh, is the
 # SDK's binding, not the API's name.
-for s in $(sed -En 's/^RECAULK_(RUNTIME|DARWIN|CONCURRENCY)_SYMBOLS="([^"]*)"$/\2/p' "$REPO/build.sh"); do
+for s in $(sed -En 's/^RECAULK_(RUNTIME|DARWIN|CONCURRENCY|DISPATCH)_SYMBOLS="([^"]*)"$/\2/p' "$REPO/build.sh"); do
   a="${s#_}"; a="${a%%[\\\$]*}"
   grep -qw -- "$a" "$N" || fail "NOTICE does not name Recaulk's $a, which build.sh links"
 done
 [ -n "$(sed -n 's/^RECAULK_DARWIN_SYMBOLS="\([^"]*\)"$/\1/p' "$REPO/build.sh")" ] || fail "read no RECAULK_DARWIN_SYMBOLS from build.sh"
 [ -n "$(sed -n 's/^RECAULK_CONCURRENCY_SYMBOLS="\([^"]*\)"$/\1/p' "$REPO/build.sh")" ] || fail "read no RECAULK_CONCURRENCY_SYMBOLS from build.sh"
+[ -n "$(sed -n 's/^RECAULK_DISPATCH_SYMBOLS="\([^"]*\)"$/\1/p' "$REPO/build.sh")" ] || fail "read no RECAULK_DISPATCH_SYMBOLS from build.sh"
 echo "PASS"

@@ -235,8 +235,11 @@ if grep -q '^git \|^xcrun ' "$T/log"; then fail "ran $(grep '^git \|^xcrun ' "$T
 echo "-- step 5b's test support: with Concurrency when the host compiler declares a 10.9 async function; without"
 echo "   it, and without upstream's concurrency tests, saying so, when it refuses one (the swift.org seed); else FAIL"
 # Step 5b is past the fake ninja, so its test-support half is cut out of build.sh (from SUP= to the line that
-# reports the modules) and run with a fake host compiler, clang, gyb and build-module.sh.
-awk '/^SUP="\$ROOT\/stdlib-build\/selftest-support"/{on=1} on{print} on&&/^echo "    test support \(never in a pkg\)/{exit}' "$REPO/build.sh" > "$T/support.sh"
+# reports the modules), after the host_object it compiles C with, and run with a fake host compiler, clang, gyb
+# and build-module.sh.
+awk '/^host_object\(\) \{/,/^}/' "$REPO/build.sh" > "$T/support.sh"
+grep -q '^host_object() {' "$T/support.sh" || fail "found no host_object in build.sh"
+awk '/^SUP="\$ROOT\/stdlib-build\/selftest-support"/{on=1} on{print} on&&/^echo "    test support \(never in a pkg\)/{exit}' "$REPO/build.sh" >> "$T/support.sh"
 grep -q 'test support (never in a pkg)' "$T/support.sh" || fail "found no test-support half of step 5b in build.sh: $(cat "$T/support.sh")"
 S5="$T/s5"; mkdir -p "$S5/tc/bin" "$S5/here/scripts" "$S5/root/swift/utils" "$S5/res"
 mkdir -p "$S5/here/tests"; cp -R "$REPO/tests/upstream" "$S5/here/tests/"

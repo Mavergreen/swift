@@ -61,9 +61,10 @@ keeps a runtime built on OS X 10.9 identical to the one CI builds; 0009 keeps on
         call up at run time, as 6.4.1 did, since 10.9's libdispatch lacks it; it
         is asked for only on macOS 12 and later.
 
-The runtime package also contains libswiftDarwin.dylib and libswiftObjectiveC.dylib,
-and both toolchain packages contain them and their modules (Darwin.swiftmodule,
-ObjectiveC.swiftmodule), compiled from the Swift open source project too, under
+The runtime package also contains libswiftDarwin.dylib, libswiftObjectiveC.dylib and
+libswiftDispatch.dylib, and both toolchain packages contain them and their modules
+(Darwin.swiftmodule, ObjectiveC.swiftmodule, Dispatch.swiftmodule), compiled from the
+Swift open source project too, under
 the same license as libswiftCore (Apache License v2.0 with Runtime Library
 Exception; Copyright (c) 2014 - present Apple Inc. and the Swift project
 authors):
@@ -74,6 +75,9 @@ authors):
     (pins.env's SWIFT54_SHA), with the local patch in ./patches/overlays:
   0001  -hash is a method in the 10.9 SDK — call NSObject's hash() where the
         overlay, written for a later SDK, reads a hash property.
+  * libswiftDispatch from swift-5.4-RELEASE's stdlib/public/Darwin/Dispatch
+    (pins.env's SWIFT54_SHA), with the local patches to the Dispatch overlay's
+    sources listed below.
 
 Both toolchain packages also contain Dispatch.apinotes (lib/swift/apinotes), from
 the Swift open source project at pins.env's SWIFT_SHA (apinotes/Dispatch.apinotes),
@@ -241,10 +245,15 @@ own license, its header:
   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+libswiftDispatch, the Dispatch overlay, contains, statically linked, the definitions
+of dispatch_block_create, dispatch_block_create_with_qos_class, dispatch_block_cancel,
+dispatch_block_testcancel, dispatch_activate and dispatch_queue_attr_make_with_qos_class
+from Recaulk (the release pinned in pins.env; its license is below), Recaulk's own code.
+
 libswiftCore also contains, statically linked, the definitions of
 os_system_version_get_current_version, objc_readClassPair, fma, fmal and truncl from Recaulk (librecaulk.a, the release
 pinned in pins.env), https://github.com/Mavergreen/recaulk, as libswiftDarwin contains its openat
-and libswift_Concurrency the APIs named above, under this license:
+and libswift_Concurrency and libswiftDispatch the APIs named above, under this license:
 
   Copyright (c) 2025 Wowfunhappy
   Copyright (c) 2026 Amitai Schleier
