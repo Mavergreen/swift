@@ -1,0 +1,1 @@
+An isolation parameter that defaults to the caller's isolation, as in withTaskGroup and TaskGroup.next, now gets the caller's actor instead of nil.
