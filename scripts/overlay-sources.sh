@@ -66,7 +66,7 @@ done
 #  0002 apinotes -- Dispatch.apinotes: NoEscape on parameter 1 of dispatch_sync and dispatch_barrier_sync (10.9's
 #       headers lack DISPATCH_NOESCAPE, which a C redeclaration cannot add as far as Swift sees), and
 #       SwiftWrapper: struct on dispatch_block_flags_t (Recaulk declares it a plain integer, not an option set).
-#  0003 .. 0012 -- the Dispatch overlay, from the 5.4 root: the 10.9 SDK declares neither a QoS-class global queue nor
+#  0003 .. 0013 -- the Dispatch overlay, from the 5.4 root: the 10.9 SDK declares neither a QoS-class global queue nor
 #       several of 5.4's functions, and Recaulk declares only some of them. Each concerns one thing:
 #       0003 global(qos:) maps the QoS to a 10.9 priority below macOS 10.10;
 #       0004, 0005, 0009, 0010 remove autorelease frequency, initiallyInactive, DispatchQueue.qos and the DATA_REPLACE
@@ -77,8 +77,11 @@ done
 #         nowhere, and dispatch_assert_queue is not declared by Recaulk;
 #       0011 the 10.9 headers carry no nullability, so Data and IO unwrap what C never returns NULL for;
 #       0012 availability is lowered to 10.9 where Recaulk defines and declares the functions (the dispatch_block
-#         functions, dispatch_activate, dispatch_queue_attr_make_with_qos_class) and the QoS types that use them.
-OVERLAY_PATCHES="0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012"
+#         functions, dispatch_activate, dispatch_queue_attr_make_with_qos_class) and the QoS types that use them;
+#       0013 Recaulk's dispatch_block_create drops its flags, so below macOS 10.10 a .barrier work item or block is
+#         submitted with dispatch_barrier_async/_sync (a group's by enter and leave around it) rather than run
+#         alongside the readers; the other flags mean nothing without vouchers and QoS, and are dropped.
+OVERLAY_PATCHES="0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013"
 PATCHES_DIR="$HERE/patches/overlays"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $OVERLAY_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED" >&2
@@ -111,6 +114,9 @@ dmark 0011 Data.swift "Mavericks: the 10.9 headers carry no nullability" "nullab
 dmark 0011 IO.swift "Mavericks: the 10.9 headers carry no nullability" "nullability"
 dmark 0012 Block.swift "Mavericks: Recaulk defines and declares dispatch_block_create" "availability"
 dmark 0012 Source.swift "Mavericks: Recaulk defines and declares dispatch_activate" "availability"
+dmark 0013 Queue.swift "Mavericks: 10.9's dispatch_block_create drops DISPATCH_BLOCK_BARRIER" "barrier routing"
+dmark 0013 Block.swift "Mavericks: 10.9's dispatch_block_create drops its flags" "barrier routing"
+dmark 0013 Dispatch.swift "Mavericks: a barrier-flagged block is submitted as a barrier below 10.10" "barrier routing"
 cp "$P/ObjectiveC.swift" "$OUT/ObjectiveC/"
 for f in $DFILES; do cp "$PD/$f" "$OUT/Dispatch/"; done
 cp "$PS/DispatchOverlayShims.h" "$OUT/Dispatch/shims/"

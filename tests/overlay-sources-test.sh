@@ -56,6 +56,16 @@ mark 0011 IO.swift "Mavericks: the 10.9 headers carry no nullability"
 mark 0012 Block.swift "Mavericks: Recaulk defines and declares dispatch_block_create"
 mark 0012 Queue.swift "Mavericks: Recaulk defines and declares dispatch_block_create"
 mark 0012 Source.swift "Mavericks: Recaulk defines and declares dispatch_activate"
+mark 0013 Queue.swift "Mavericks: 10.9's dispatch_block_create drops DISPATCH_BLOCK_BARRIER"
+mark 0013 Block.swift "Mavericks: 10.9's dispatch_block_create drops its flags"
+mark 0013 Dispatch.swift "Mavericks: a barrier-flagged block is submitted as a barrier below 10.10"
+
+echo "-- below macOS 10.10, every path that submits a barrier-flagged block routes it through a barrier function"
+# sync(execute:) and the three async forms (execute:, group:execute:, group:qos:flags:), asyncAfter (4), notify (2)
+n="$(grep -c '_blockFlagsAreHonored && .*flags.contains(.barrier)' "$D/Queue.swift" "$D/Dispatch.swift" | awk -F: '{s+=$2} END{print s}')"
+[ "$n" -ge 10 ] || fail "only $n barrier-routing checks in Queue.swift and Dispatch.swift, not the 10 submission paths"
+grep -q '_swift_dispatch_barrier_async(self, { block(); g.leave() })' "$D/Queue.swift" || fail "a grouped barrier does not leave its group after the block"
+grep -q '_syncBarrier(block: { workItem.perform() })' "$D/Queue.swift" || fail "sync(execute: DispatchWorkItem) has no barrier route"
 
 echo "-- DispatchQueue.global(qos:) passes the QoS through only on 10.10, else maps it to a 10.9 priority"
 awk '/public class func global\(qos:/{on=1} on{print} on&&/^\t}$/{exit}' "$D/Queue.swift" > "$T/global"
