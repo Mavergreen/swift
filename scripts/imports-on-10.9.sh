@@ -15,7 +15,7 @@
 # real 10.9 box for the first OS symbol it binds that 10.9 lacks. The stubs the SDK ships for 10.9 are the
 # list of what 10.9 has. A weak import binds to NULL instead, and is safe only where the code reads it
 # first; the allowlist names, for each such symbol, the guard that does (`<dylib> <symbol> -- <file>:<line>`,
-# a line of the 6.4.1 source, so a reviewer can look). Lines starting # and blank lines are comments.
+# a line of the pinned Swift source, so a reviewer can look). Lines starting # and blank lines are comments.
 #
 # A strong import is never excused by the allowlist: nothing guards it.
 set -eu

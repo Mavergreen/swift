@@ -1,12 +1,12 @@
 # The weak imports OS X 10.9 does not define, which scripts/imports-on-10.9.sh lets a staged dylib keep:
-# each binds to NULL there, and the line after the symbol names the file:line, in the Swift 6.4.1 source
-# (or the llvm-project 6.4.1 pins), of the check that reads it before any call. A strong import is never
+# each binds to NULL there, and the line after the symbol names the file:line, in the Swift 6.4.2 source
+# (or the llvm-project 6.4.2 pins), of the check that reads it before any call. A strong import is never
 # listed; a symbol is added only with the guard that makes it safe, found by reading the code.
 #   <dylib> <symbol> -- <file>:<line>
 
 # ObjC runtime hooks and load-image registration: the runtime tests each before it calls.
 libswiftCore.dylib __objc_realizeClassFromSwift -- stdlib/public/runtime/Metadata.cpp:4526
-libswiftCore.dylib _objc_setHook_getClass -- stdlib/public/runtime/MetadataLookup.cpp:3297
+libswiftCore.dylib _objc_setHook_getClass -- stdlib/public/runtime/MetadataLookup.cpp:3299
 libswiftCore.dylib _objc_setHook_getImageName -- stdlib/public/runtime/ObjCRuntimeGetImageNameFromClass.mm:361
 libswiftCore.dylib _objc_setHook_lazyClassNamer -- stdlib/public/runtime/Metadata.cpp:3862
 # objc_addLoadImageFunc is called only inside the macOS 10.15 availability check.
@@ -35,3 +35,6 @@ libswift_Concurrency.dylib _os_signpost_id_make_with_pointer -- stdlib/public/Co
 libswift_Concurrency.dylib __os_signpost_emit_with_name_impl -- stdlib/public/Concurrency/TracingSignpost.h:86
 # Runtime patches 0014 and 0016 ask __builtin_available, which reads this as libswiftCore's does.
 libswift_Concurrency.dylib __availability_version_check -- compiler-rt/lib/builtins/os_version_check.c:102
+# Runtime patch 0017 makes Concurrency's own declaration of this libdispatch SPI weak; dispatchEnqueue calls it
+# only inside its macOS 12 availability check.
+libswift_Concurrency.dylib _dispatch_async_swift_job -- stdlib/public/Concurrency/DispatchGlobalExecutor.cpp:82

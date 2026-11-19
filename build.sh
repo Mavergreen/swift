@@ -218,10 +218,13 @@ echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order
 #  0016 Concurrency continuous deadline as uptime — 10.9's libdispatch never fires a deadline in the
 #       continuous clock's bit-63 encoding, and every Task.sleep uses one (the spike's box hung, both
 #       threads idle); below 10.15 such a deadline is expressed as an uptime one, which 10.9 honours.
+#  0017 Concurrency dispatch_async_swift_job weak — Concurrency declares this libdispatch SPI itself and calls
+#       it only inside a macOS 12 availability check, but strongly: 10.9's libdispatch has no such export, so
+#       the link failed. It is weak, and step 4 links it -U, so on 10.9 it binds to NULL, never called.
 # Patches are --no-prefix format; patch_source applies them with -p0. A new patch needs its number here and a marker grep
 # below: a patch file this list lacks fails the build rather than being skipped, and
 # tests/runtime-patch-list-test.sh holds the list, the files and the marker greps together.
-RUNTIME_PATCHES="0004 0005 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016"
+RUNTIME_PATCHES="0004 0005 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016 0017"
 PATCHES_DIR="$HERE/patches/runtime"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $RUNTIME_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED"
@@ -243,6 +246,7 @@ grep -q 'mavericks_concurrency_link_flags UNIX_COMMAND "${MAVERGREEN_CONCURRENCY
 grep -q 'mav_globalQueueIdentifier' swift/stdlib/public/Concurrency/DispatchGlobalExecutor.cpp || { echo "patch 0014 (Concurrency legacy dispatch priority) not applied"; exit 1; }
 grep -q 'ENSURE_LOGS();  // Mavericks: the one trace call without it' swift/stdlib/public/Concurrency/TracingSignpost.h || { echo "patch 0015 (Concurrency task_resume tracing guard) not applied"; exit 1; }
 grep -q 'Mavericks: OS X 10.9.s libdispatch does not know the bit-63 encoding' swift/stdlib/public/Concurrency/DispatchGlobalExecutor.cpp || { echo "patch 0016 (Concurrency continuous deadline as uptime) not applied"; exit 1; }
+grep -q "Mavericks: weak, as OS X 10.9's libdispatch has no dispatch_async_swift_job" swift/stdlib/public/Concurrency/DispatchGlobalExecutor.cpp || { echo "patch 0017 (Concurrency dispatch_async_swift_job weak) not applied"; exit 1; }
 # de-instrumented: no debug logging must ship
 ! grep -rq 'getenv("MAV_' swift/stdlib/public/runtime/ || { echo "MAV debug logging leaked into patches"; exit 1; }
 
@@ -302,7 +306,7 @@ shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
   -DLLVM_BUILD_MAIN_SRC_DIR="$LLVMB" \
   -DSWIFT_INCLUDE_TOOLS=OFF \
   -DSWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY=ON \
-  "-DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$RECAULK_CONC_A -Wl,-unexported_symbols_list,$RECAULK_CONC_UNX" \
+  "-DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$RECAULK_CONC_A -Wl,-unexported_symbols_list,$RECAULK_CONC_UNX -Wl,-U,_dispatch_async_swift_job" \
   -DSWIFT_BUILD_STDLIB=ON -DSWIFT_BUILD_DYNAMIC_STDLIB=ON -DSWIFT_BUILD_STATIC_STDLIB=OFF \
   -DSWIFT_BUILD_SDK_OVERLAY=OFF -DSWIFT_BUILD_DYNAMIC_SDK_OVERLAY=OFF -DSWIFT_BUILD_STATIC_SDK_OVERLAY=OFF \
   -DSWIFT_BUILD_REMOTE_MIRROR=OFF -DSWIFT_BUILD_SOURCEKIT=OFF -DSWIFT_BUILD_SWIFT_SYNTAX=OFF \
