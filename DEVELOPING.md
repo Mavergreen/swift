@@ -117,10 +117,12 @@ A reused build root keeps CMake's cached probe results across a rebuild. `build.
 `clang.cfg` beside it or the builtins archive changed (a toolchain update, say). After changing any other
 compiler or linker setting, remove that directory first, so `build.sh` reconfigures from scratch. The
 self-test binaries load the runtime just built, not the installed one (`DYLD_PRINT_LIBRARIES=1` shows
-it). `--gate` runs each 500 times, then 10 more under Guard Malloc. `SELFTEST_SUPPORT` adds the upstream
+it). `--gate` runs each 500 times, then 10 more under Guard Malloc, and checks upstream tests' output with clang22's
+FileCheck (default `/usr/local/mavergreen/clang22/bin/FileCheck`, overridable with `SELFTEST_FILECHECK`). `SELFTEST_SUPPORT` adds the upstream
 tests `tests/upstream/*.list` includes, which `build.sh` stages with the test-support libraries they load
-from the bundle's `lib/`. Of `objectivec.list`, two are included and neither exercises the ObjectiveC
-overlay (its excluded tests say why), so the overlay's acceptance is `tests/objc_overlay_test.swift` beside
+from the bundle's `lib/`. Of `objectivec.list`, three are included, and only one imports ObjectiveC, for
+`autoreleasepool` alone (Bridgeable.swift tests the standard library's `_ObjectiveCBridgeable`; the third is Unicode; the excluded tests say why), so
+none exercises the overlay and its acceptance is `tests/objc_overlay_test.swift` beside
 our other ObjC tests. A test `concurrency.list` includes is built once per `%target-run-simple-*` line
 (`upstream/bin/concurrency-<name>-v2` is the second); `--gate` runs each `SELFTEST_UPSTREAM_RUNS` times, then once
 under Guard Malloc, each run within `SELFTEST_UPSTREAM_TIMEOUT` (180 s; ours, `SELFTEST_TIMEOUT`, 60 s). `make-selftest.sh` skips a test whose first line is `// selftest: skip: <reason>`

@@ -321,12 +321,13 @@ merges like any other, as the family's default has it.
 The gate is sized, so that upstream's tests can grow. `run-selftest.sh --gate` runs our own binaries
 500x plus 10x under Guard Malloc (28 of them) and upstream's, each included test at -O and -Onone and once per
 variant (`SELFTEST_UPSTREAM_RUNS`, default 20, plus 1 under Guard Malloc), after a `--loads` run. The lists
-include 12 Darwin and ObjectiveC tests and 62 Concurrency tests (most of those built twice: lit runs them again in
+include 7 Darwin, 3 ObjectiveC and 62 Concurrency tests (most of those built twice: lit runs them again in
 Swift 5 mode with NonisolatedNonsendingByDefault), 126 builds, 252 upstream binaries, 280 with ours. 44 of those
 tests have their output checked with FileCheck, 164 of the binaries.
 
-Measured on the real box (ultimate-hat, 12 cores, shared: load 3 to 5.5): the whole `--gate`, 274 binaries,
-took 70 min 41 s and passed. Upstream's runs have their own limit, `SELFTEST_UPSTREAM_TIMEOUT`, 180 s. Every
+Measured on the real box (ultimate-hat, 12 cores, shared) with this bundle, on the released 6.4.2-mavericks.1
+runtime and toolchain and clang-22 22.1.8-mavericks.21's FileCheck: `make-selftest.sh` took 3 min 31 s, and the
+whole `--gate`, 280 binaries, took 65 min 01 s and passed (ALL PASS). Upstream's runs have their own limit, `SELFTEST_UPSTREAM_TIMEOUT`, 180 s. Every
 binary's slowest single run on the box: clock's Guard Malloc runs take 40 to 45 s (its unguarded runs 1.3 to
 1.8 s), and cancellation_handler_concurrent's -Onone Guard Malloc run takes 65 s (100,000 tasks; 16 s at -O).
 async_task_cancellation_while_running takes 13.1 s a run, asleep. Everything else is under 5 s, ours included. So
@@ -338,7 +339,7 @@ about 125 s) and async_task_cancellation_while_running (4 x 21 x 13.1 s, about 1
 is CPU-bound: 465 s of the original upstream tests', 157 s of ours and 1722 s of the 44 FileCheck tests' (their
 134 s a run, less 52 s of that sleeping, x 21), 2344 s. At Release 1's VM-to-box CPU ratio of 0.42 (run
 40272925587), that rest takes about 985 s. The VM gate is then about 1595 + 985 = 2580 s, 43 min, and at the
-box's own pace 66 min (the measured 71 min is wall time on a shared box). Compiling in the VM is the larger cost: 280 binaries at a pessimistic 15 s each is 70 min.
+box's own pace 66 min (the measured 65 min is wall time on a shared box). Compiling in the VM is the larger cost: 280 binaries at a pessimistic 15 s each is 70 min.
 Install and smoke are allowed 18 min, a pessimistic allowance (the old estimate's hour less its compiles and gate; the whole
 old vm-test measured about 31 min). Install, compiles, gate and smoke total about 131 min at the worst, so
 `vm-test`'s `timeout-minutes` is 260, about twice that, under GitHub's 360. 20 runs stay: 20 plus 1 under Guard Malloc
