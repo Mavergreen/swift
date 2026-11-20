@@ -594,14 +594,15 @@ compiler_patches() {
 }
 
 # toolchain_digest <toolchain-prefix> -- one line of `<path>=<sha256>` entries, one space apart, sorted by
-# <path> (relative to the prefix), for every file under lib/swift/macosx, lib/swift/shims,
-# lib/clang/<v>/lib and lib/recaulk: the stdlib's dylibs, the swiftmodules whose inlinable code lands in
-# every program a toolchain builds, the shims, the builtins archive, and Recaulk's archive (which the ld
+# <path> (relative to the prefix), for every file under toolchain_stdlib_trees with lib/clang/<v>/lib: the
+# stdlib's dylibs, the swiftmodules whose inlinable code lands in every program a toolchain builds, the shims,
+# Dispatch.apinotes and Recaulk's dispatch declarations (what the importer shows every program of Dispatch),
+# the builtins archive, and Recaulk's archive (which the ld
 # wrapper links into every program) with its notices and version. The two toolchain pkgs must carry them byte for
 # byte: in CI build-cross builds them once and stages them in the cross toolchain, and build stages the
 # cross pkg's copy in the native one, so a difference is a staging fault; each job digests what it
 # staged, and collect compares the two. Fails, naming it, when an anchor (the six dylibs, Swift's, Darwin's,
-# ObjectiveC's, Dispatch's, _Concurrency's and _Builtin_float's swiftmodule, the shims' module.modulemap, the builtins archive, Recaulk's archive and notices) is missing, or a tree holds a link, a
+# ObjectiveC's, Dispatch's, _Concurrency's and _Builtin_float's swiftmodule, the shims' module.modulemap, Dispatch.apinotes, Recaulk's dispatch.h for the importer, the builtins archive, Recaulk's archive and notices) is missing, or a tree holds a link, a
 # path with a space, or a file that cannot be hashed: two jobs that each printed nothing, or less than
 # the whole trees, must never compare equal.
 toolchain_digest() {
@@ -616,11 +617,12 @@ toolchain_digest() {
                lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule \
                lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule \
                lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule lib/swift/shims/module.modulemap \
+               lib/swift/apinotes/Dispatch.apinotes lib/swift/recaulk-importer/dispatch/dispatch.h \
                "$_td_cl/darwin/libclang_rt.osx.a" lib/recaulk/librecaulk.a lib/recaulk/notices.tsv; do
     [ -f "$1/$_td_f" ] || { echo "toolchain_digest: no $1/$_td_f" >&2; return 1; }
   done
   _td_list="$(cd "$1" && find $(toolchain_stdlib_trees "$_td_cl") ! -type d)" \
-    || { echo "toolchain_digest: could not list $1's stdlib, shims, builtins and Recaulk" >&2; return 1; }
+    || { echo "toolchain_digest: could not list $1's stdlib, shims, apinotes, importer, builtins and Recaulk" >&2; return 1; }
   _td_list="$(printf '%s\n' "$_td_list" | LC_ALL=C sort)"
   _td_line=""
   while IFS= read -r _td_f; do
@@ -644,7 +646,7 @@ toolchain_digest_whole() {
   case "$1" in
     ' '*|*' '|*'  '*) echo "toolchain_digest: the line holds an empty entry" >&2; return 1 ;;
   esac
-  _tw_core=""; _tw_onone=""; _tw_mod=""; _tw_map=""; _tw_rt=""; _tw_dar=""; _tw_objc=""; _tw_dmod=""; _tw_omod=""; _tw_disp=""; _tw_dimod=""; _tw_conc=""; _tw_cmod=""; _tw_bmod=""; _tw_rk=""; _tw_rkn=""
+  _tw_core=""; _tw_onone=""; _tw_mod=""; _tw_map=""; _tw_rt=""; _tw_dar=""; _tw_objc=""; _tw_dmod=""; _tw_omod=""; _tw_disp=""; _tw_dimod=""; _tw_conc=""; _tw_cmod=""; _tw_bmod=""; _tw_rk=""; _tw_rkn=""; _tw_apn=""; _tw_imp=""
   while IFS= read -r _tw_e; do
     _tw_h="${_tw_e#*=}"
     case "$_tw_e" in lib/?*=*) _tw_ok=1 ;; *) _tw_ok="" ;; esac
@@ -665,6 +667,8 @@ toolchain_digest_whole() {
       lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_cmod=1 ;;
       lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_bmod=1 ;;
       lib/swift/shims/module.modulemap) _tw_map=1 ;;
+      lib/swift/apinotes/Dispatch.apinotes) _tw_apn=1 ;;
+      lib/swift/recaulk-importer/dispatch/dispatch.h) _tw_imp=1 ;;
       lib/clang/*/lib/darwin/libclang_rt.osx.a) _tw_rt=1 ;;
       lib/recaulk/librecaulk.a) _tw_rk=1 ;;
       lib/recaulk/notices.tsv) _tw_rkn=1 ;;
@@ -686,6 +690,8 @@ EOF
   [ -n "$_tw_cmod" ] || _tw_miss="$_tw_miss lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule"
   [ -n "$_tw_bmod" ] || _tw_miss="$_tw_miss lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule"
   [ -n "$_tw_map" ] || _tw_miss="$_tw_miss lib/swift/shims/module.modulemap"
+  [ -n "$_tw_apn" ] || _tw_miss="$_tw_miss lib/swift/apinotes/Dispatch.apinotes"
+  [ -n "$_tw_imp" ] || _tw_miss="$_tw_miss lib/swift/recaulk-importer/dispatch/dispatch.h"
   [ -n "$_tw_rt" ] || _tw_miss="$_tw_miss lib/clang/<v>/lib/darwin/libclang_rt.osx.a"
   [ -n "$_tw_rk" ] || _tw_miss="$_tw_miss lib/recaulk/librecaulk.a"
   [ -n "$_tw_rkn" ] || _tw_miss="$_tw_miss lib/recaulk/notices.tsv"
@@ -858,19 +864,21 @@ stdlib_layout() {
 
 # toolchain_stdlib_trees [<clang-lib-dir>...] -- the trees, relative to a toolchain prefix, that a
 # toolchain's build makes alike wherever it runs and that two toolchain pkgs must carry byte for byte, one
-# per line: lib/swift/macosx and lib/swift/shims (the stdlib), lib/recaulk (Recaulk's archive, which every
-# program links), then each <clang-lib-dir> given (the
+# per line: lib/swift/macosx and lib/swift/shims (the stdlib), lib/swift/apinotes and lib/swift/recaulk-importer
+# (Dispatch.apinotes and Recaulk's dispatch declarations, which the importer reads for every program that imports
+# Dispatch), lib/recaulk (Recaulk's archive, which every program links), then each <clang-lib-dir> given (the
 # builtins archive's lib/clang/<v>/lib, which the caller names: toolchain_digest the one its resource dir
 # is, toolchain_release_files every one there is). One definition for both, so what is digested and what
 # is compared cannot drift apart.
 toolchain_stdlib_trees() {
-  printf '%s\n' lib/swift/macosx lib/swift/shims lib/recaulk
+  printf '%s\n' lib/swift/macosx lib/swift/shims lib/swift/apinotes lib/swift/recaulk-importer lib/recaulk
   for _ts_c in "$@"; do printf '%s\n' "$_ts_c"; done
 }
 
 # toolchain_release_files <toolchain-prefix> -- the files of a Swift toolchain prefix that its build makes,
 # one relative path per line, sorted: bin/swift-frontend, bin/clang and bin/ld64.lld, and every file under
-# toolchain_stdlib_trees (the stdlib, Recaulk's archive, the builtins archive) and share/swift (the helpers' outputs). The
+# toolchain_stdlib_trees (the stdlib, the importer's apinotes and Recaulk declarations, Recaulk's archive, the
+# builtins archive) and share/swift (the helpers' outputs). The
 # rest of a prefix (the wrappers, the docs, shipyard's SDK fetcher, clang's headers) is copied from a
 # checkout or the installed shipyard.
 toolchain_release_files() {

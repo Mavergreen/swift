@@ -108,17 +108,20 @@ grep -q 'has no shims' "$T/err" || fail "did not name shims: $(cat "$T/err")"
 echo "-- toolchain_cmp: the built files, byte for byte, every difference named"
 for x in a b; do
   mkdir -p "$T/t$x/bin" "$T/t$x/lib/swift/macosx/Swift.swiftmodule" "$T/t$x/lib/swift/shims" "$T/t$x/lib/clang/21/lib/darwin" \
+    "$T/t$x/lib/swift/apinotes" "$T/t$x/lib/swift/recaulk-importer/dispatch" \
     "$T/t$x/lib/clang/21/include" "$T/t$x/share/swift/diagnostics" "$T/t$x/share/doc" "$T/t$x/libexec/mavergreen-swift"
   for f in bin/swift-frontend bin/clang bin/ld64.lld lib/swift/macosx/libswiftCore.dylib \
            lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule lib/swift/shims/module.modulemap \
-           lib/clang/21/lib/darwin/libclang_rt.osx.a share/swift/diagnostics/en.db; do echo "$f" > "$T/t$x/$f"; done
+           lib/clang/21/lib/darwin/libclang_rt.osx.a share/swift/diagnostics/en.db lib/swift/apinotes/Dispatch.apinotes \
+           lib/swift/recaulk-importer/dispatch/dispatch.h; do echo "$f" > "$T/t$x/$f"; done
   echo "$x" > "$T/t$x/share/doc/NOTICE"; echo "$x" > "$T/t$x/libexec/mavergreen-swift/fetch_sdk.sh"; echo "$x" > "$T/t$x/lib/clang/21/include/stdint.h"
 done
-[ "$(toolchain_release_files "$T/ta" | wc -l | tr -d ' ')" = 8 ] || fail "release files: $(toolchain_release_files "$T/ta")"
-[ "$(toolchain_cmp "$T/ta" "$T/tb")" = "same: 8 files" ] || fail "two equal prefixes (docs, wrappers and headers aside): $(toolchain_cmp "$T/ta" "$T/tb")"
-echo changed > "$T/tb/lib/clang/21/lib/darwin/libclang_rt.osx.a"; echo extra > "$T/tb/lib/swift/macosx/abi.json"; rm "$T/tb/bin/ld64.lld"
+[ "$(toolchain_release_files "$T/ta" | wc -l | tr -d ' ')" = 10 ] || fail "release files: $(toolchain_release_files "$T/ta")"
+[ "$(toolchain_cmp "$T/ta" "$T/tb")" = "same: 10 files" ] || fail "two equal prefixes (docs, wrappers and headers aside): $(toolchain_cmp "$T/ta" "$T/tb")"
+echo changed > "$T/tb/lib/clang/21/lib/darwin/libclang_rt.osx.a"; echo changed > "$T/tb/lib/swift/apinotes/Dispatch.apinotes"; echo extra > "$T/tb/lib/swift/macosx/abi.json"; rm "$T/tb/bin/ld64.lld"
 if toolchain_cmp "$T/ta" "$T/tb" > "$T/out"; then fail "accepted two prefixes that differ"; fi
 grep -qx 'differ: lib/clang/21/lib/darwin/libclang_rt.osx.a' "$T/out" || fail "did not name the changed archive: $(cat "$T/out")"
+grep -qx 'differ: lib/swift/apinotes/Dispatch.apinotes' "$T/out" || fail "did not name the changed apinotes: $(cat "$T/out")"
 grep -qx "only in $T/tb: lib/swift/macosx/abi.json" "$T/out" || fail "did not name the extra file: $(cat "$T/out")"
 grep -qx "only in $T/ta: bin/ld64.lld" "$T/out" || fail "did not name the missing ld64.lld: $(cat "$T/out")"
 mkdir -p "$T/empty1" "$T/empty2"

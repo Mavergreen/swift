@@ -4,7 +4,7 @@
 #   lib.sh's helpers for building a toolchain for either host: toolchain_host_select must name each
 #   host's build dirs, checkout, product and payload and refuse any other host; compiler_patches must
 #   give arm64 every patch but 0002 and x86_64 every one, in order; toolchain_digest must hash every
-#   file of the stdlib, shims, builtins and Recaulk trees the two toolchain pkgs share, sorted, and fail on a
+#   file of the stdlib, shims, apinotes, Recaulk importer, builtins and Recaulk trees the two toolchain pkgs share, sorted, and fail on a
 #   missing anchor file, a link or a path with a space; toolchain_digests_agree must accept only two
 #   equal, whole digest lines, and name what differs.
 set -eu
@@ -41,7 +41,7 @@ rc=0; compiler_patches arm64 "$T/p" > /dev/null 2>&1 || rc=$?; [ "$rc" -eq 1 ] |
 
 echo "-- toolchain_digest: every file of the shared trees, sorted by path, or a failure naming what is wrong"
 P="$T/tc"; M="$P/lib/swift/macosx"
-mkdir -p "$M/Swift.swiftmodule" "$M/Darwin.swiftmodule" "$M/ObjectiveC.swiftmodule" "$M/Dispatch.swiftmodule" "$M/_Concurrency.swiftmodule" "$M/_Builtin_float.swiftmodule" "$P/lib/swift/shims" "$P/lib/clang/21/include" "$P/lib/clang/21/lib/darwin" "$P/lib/recaulk" "$P/bin"
+mkdir -p "$M/Swift.swiftmodule" "$M/Darwin.swiftmodule" "$M/ObjectiveC.swiftmodule" "$M/Dispatch.swiftmodule" "$M/_Concurrency.swiftmodule" "$M/_Builtin_float.swiftmodule" "$P/lib/swift/shims" "$P/lib/swift/apinotes" "$P/lib/swift/recaulk-importer/dispatch" "$P/lib/clang/21/include" "$P/lib/clang/21/lib/darwin" "$P/lib/recaulk" "$P/bin"
 echo core > "$M/libswiftCore.dylib"; echo onone > "$M/libswiftSwiftOnoneSupport.dylib"; echo lay > "$M/layouts-x86_64.yaml"
 echo dar > "$M/libswiftDarwin.dylib"; echo objc > "$M/libswiftObjectiveC.dylib"
 echo conc > "$M/libswift_Concurrency.dylib"; echo disp > "$M/libswiftDispatch.dylib"; echo dimod > "$M/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule"
@@ -49,6 +49,8 @@ echo cmod > "$M/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule"; echo b
 echo dmod > "$M/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule"; echo omod > "$M/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule"
 echo mod > "$M/Swift.swiftmodule/x86_64-apple-macos.swiftmodule"; echo api > "$M/Swift.swiftmodule/x86_64-apple-macos.swiftinterface"
 echo map > "$P/lib/swift/shims/module.modulemap"; echo int > "$P/lib/swift/shims/SwiftStdint.h"
+echo apn > "$P/lib/swift/apinotes/Dispatch.apinotes"; echo imp > "$P/lib/swift/recaulk-importer/dispatch/dispatch.h"
+echo impm > "$P/lib/swift/recaulk-importer/Dispatch.modulemap"
 echo rt > "$P/lib/clang/21/lib/darwin/libclang_rt.osx.a"
 echo rk > "$P/lib/recaulk/librecaulk.a"; echo rkn > "$P/lib/recaulk/notices.tsv"; echo rkv > "$P/lib/recaulk/VERSION"
 # Not shared, so not digested: clang's headers (each LLVM build's own), the tools, and the link to clang's dir.
@@ -56,6 +58,7 @@ echo hdr > "$P/lib/clang/21/include/stddef.h"; echo fe > "$P/bin/swift-frontend"
 h() { printf '%s\n' "$1" | shasum -a 256 | awk '{ print $1 }'; }
 want="lib/clang/21/lib/darwin/libclang_rt.osx.a=$(h rt)"
 want="$want lib/recaulk/VERSION=$(h rkv) lib/recaulk/librecaulk.a=$(h rk) lib/recaulk/notices.tsv=$(h rkn)"
+want="$want lib/swift/apinotes/Dispatch.apinotes=$(h apn)"
 want="$want lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule=$(h dmod)"
 want="$want lib/swift/macosx/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule=$(h dimod)"
 want="$want lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule=$(h omod)"
@@ -68,6 +71,7 @@ want="$want lib/swift/macosx/libswiftCore.dylib=$(h core) lib/swift/macosx/libsw
 want="$want lib/swift/macosx/libswiftDispatch.dylib=$(h disp)"
 want="$want lib/swift/macosx/libswiftObjectiveC.dylib=$(h objc) lib/swift/macosx/libswiftSwiftOnoneSupport.dylib=$(h onone)"
 want="$want lib/swift/macosx/libswift_Concurrency.dylib=$(h conc)"
+want="$want lib/swift/recaulk-importer/Dispatch.modulemap=$(h impm) lib/swift/recaulk-importer/dispatch/dispatch.h=$(h imp)"
 want="$want lib/swift/shims/SwiftStdint.h=$(h int) lib/swift/shims/module.modulemap=$(h map)"
 got="$(toolchain_digest "$P")" || fail "toolchain_digest failed on a whole tree"
 [ "$got" = "$want" ] || fail "digest is
@@ -83,7 +87,8 @@ for a in lib/clang/21/lib/darwin/libclang_rt.osx.a lib/recaulk/librecaulk.a lib/
          lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule lib/swift/macosx/libswift_Concurrency.dylib \
          lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule \
          lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule lib/swift/macosx/libswiftDispatch.dylib \
-         lib/swift/macosx/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule; do
+         lib/swift/macosx/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule lib/swift/apinotes/Dispatch.apinotes \
+         lib/swift/recaulk-importer/dispatch/dispatch.h; do
   mv "$P/$a" "$T/held"
   if toolchain_digest "$P" > "$T/out" 2> "$T/err"; then fail "digested a prefix without $a: $(cat "$T/out")"; fi
   grep -q "$P/$a" "$T/err" || fail "did not name the missing $a: $(cat "$T/err")"
@@ -117,7 +122,8 @@ for a in 'lib/clang/21/lib/darwin/libclang_rt.osx.a' 'lib/recaulk/librecaulk.a' 
          'lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule' 'lib/swift/macosx/libswift_Concurrency.dylib' \
          'lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule' \
          'lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule' 'lib/swift/macosx/libswiftDispatch.dylib' \
-         'lib/swift/macosx/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule'; do
+         'lib/swift/macosx/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule' 'lib/swift/apinotes/Dispatch.apinotes' \
+         'lib/swift/recaulk-importer/dispatch/dispatch.h'; do
   part="$(printf '%s\n' "$want" | tr ' ' '\n' | grep -v "^$a=" | tr '\n' ' ' | sed 's/ $//')"
   [ "$part" != "$want" ] || fail "the test did not drop $a"
   if toolchain_digests_agree "$part" "$part" 2> "$T/err"; then fail "accepted two equal lines without $a"; fi
