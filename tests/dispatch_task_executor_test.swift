@@ -9,7 +9,8 @@
 // wraps a DispatchQueue of this overlay's: its enqueue hands each job to the queue, which must run it
 // (queue.async, from a Task's job, through libswiftDispatch). Tasks started under the preference must run
 // on that queue: its specific value reads back inside them, for a child task of a task group, an async let
-// and an unstructured Task, and the executor was asked to run at least those jobs. A watchdog thread-free
+// and a Task(executorPreference:), while a plain unstructured Task does not inherit the preference, as
+// upstream documents; and the executor was asked to run at least those jobs. A watchdog thread-free
 // timeout (a global-queue asyncAfter) fails the run rather than let a job that never runs hang it.
 // It compiles in Swift 6 mode too (the marker above). Exits non-zero on any failure.
 
@@ -63,7 +64,11 @@ func onTheQueue() async -> Bool { DispatchQueue.getSpecific(key: key) == 42 }
       check(inGroup, "a task group's children ran on the queue")
       async let viaLet = onTheQueue()
       check(await viaLet, "an async let ran on the queue")
-      check(await Task { await onTheQueue() }.value, "an unstructured Task inherited the preference")
+      // spec: upstream's TaskExecutor documentation -- "Unstructured tasks do not inherit the task executor";
+      //       one is given its preference by Task(executorPreference:).
+      check(!(await Task { await onTheQueue() }.value), "an unstructured Task did not inherit the preference")
+      check(await Task(executorPreference: executor) { await onTheQueue() }.value,
+            "Task(executorPreference:) ran on the queue")
     }
     check(enqueued.value >= 1, "the executor was asked to run jobs (\(enqueued.value))")
     check(!(await onTheQueue()), "the preference ended with the closure")
