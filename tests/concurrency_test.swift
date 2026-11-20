@@ -63,7 +63,7 @@ enum Context { static let name = TaskLocal(wrappedValue: "none") }
       expect(await Task(priority: p) { await square(2) }.value == 4, "a Task at \(p)")
     }
 
-    // Sleeps: each returns, and not early, on its clock (patch 0016; dispatch_activate).
+    // Sleeps: each returns, and not early, on its clock (runtime patch 0016; dispatch_activate).
     let continuous = ContinuousClock(), suspending = SuspendingClock()
     var c0 = continuous.now, s0 = suspending.now
     do { try await Task.sleep(nanoseconds: 2_000_000) } catch { expect(false, "sleep(nanoseconds:) threw \(error)") }
