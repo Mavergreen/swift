@@ -7,9 +7,11 @@
 #   their bodies, the resolver, an unasked-for API), it must pick exactly the closure, list every global it
 #   defines for -unexported_symbols_list, write the same bytes whatever the members' order in the input,
 #   and refuse a name no member defines or a member that defines an API nobody asked for. Every global a
-#   picked member defines is a named API or ___recaulk_-prefixed; there is no list of exceptions (Recaulk
-#   prefixes its incidental globals, clang's block helpers among them, since 20261108.3), so a stray
-#   global is refused even when the retired RECAULK_ALSO_HIDE is set.
+#   picked member defines is a named API or ___recaulk_-prefixed (Recaulk prefixes its incidental globals,
+#   clang's block helpers among them, since 20261108.3), so a stray global is refused even when the retired
+#   RECAULK_ALSO_HIDE is set; the one exception is an image-local shadow that Recaulk's
+#   image-local-shadows.txt lists for that member, and only when the caller expects exactly the shadows
+#   taken. With no list, no shadow is taken.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -93,4 +95,48 @@ grep -q 'shadow-close.o also defines _dup2' "$T/err" || fail "did not name the u
 if RECAULK_SYSTEM_EXPORTS="$T/none.txt" recaulk_subset "$T/c.a" "$T/c4.a" "$T/c4.unx" _api_ver 2> "$T/err"; then
   fail "accepted a RECAULK_SYSTEM_EXPORTS that names no file"
 fi
+unset RECAULK_SYSTEM_EXPORTS   # platform: POSIX sh keeps an assignment made before a function call
+echo "-- an image-local shadow Recaulk lists is taken, hidden, and only where build.sh expects it"
+# spec: Recaulk's share/recaulk/image-local-shadows.txt -- 20261120.3's dispatch_inactive member defines
+#       dispatch_activate's body beside hidden, weak copies of dispatch_queue_create and dispatch_resume.
+o shadow-q 'int __recaulk_impl_api_q(void) { return 8; } int __recaulk_q_create(void) { return 9; }
+__attribute__((weak, visibility("hidden"))) int q_create(void) { return __recaulk_q_create(); }'
+o fwd-q 'extern int __recaulk_impl_api_q(void); int api_q(void) { return __recaulk_impl_api_q(); }'
+( cd "$T" && ar rcs q.a fwd-q.o shadow-q.o fwd-1.o body-one.o fwd-resolve.o ) || fail "cannot build q.a"
+printf '%s\n' '# Fixes to functions 10.9 has: <member> <symbol> <reason>.' '' \
+  'shadow-q.o _q_create creates a queue as 10.9 does not' 'body-one.o _open opens as 10.9 does not' > "$T/shadows.txt"
+( RECAULK_IMAGE_LOCAL_SHADOWS="$T/shadows.txt" RECAULK_EXPECTED_SHADOWS=_q_create; export RECAULK_IMAGE_LOCAL_SHADOWS RECAULK_EXPECTED_SHADOWS
+  recaulk_subset "$T/q.a" "$T/q1.a" "$T/q1.unx" _api_q ) || fail "refused the listed shadow _q_create"
+[ "$(members "$T/q1.a")" = "fwd-q.o shadow-q.o " ] || fail "picked: $(members "$T/q1.a")"
+grep -qx _q_create "$T/q1.unx" || fail "the unexported list does not hide the shadow _q_create"
+echo "-- a ___recaulk_ global needs no listing, with the list in force"
+( RECAULK_IMAGE_LOCAL_SHADOWS="$T/shadows.txt"; export RECAULK_IMAGE_LOCAL_SHADOWS
+  recaulk_subset "$T/q.a" "$T/q2.a" "$T/q2.unx" _api_one ) || fail "refused _api_one's ___recaulk_ globals with the list in force"
+echo "-- refused: an unlisted shadow, and a listed symbol in another member"
+printf '%s\n' 'other.o _q_create creates a queue' > "$T/elsewhere.txt"
+: > "$T/empty.txt"
+for _l in empty elsewhere; do
+  if ( RECAULK_IMAGE_LOCAL_SHADOWS="$T/$_l.txt" RECAULK_EXPECTED_SHADOWS=_q_create; export RECAULK_IMAGE_LOCAL_SHADOWS RECAULK_EXPECTED_SHADOWS
+       recaulk_subset "$T/q.a" "$T/x.a" "$T/x.unx" _api_q ) 2> "$T/err"; then fail "$_l.txt: accepted the unlisted shadow _q_create"; fi
+  grep -q 'shadow-q.o also defines _q_create, which is not asked for' "$T/err" || fail "$_l.txt: did not name shadow-q.o's _q_create: $(cat "$T/err")"
+done
+echo "-- no list, or a list path that names no file: no shadow is taken"
+if ( unset RECAULK_IMAGE_LOCAL_SHADOWS; RECAULK_EXPECTED_SHADOWS=_q_create; export RECAULK_EXPECTED_SHADOWS
+     recaulk_subset "$T/q.a" "$T/x.a" "$T/x.unx" _api_q ) 2> "$T/err"; then fail "without a list, accepted the shadow _q_create"; fi
+grep -q 'shadow-q.o also defines _q_create, which is not asked for' "$T/err" || fail "without a list, did not name _q_create: $(cat "$T/err")"
+if ( RECAULK_IMAGE_LOCAL_SHADOWS="$T/none.txt" RECAULK_EXPECTED_SHADOWS=_q_create; export RECAULK_IMAGE_LOCAL_SHADOWS RECAULK_EXPECTED_SHADOWS
+     recaulk_subset "$T/q.a" "$T/x.a" "$T/x.unx" _api_q ) 2> "$T/err"; then fail "with a missing list, accepted the shadow _q_create"; fi
+grep -q 'shadow-q.o also defines _q_create, which is not asked for' "$T/err" || fail "with a missing list, did not name _q_create: $(cat "$T/err")"
+echo "-- refused: the shadows taken differ from those build.sh expects, either way"
+if ( RECAULK_IMAGE_LOCAL_SHADOWS="$T/shadows.txt"; unset RECAULK_EXPECTED_SHADOWS; export RECAULK_IMAGE_LOCAL_SHADOWS
+     recaulk_subset "$T/q.a" "$T/x.a" "$T/x.unx" _api_q ) 2> "$T/err"; then fail "took the shadow _q_create, which nobody expected"; fi
+grep -q 'shadow-q.o carries the shadow _q_create, which is not expected' "$T/err" || fail "did not name the unexpected _q_create: $(cat "$T/err")"
+if ( RECAULK_IMAGE_LOCAL_SHADOWS="$T/shadows.txt" RECAULK_EXPECTED_SHADOWS='_q_create _open'; export RECAULK_IMAGE_LOCAL_SHADOWS RECAULK_EXPECTED_SHADOWS
+     recaulk_subset "$T/q.a" "$T/x.a" "$T/x.unx" _api_q ) 2> "$T/err"; then fail "accepted an expected shadow _open the subset does not carry"; fi
+grep -q 'expected the shadow _open, which no member taken carries' "$T/err" || fail "did not name the missing _open: $(cat "$T/err")"
+echo "-- refused: a list line without a reason"
+printf '%s\n' 'shadow-q.o _q_create creates a queue' 'shadow-q.o _q_create' > "$T/bad.txt"
+if ( RECAULK_IMAGE_LOCAL_SHADOWS="$T/bad.txt" RECAULK_EXPECTED_SHADOWS=_q_create; export RECAULK_IMAGE_LOCAL_SHADOWS RECAULK_EXPECTED_SHADOWS
+     recaulk_subset "$T/q.a" "$T/x.a" "$T/x.unx" _api_q ) 2> "$T/err"; then fail "accepted a list line with no reason"; fi
+grep -q 'not <member> <symbol> <reason>' "$T/err" || fail "did not name the malformed line: $(cat "$T/err")"
 echo "PASS"
