@@ -5,9 +5,9 @@ Swift runtime and toolchain for Mac OS X 10.9 Mavericks.
 ## Runtime
 
 Included: strings, collections, closures, generics, protocols, classes, ARC, `if #available`, Concurrency, and the
-`Darwin` and `ObjectiveC` runtime libraries.
+`Darwin`, `ObjectiveC` and `Dispatch` runtime libraries.
 
-Not yet included: Foundation, AppKit, Macros, Dispatch's Swift overlay.
+Not yet included: Foundation, AppKit, Macros.
 
 ### Concurrency and the newer language and library
 
@@ -19,7 +19,7 @@ For a target of 10.14.4 and later the program loads the OS's own `/usr/lib/swift
 availability apply unchanged. A program that uses any of this needs the runtime package of its toolchain's
 release or later, and each toolchain package requires it. Programs link Recaulk, so `fma`, `fmal` and `truncl`
 are correct, with the notice duty described under "Recaulk in every program", below. Still owed, and not in
-this release's gate: upstream tests that set environment variables, that use Dispatch's Swift overlay or
+this release's gate: upstream tests that set environment variables, that use `dispatchPrecondition` or
 `Synchronization`, that use `@TaskLocal` (a macro; the toolchain has no macro plugins), or whose RUN: lines
 the gate does not translate.
 
@@ -28,13 +28,20 @@ An app that bundles this runtime must copy the `libswiftCompatibilitySpan.dylib`
 can load the link as a second file, a second copy of Core.
 
 The runtime package carries only the libraries, which run programs already built. To compile a program
-that does `import Darwin` or `import ObjectiveC`, install a toolchain package: the modules ship there.
+that does `import Darwin`, `import ObjectiveC` or `import Dispatch`, install a toolchain package: the modules
+ship there.
 
 `import Darwin` gives the C library as Swift sees it: `errno`, `getenv`, `exit`, the math functions,
 `stat`, `open` and the rest of the C headers in the 10.9 SDK, with Swift's `Int32`-and-pointer overloads
 over them. `import ObjectiveC` gives `NSObject` and the Objective-C runtime (`Selector`, `AnyClass`,
 `ObjCBool`, `autoreleasepool`, `NSObjectProtocol`) and lets a Swift class inherit from `NSObject`,
 without Foundation. Both are Swift 6.2's and 5.4's own sources, built against the 10.9 SDK.
+
+`import Dispatch` gives Swift 5.4's Dispatch overlay over 10.9's own libdispatch: `DispatchQueue`, groups,
+semaphores, `asyncAfter`, sources, `DispatchWorkItem`, `DispatchData` and QoS, with Recaulk supplying the
+functions macOS 10.10 and 10.12 added. Not in this overlay, on any macOS: `dispatchPrecondition`,
+`DispatchWorkItem`'s `wait` and `notify`, `DispatchQueue.qos`, the `autoreleaseFrequency:` argument,
+`.initiallyInactive` and the user-data-replace source; INGREDIENTS.md lists them and what brings each back.
 
 The 10.9 SDK differs from later ones where a Swift class overrides `NSObject`: `hash` is a method there,
 so write `override func hash() -> Int`, not `override var hash: Int`. It also has no nullability, so

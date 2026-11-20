@@ -160,6 +160,29 @@ created (the toolchains link one into every program, below) and the overlay's co
 runs anyway. Until Recaulk shares the key between copies, cancel a block through the same image that created
 it.
 
+What a program loses of Swift 5.4's Dispatch overlay, on any macOS, because neither the 10.9 SDK nor Recaulk
+declares the C function the API calls; each comes back when Recaulk declares that function, and defines it
+where noted, and the overlay patch that removes it is dropped:
+- `dispatchPrecondition`, all three conditions (patch `0008`): `dispatch_assert_queue$V2`, which Recaulk
+  defines but does not declare, and `dispatch_assert_queue_barrier` and `dispatch_assert_queue_not`, which it
+  must define too.
+- `DispatchWorkItem.wait` and `DispatchWorkItem.notify` (`0007`): `dispatch_block_wait` and
+  `dispatch_block_notify`, to define too.
+- `DispatchQueue.qos` (`0009`): `dispatch_queue_get_qos_class`.
+- The `autoreleaseFrequency:` argument of `DispatchQueue`'s initializer, `.inherit` included, so a caller
+  that passes it must drop it (`0004`): `dispatch_queue_attr_make_with_autorelease_frequency` and its type.
+- `DispatchQueue.Attributes.initiallyInactive` (`0005`): `dispatch_queue_attr_make_initially_inactive`.
+- The user-data-replace source, `DispatchSource.makeUserDataReplaceSource` (`0010`):
+  `DISPATCH_SOURCE_TYPE_DATA_REPLACE`.
+- `DispatchQueue(label:qos:attributes:target:)` keeps `target:`, but always creates the queue and then sets
+  its target with `setTarget(queue:)`, on 10.12 and later too (`0006`): `dispatch_queue_create_with_target$V2`,
+  which Recaulk defines but does not declare.
+
+On 10.9 every dispatch source is one Objective-C class, `OS_dispatch_source`, and the overlay adds each
+per-kind protocol to it, so a dynamic cast cannot tell a source's kind: a timer is `as? DispatchSourceTimer`,
+and `as? DispatchSourceRead` too (checked on 10.9.5). Keep the type the `DispatchSource.make...Source`
+function returns; nothing Recaulk declares changes this.
+
 Step 7 also holds every dylib it ships, and the test-support libraries, to what OS X 10.9 has
 (`scripts/imports-on-10.9.sh`): each symbol imported from `/usr/lib` or a framework must be exported by
 that library's stub in the 10.9 SDK, or be weak and listed in `scripts/resources/weak-absent-on-10.9.txt`
@@ -342,34 +365,37 @@ run the real-10.9 gate. It does: `vm-test`, a required check, installs each run'
 merges like any other, as the family's default has it.
 
 The gate is sized, so that upstream's tests can grow. `run-selftest.sh --gate` runs our own binaries
-500x plus 10x under Guard Malloc (28 of them) and upstream's, each included test at -O and -Onone and once per
+500x plus 10x under Guard Malloc (36 of them) and upstream's, each included test at -O and -Onone and once per
 variant (`SELFTEST_UPSTREAM_RUNS`, default 20, plus 1 under Guard Malloc), after a `--loads` run. The lists
-include 7 Darwin, 3 ObjectiveC and 62 Concurrency tests (most of those built twice: lit runs them again in
-Swift 5 mode with NonisolatedNonsendingByDefault), 126 builds, 252 upstream binaries, 280 with ours. 44 of those
-tests have their output checked with FileCheck, 164 of the binaries.
+include 7 Darwin, 4 ObjectiveC and 67 Concurrency tests (most of those built twice: lit runs them again in
+Swift 5 mode with NonisolatedNonsendingByDefault), 137 builds, 274 upstream binaries, 310 with ours. 47 of those
+tests have their output checked with FileCheck, 176 of the binaries.
 
-Measured on the real box (ultimate-hat, 12 cores, shared) with this bundle, on the released 6.4.2-mavericks.1
-runtime and toolchain and clang-22 22.1.8-mavericks.21's FileCheck: `make-selftest.sh` took 3 min 31 s, and the
-whole `--gate`, 280 binaries, took 65 min 01 s and passed (ALL PASS). Upstream's runs have their own limit, `SELFTEST_UPSTREAM_TIMEOUT`, 180 s. Every
-binary's slowest single run on the box: clock's Guard Malloc runs take 40 to 45 s (its unguarded runs 1.3 to
-1.8 s), and cancellation_handler_concurrent's -Onone Guard Malloc run takes 65 s (100,000 tasks; 16 s at -O).
-async_task_cancellation_while_running takes 13.1 s a run, asleep. Everything else is under 5 s, ours included. So
-180 s is three to four times the box's worst. A hang still fails, three minutes later.
+Measured on the real box (ultimate-hat, 12 cores, shared: load 3 to 5.5): the whole `--gate`, 274 binaries,
+took 70 min 41 s and passed; 280 binaries, 65 min 1 s; 310, with the Dispatch tests, 79 min 32 s (load 2 to 3;
+the bundle's 310 compiles there took 3 min 39 s). Upstream's runs have their own limit,
+`SELFTEST_UPSTREAM_TIMEOUT`, 180 s. Every binary's slowest single run on the box: clock's Guard Malloc runs take
+40 to 45 s (its unguarded runs 1.3 to 1.8 s), and cancellation_handler_concurrent's -Onone Guard Malloc run takes
+65 s (100,000 tasks; 16 s at -O). async_task_cancellation_while_running takes 13.1 s a run, asleep. Everything
+else is under 5 s, ours included. So 180 s is three to four times the box's worst. A hang still fails, three
+minutes later.
 
-The VM estimate has to tell sleeping from computing, because a VM is no faster at sleeping. Three suites are
+The VM estimate has to tell sleeping from computing, because a VM is no faster at sleeping. Six suites are
 sleep-bound: basic_future (4 binaries x 21 runs x 4.4 s, about 370 s), clock's unguarded runs (4 x 20 x 1.55 s,
-about 125 s) and async_task_cancellation_while_running (4 x 21 x 13.1 s, about 1100 s), so about 1595 s. The rest
-is CPU-bound: 465 s of the original upstream tests', 157 s of ours and 1722 s of the 44 FileCheck tests' (their
-134 s a run, less 52 s of that sleeping, x 21), 2344 s. At Release 1's VM-to-box CPU ratio of 0.42 (run
-40272925587), that rest takes about 985 s. The VM gate is then about 1595 + 985 = 2580 s, 43 min, and at the
-box's own pace 66 min (the measured 65 min is wall time on a shared box). Compiling in the VM is the larger cost: 280 binaries at a pessimistic 15 s each is 70 min.
-Install and smoke are allowed 18 min, a pessimistic allowance (the old estimate's hour less its compiles and gate; the whole
-old vm-test measured about 31 min). Install, compiles, gate and smoke total about 131 min at the worst, so
-`vm-test`'s `timeout-minutes` is 260, about twice that, under GitHub's 360. 20 runs stay: 20 plus 1 under Guard Malloc
-is a short, deterministic-test budget.
+about 125 s), async_task_cancellation_while_running (4 x 21 x 13.1 s, about 1100 s), async_task_sleep (4 x 21 x
+1.55 s, about 130 s), async_task_sleep_cancel and sleep_executor (4 x 21 x 0.79 s and 0.43 s, about 100 s), and
+our dispatch_overlay_test (4 x 510 x 0.26 s, about 530 s), so about 2355 s. The rest is CPU-bound: 465 s of the
+original upstream tests', about 185 s of ours and 1722 s of the 44 FileCheck tests' (their 134 s a run, less 52 s
+of that sleeping, x 21), about 2370 s. At Release 1's VM-to-box CPU ratio of 0.42 (run 40272925587), that rest
+takes about 995 s. The VM gate is then about 2355 + 995 = 3350 s, 56 min. Compiling in the VM is the larger
+cost: 310 binaries at a pessimistic 15 s each is 78 min. Install and smoke are allowed 18 min, a pessimistic
+allowance (the old estimate's hour less its compiles and gate; the whole old vm-test measured about 31 min).
+Install, compiles, gate and smoke total about 152 min at the worst, so `vm-test`'s `timeout-minutes` is 300,
+about twice that, under GitHub's 360. 20 runs stay: 20 plus 1 under Guard Malloc is a short, deterministic-test
+budget.
 
-The 260 minutes must be re-sized when more tests come in: each added binary is 15 s of compiles plus its run
-time x 21.
+The 300 minutes must be re-sized when more tests come in: each added binary is 15 s of compiles plus its run
+time x 21 (x 510 for one of ours).
 
 Owed: upstream tests the gate excludes because 10.9 or this release lacks something, each owed
 until its blocker goes (the reasons are in `tests/upstream/*.list`):
@@ -379,8 +405,8 @@ until its blocker goes (the reasons are in `tests/upstream/*.list`):
 - `validation-test/stdlib/ObjectiveC_without_Foundation.swift`: the 10.9 SDK has no nullability, so
   `NSObject()` is `NSObject!` and `var anNSObject` is not `CVarArg`.
 - POSIX.swift and mmap.swift hand the test a temp directory (`%t`), which the gate does not supply.
-- The Concurrency tests that use `DispatchQueue`, `DispatchTime` or `DispatchSemaphore` (12): the Dispatch Swift
-  overlay, which this release does not ship.
+- The Concurrency tests that use `dispatchPrecondition` (6, the task-executor tests and `mainactor.swift`
+  among them): the Dispatch overlay lacks it until Recaulk declares `dispatch_assert_queue` (above).
 - `test/Concurrency/Runtime/cancellation_handler_only_once.swift` imports `Synchronization`, which this release does
   not ship.
 - The 9 Concurrency tests that use `@TaskLocal` and that upstream's REQUIRES: would otherwise run on 10.9 (8 of
@@ -393,7 +419,9 @@ until its blocker goes (the reasons are in `tests/upstream/*.list`):
   `-enable-copy-propagation` and `-enable-actor-data-race-checks`.
 - The site that reads Mirror's 6.2 availability: untested on 10.9, since the only upstream test that reaches it
   uses a C++ foreign reference, which this gate does not build.
-- Tests of the Dispatch Swift overlay and of the environment variables above are owed with their blockers, as listed.
+- Tests of the environment variables above are owed with their blockers, as listed.
+- Upstream's own test of the Dispatch overlay, `test/stdlib/DispatchData.swift`, the one of them that runs: the
+  survey's layers (Darwin, ObjectiveC, Concurrency) do not pick it, as it imports neither Darwin nor ObjectiveC.
 - `test/Concurrency/Runtime/actor_dynamic_subclass.swift`: the 10.9 SDK has no nullability, so it does not compile
   (line 32).
 

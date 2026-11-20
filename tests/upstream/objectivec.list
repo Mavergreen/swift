@@ -51,7 +51,7 @@ exclude test/stdlib/NSSlowTaggedLocalizedString.swift -- upstream disables it (R
 exclude test/stdlib/NSValueBridging.swift.gyb -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/NewString.swift -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/Nil.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/NoFoundation.swift -- uses DispatchQueue (line 38), of the Dispatch Swift overlay, which this release does not ship
+include test/stdlib/NoFoundation.swift
 exclude test/stdlib/ObjCEvilClassInitialization.swift -- RUN uses %target-clang
 exclude test/stdlib/OptionalBridge.swift -- imports Foundation, which no 10.9 pkg ships
 exclude test/stdlib/ParseFloat64-bridging.swift -- imports Foundation, which no 10.9 pkg ships

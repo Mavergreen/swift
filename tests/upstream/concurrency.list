@@ -4,9 +4,9 @@
 # make-selftest.sh with its compile-line, once per variant (most run twice: the second in Swift 5 mode with
 # -strict-concurrency=complete and NonisolatedNonsendingByDefault), and run by run-selftest.sh --gate, or
 # `exclude <path> -- <reason>`, a reason a reviewer can check against the test (its RUN: line or a
-# REQUIRES:/UNSUPPORTED: is one compile-line refuses, quoted as it says; it uses the Dispatch Swift overlay
-# (DispatchQueue and the like), which this release does not ship; it does not compile for 10.9, with the
-# error; or it failed on 10.9, with the failure). Tests that are also Darwin or ObjectiveC candidates are
+# REQUIRES:/UNSUPPORTED: is one compile-line refuses, quoted as it says; it uses a Dispatch API this
+# release's Dispatch overlay lacks, named; it imports Foundation, which no 10.9 pkg ships; it does not
+# compile for 10.9, with the error; or it failed on 10.9, with the failure). Tests that are also Darwin or ObjectiveC candidates are
 # decided here; those lists point here. build.sh's step 5b checks this list against the tree, so a Swift
 # bump that adds a test, or gives an included one a RUN: form, compiler flag or REQUIRES:/UNSUPPORTED: the
 # script does not know, stops the build until the list is reviewed (a changed source does not; the gate runs it).
@@ -31,7 +31,7 @@ exclude test/Concurrency/Runtime/actor_init_abi.swift -- RUN uses %target-build-
 include test/Concurrency/Runtime/actor_isIsolatingCurrentContext.swift
 include test/Concurrency/Runtime/actor_keypaths.swift
 exclude test/Concurrency/Runtime/actor_recursive_deinit.swift -- RUN uses %target-future-triple
-exclude test/Concurrency/Runtime/async.swift -- uses DispatchQueue, of the Dispatch Swift overlay, which this release does not ship
+include test/Concurrency/Runtime/async.swift
 include test/Concurrency/Runtime/async_initializer.swift
 include test/Concurrency/Runtime/async_let_fibonacci.swift
 include test/Concurrency/Runtime/async_let_throw_completion_order.swift
@@ -49,12 +49,12 @@ include test/Concurrency/Runtime/async_task_detach.swift
 exclude test/Concurrency/Runtime/async_task_executor_and_serial_executor_both_executor.swift -- RUN runs env
 exclude test/Concurrency/Runtime/async_task_executor_and_serial_executor_nonisolated_async_func_legacy.swift -- RUN runs env
 exclude test/Concurrency/Runtime/async_task_executor_and_serial_executor_nonisolated_async_func_swift6.swift -- RUN runs env
-exclude test/Concurrency/Runtime/async_task_executor_default_actor_funcs.swift -- uses DispatchQueue, of the Dispatch Swift overlay, which this release does not ship
-exclude test/Concurrency/Runtime/async_task_executor_nonisolated_async_func.swift -- uses DispatchQueue, of the Dispatch Swift overlay, which this release does not ship
-exclude test/Concurrency/Runtime/async_task_executor_nsobject.swift -- uses DispatchQueue and DispatchTime, of the Dispatch Swift overlay, which this release does not ship
-exclude test/Concurrency/Runtime/async_task_executor_structured_concurrency.swift -- uses DispatchQueue, of the Dispatch Swift overlay, which this release does not ship
-exclude test/Concurrency/Runtime/async_task_executor_unstructured_task_ownership.swift -- uses DispatchQueue, DispatchSemaphore and dispatchPrecondition, of the Dispatch Swift overlay, which this release does not ship
-exclude test/Concurrency/Runtime/async_task_executor_withExecutor.swift -- uses DispatchQueue, of the Dispatch Swift overlay, which this release does not ship
+exclude test/Concurrency/Runtime/async_task_executor_default_actor_funcs.swift -- uses dispatchPrecondition (line 62), which this release's Dispatch overlay lacks: no 10.9 or Recaulk header declares dispatch_assert_queue
+exclude test/Concurrency/Runtime/async_task_executor_nonisolated_async_func.swift -- uses dispatchPrecondition (line 34), which this release's Dispatch overlay lacks: no 10.9 or Recaulk header declares dispatch_assert_queue
+exclude test/Concurrency/Runtime/async_task_executor_nsobject.swift -- imports Foundation, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_executor_structured_concurrency.swift -- uses dispatchPrecondition (line 39), which this release's Dispatch overlay lacks: no 10.9 or Recaulk header declares dispatch_assert_queue
+exclude test/Concurrency/Runtime/async_task_executor_unstructured_task_ownership.swift -- uses dispatchPrecondition (line 56), which this release's Dispatch overlay lacks: no 10.9 or Recaulk header declares dispatch_assert_queue
+exclude test/Concurrency/Runtime/async_task_executor_withExecutor.swift -- uses dispatchPrecondition (line 35), which this release's Dispatch overlay lacks: no 10.9 or Recaulk header declares dispatch_assert_queue
 include test/Concurrency/Runtime/async_task_handle_cancellation.swift
 exclude test/Concurrency/Runtime/async_task_locals_async_let.swift -- RUN uses %swift-plugin-dir
 exclude test/Concurrency/Runtime/async_task_locals_basic.swift -- RUN uses %swift-plugin-dir
@@ -70,8 +70,8 @@ exclude test/Concurrency/Runtime/async_task_locals_synchronous_bind.swift -- RUN
 exclude test/Concurrency/Runtime/async_task_locals_wrapper.swift -- RUN uses %swift-plugin-dir
 include test/Concurrency/Runtime/async_task_naming.swift
 include test/Concurrency/Runtime/async_task_priority_current.swift
-exclude test/Concurrency/Runtime/async_task_sleep.swift -- uses DispatchTime, of the Dispatch Swift overlay, which this release does not ship
-exclude test/Concurrency/Runtime/async_task_sleep_cancel.swift -- uses DispatchTime, of the Dispatch Swift overlay, which this release does not ship
+include test/Concurrency/Runtime/async_task_sleep.swift
+include test/Concurrency/Runtime/async_task_sleep_cancel.swift
 exclude test/Concurrency/Runtime/async_task_withUnsafeCurrentTask.swift -- REQUIRES: swift_task_debug_log does not hold on 10.9
 include test/Concurrency/Runtime/async_task_yield.swift
 include test/Concurrency/Runtime/async_taskgroup_addUnlessCancelled.swift
@@ -107,7 +107,7 @@ exclude test/Concurrency/Runtime/custom_executors_complex_equality.swift -- RUN 
 exclude test/Concurrency/Runtime/custom_executors_complex_equality_crash.swift -- RUN runs env
 exclude test/Concurrency/Runtime/custom_executors_complex_equality_subclass.swift -- RUN uses -Xfrontend -enable-experimental-move-only, which no included test is known to need
 include test/Concurrency/Runtime/custom_executors_default.swift
-exclude test/Concurrency/Runtime/custom_executors_globalActor.swift -- uses DispatchQueue, of the Dispatch Swift overlay, which this release does not ship
+include test/Concurrency/Runtime/custom_executors_globalActor.swift
 include test/Concurrency/Runtime/custom_executors_moveOnly_job.swift
 include test/Concurrency/Runtime/custom_executors_priority.swift
 exclude test/Concurrency/Runtime/custom_executors_protocol.swift -- RUN uses -Xfrontend -enable-experimental-move-only, which no included test is known to need
@@ -129,7 +129,7 @@ include test/Concurrency/Runtime/future_fibonacci.swift
 include test/Concurrency/Runtime/isolated_conformance.swift
 exclude test/Concurrency/Runtime/isolated_deinit_main_sync.swift -- RUN uses %target-future-triple
 include test/Concurrency/Runtime/isolated_macro_in_nonisolated_nonsending_func.swift
-exclude test/Concurrency/Runtime/mainactor.swift -- uses DispatchQueue and dispatchPrecondition, of the Dispatch Swift overlay, which this release does not ship
+exclude test/Concurrency/Runtime/mainactor.swift -- uses dispatchPrecondition (line 21), which this release's Dispatch overlay lacks: no 10.9 or Recaulk header declares dispatch_assert_queue
 exclude test/Concurrency/Runtime/must_not_hop_withContinuation.swift -- REQUIRES: synchronization does not hold on 10.9
 exclude test/Concurrency/Runtime/noncopyable_continuation.swift -- RUN merges the test's stderr into FileCheck's input
 exclude test/Concurrency/Runtime/nonisolated_inherits_isolation.swift -- REQUIRES: asserts does not hold on 10.9
@@ -138,7 +138,7 @@ exclude test/Concurrency/Runtime/objc_async.swift -- REQUIRES: rdar77934626 does
 exclude test/Concurrency/Runtime/protocol_resilience.swift -- RUN uses %target-build-swift-dylib
 exclude test/Concurrency/Runtime/reasync.swift -- RUN uses %target-swift-frontend
 exclude test/Concurrency/Runtime/signpost_tracing_test.swift -- RUN runs env
-exclude test/Concurrency/Runtime/sleep_executor.swift -- uses DispatchQueue and DispatchTime, of the Dispatch Swift overlay, which this release does not ship
+include test/Concurrency/Runtime/sleep_executor.swift
 exclude test/Concurrency/Runtime/startImmediately.swift -- RUN uses %swift-plugin-dir
 include test/Concurrency/Runtime/startImmediately_order.swift
 include test/Concurrency/Runtime/startOnMainActor.swift
