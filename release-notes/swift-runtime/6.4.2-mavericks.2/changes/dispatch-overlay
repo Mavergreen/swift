@@ -1,1 +1,1 @@
-Swift programs on 10.9 can now import Dispatch: DispatchQueue, groups, semaphores, sources and DispatchWorkItem, from the runtime package's libswiftDispatch.
+Swift programs on 10.9 can now import Dispatch (libswiftDispatch), without some APIs macOS 10.10 and later added, which the readme lists; drop any autoreleaseFrequency: argument to DispatchQueue.

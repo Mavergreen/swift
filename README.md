@@ -39,9 +39,12 @@ without Foundation. Both are Swift 6.2's and 5.4's own sources, built against th
 
 `import Dispatch` gives Swift 5.4's Dispatch overlay over 10.9's own libdispatch: `DispatchQueue`, groups,
 semaphores, `asyncAfter`, sources, `DispatchWorkItem`, `DispatchData` and QoS, with Recaulk supplying the
-functions macOS 10.10 and 10.12 added. Not in this overlay, on any macOS: `dispatchPrecondition`,
+functions macOS 10.10 added. Not in this overlay, on any macOS: `dispatchPrecondition`,
 `DispatchWorkItem`'s `wait` and `notify`, `DispatchQueue.qos`, the `autoreleaseFrequency:` argument,
-`.initiallyInactive` and the user-data-replace source; INGREDIENTS.md lists them and what brings each back.
+`.initiallyInactive` and the user-data-replace source; and `activate()` stays macOS 10.12, so a 10.9 program
+that calls it is refused at compile time (start a new source with `resume()`). INGREDIENTS.md lists them and
+what brings each back. Recaulk's Dispatch declarations follow the SDK `swiftc` uses by default, or `SDKROOT`'s;
+a program built with its own `-sdk` gets that SDK's own Dispatch module map, without them.
 
 The 10.9 SDK differs from later ones where a Swift class overrides `NSObject`: `hash` is a method there,
 so write `override func hash() -> Int`, not `override var hash: Int`. It also has no nullability, so

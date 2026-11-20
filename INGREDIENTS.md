@@ -22,7 +22,7 @@ was merged in (2026-09) and deleted (2026-10). Its 6.4.0 installer mirror is now
 | Runtime source patches (`patches/runtime/`; `0012` to `0016` are libswift_Concurrency's: its deployment floor follows the stdlib's 10.9, not upstream's 10.15; `0013` the link-flags hook for its Recaulk subset; `0014` maps QoS classes to the priorities 10.9's libdispatch knows; `0015` guards the one tracing call that lacked its `ENSURE_LOGS`; `0016` expresses a continuous-clock deadline as an uptime one, which 10.9's libdispatch fires) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | swift-6.2 Darwin overlay source (`stdlib/public/Platform`) | `SWIFT62_SHA` + `SWIFT62_TARBALL_SHA256` in `pins.env`, fetched by `fetch_source` into `swift-6.2` | ❌ untrackable: frozen, since upstream removed the files in 6.3 and Mavergreen owns them; no `renovate:` marker, and no updater (Renovate, the pins bot, `pin-source-tarballs.sh`) names the pin | n/a: moves only by a deliberate edit |
 | swift-5.4 ObjectiveC and Dispatch overlay sources (`stdlib/public/Darwin/ObjectiveC`, `stdlib/public/Darwin/Dispatch` and its shims header, `stdlib/public/SwiftShims/DispatchOverlayShims.h`) | `SWIFT54_SHA` + `SWIFT54_TARBALL_SHA256` in `pins.env`, fetched by `fetch_source` into `swift-5.4` | ❌ untrackable: frozen, since upstream removed the files in 5.5 and Mavergreen owns them; as for swift-6.2 | n/a: moves only by a deliberate edit |
-| Overlay source patches (`patches/overlays/`, applied with `-p0` from a tree root: `0001`, to the swift-5.4 tree, makes `NSObject.hash` a method call, as the 10.9 SDK declares it; `0002`, to the `SWIFT_SHA` tree's `apinotes/Dispatch.apinotes`, marks `dispatch_sync` and `dispatch_barrier_sync`'s block `NoEscape` and `dispatch_block_flags_t` a `SwiftWrapper` struct; `0014`, to the same file after `0002`, marks `dispatch_group_create` and `dispatch_semaphore_create` as returning non-nil, so `DispatchGroup()` and `DispatchSemaphore(value:)` are not failable initializers; `0015` declares the Dispatch types `Sendable` (unchecked) exactly where Apple's newest SDK does (5.4 predates it; not `DispatchWorkItem`, nor a source's event flags), so a Swift 6 client can capture a queue or a semaphore in a `@Sendable` closure; `0003` to `0013`, to the swift-5.4 tree's Dispatch overlay sources and shims: `0003` maps `DispatchQueue.global(qos:)`'s QoS class to a 10.9 queue priority below macOS 10.10, `0004` `0005` `0006` `0007` `0008` `0009` `0010` remove what no 10.9 or Recaulk header declares (autorelease frequency, `initiallyInactive`, `dispatch_queue_create_with_target`'s path, `DispatchWorkItem.wait`/`notify`, `dispatchPrecondition`, `DispatchQueue.qos`, the DATA_REPLACE source), `0011` unwraps what the nullability-free 10.9 headers import as optionals in `DispatchData` and `DispatchIO`, `0012` lowers to 10.9 the availability of what Recaulk defines and declares, `0013` submits barrier-flagged work as a barrier below macOS 10.10 since Recaulk's `dispatch_block_create` drops its flags; the other flags (detached, assignCurrentContext, noQoS, inheritQoS, enforceQoS) are dropped there, 10.9 having no vouchers or QoS) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
+| Overlay source patches (`patches/overlays/`, applied with `-p0` from a tree root: `0001`, to the swift-5.4 tree, makes `NSObject.hash` a method call, as the 10.9 SDK declares it; `0002`, to the `SWIFT_SHA` tree's `apinotes/Dispatch.apinotes`, marks `dispatch_sync` and `dispatch_barrier_sync`'s block `NoEscape` and `dispatch_block_flags_t` a `SwiftWrapper` struct; `0014`, to the same file after `0002`, marks `dispatch_group_create` and `dispatch_semaphore_create` as returning non-nil, so `DispatchGroup()` and `DispatchSemaphore(value:)` are not failable initializers; `0015` declares the Dispatch types `Sendable` (unchecked) exactly where Apple's newest SDK does (5.4 predates it; not `DispatchWorkItem`, nor a source's event flags), so a Swift 6 client can capture a queue or a semaphore in a `@Sendable` closure; `0016`, to that file and the apinotes, keeps `activate()` at macOS 10.12, as the SDK does, by importing `dispatch_activate` as `__activate()` under the overlay's own `activate()`; `0003` to `0013`, to the swift-5.4 tree's Dispatch overlay sources and shims: `0003` maps `DispatchQueue.global(qos:)`'s QoS class to a 10.9 queue priority below macOS 10.10, `0004` `0005` `0006` `0007` `0008` `0009` `0010` remove what no 10.9 or Recaulk header declares (autorelease frequency, `initiallyInactive`, `dispatch_queue_create_with_target`'s path, `DispatchWorkItem.wait`/`notify`, `dispatchPrecondition`, `DispatchQueue.qos`, the DATA_REPLACE source), `0011` unwraps what the nullability-free 10.9 headers import as optionals in `DispatchData` and `DispatchIO`, `0012` lowers to 10.9 the availability of what Recaulk defines and declares (not `activate()`), `0013` submits barrier-flagged work as a barrier below macOS 10.10 since Recaulk's `dispatch_block_create` drops its flags; the other flags (detached, assignCurrentContext, noQoS, inheritQoS, enforceQoS) are dropped there, 10.9 having no vouchers or QoS) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | Sparkle framework, MacOSX10.9 SDK (the toolchains link against its original stub files, fetched with shipyard's pin by `lib.sh`'s `sdk109_stubs`, on every host: below) | `Mavergreen/shipyard@v1` | ✅ github-actions manager tracks the tag | `@v1` is a moving tag; nothing auto-repackages |
 | MacOSX11.3.sdk, the pinned modern SDK the runtime builds against (CI and OS X 10.9 alike), and the cross toolchain's arm64 binaries too | `Mavergreen/shipyard@v1` (`sdk-pins.sh`'s arm64 pin, fetched by `fetch_sdk.sh --arch arm64`) | ✅ github-actions manager tracks the tag | `@v1` is a moving tag; nothing auto-repackages |
 | Apple clang, the `macos-26` runner's Command Line Tools (compiles the cross toolchain's LLVM, clang, lld and the C++ half of `swift-frontend`) | the runner image, not pinned | ❌ untrackable: no datasource for a hosted runner's Command Line Tools. The pinned MacOSX11.3.sdk bounds what those binaries record (minOS 11.0, SDK 11.3, checked by the compat guard), and `scripts/audit-imports.py` checks every Swift, C++ and ObjC runtime import of `swift-frontend` against it (it audits only a binary that links libswiftCore, so not `clang` or `ld64.lld`, whose libc++ imports nothing checks) | a runner-image change reaches the next release; those checks run on every build |
@@ -143,9 +143,9 @@ as it does libswiftCore, and holds its tracing's weak imports (`os_signpost_*`, 
 libswiftDispatch takes a fourth, `RECAULK_DISPATCH_SYMBOLS`: `dispatch_block_create` and
 `dispatch_block_create_with_qos_class` (every `DispatchWorkItem`), `dispatch_block_cancel` and
 `dispatch_block_testcancel` (its `cancel()` and `isCancelled`), `dispatch_queue_attr_make_with_qos_class` (a
-queue made with a QoS) and `dispatch_activate` (`activate()`), the APIs macOS 10.10 and 10.12 added that overlay
-patch 0012 makes the overlay's 10.9 API. The overlay calls them, so on 10.9 they would be imports that fail to
-load. `build.sh` links them into libswiftDispatch alone and hides every global they define, as for libswiftDarwin,
+queue made with a QoS), the APIs macOS 10.10 added that overlay patch 0012 makes the overlay's 10.9 API, and
+`dispatch_activate`, which the overlay's `activate()` calls, at macOS 10.12 (patch 0016, below). The overlay calls
+them, so on 10.9 they would be imports that fail to load. `build.sh` links them into libswiftDispatch alone and hides every global they define, as for libswiftDarwin,
 and step 7 checks libswiftDispatch as it does the others. The members are Recaulk's own code; its block member
 keeps the cancel flag in a `CFData`, so libswiftDispatch links CoreFoundation, as libswift_Concurrency does. The overlay is
 compiled against the declarations every program's `swiftc` shows the importer (`recaulk-importer`, built from the
@@ -174,11 +174,17 @@ where noted, and the overlay patch that removes it is dropped:
 - `DispatchQueue.Attributes.initiallyInactive` (`0005`): `dispatch_queue_attr_make_initially_inactive`.
 - The user-data-replace source, `DispatchSource.makeUserDataReplaceSource` (`0010`):
   `DISPATCH_SOURCE_TYPE_DATA_REPLACE`.
+- `activate()`, on a queue or a source, below macOS 10.12: it keeps the SDK's 10.12 availability, so a 10.9
+  program that calls it is refused at compile time (`0016`, which imports `dispatch_activate` as
+  `__activate()` under the overlay's own `activate()`). Recaulk's `dispatch_activate` is `dispatch_resume`, and
+  with no `initiallyInactive` every object is active already, so on 10.9 it could only over-resume and trap; a
+  new source is started with `resume()`. It comes back when Recaulk declares
+  `dispatch_queue_attr_make_initially_inactive` and defines a real `dispatch_activate`.
 - `DispatchQueue(label:qos:attributes:target:)` keeps `target:`, but always creates the queue and then sets
   its target with `setTarget(queue:)`, on 10.12 and later too (`0006`): `dispatch_queue_create_with_target$V2`,
   which Recaulk defines but does not declare.
 
-On 10.9 every dispatch source is one Objective-C class, `OS_dispatch_source`, and the overlay adds each
+With this overlay, every dispatch source is one Objective-C class, `OS_dispatch_source`, and the overlay adds each
 per-kind protocol to it, so a dynamic cast cannot tell a source's kind: a timer is `as? DispatchSourceTimer`,
 and `as? DispatchSourceRead` too (checked on 10.9.5). Keep the type the `DispatchSource.make...Source`
 function returns; nothing Recaulk declares changes this.
@@ -198,7 +204,8 @@ reach only libswiftCore's own calls. Each toolchain pkg carries its own copy of 
 `RECAULK_VERSION`, in `lib/recaulk/` with Recaulk's `notices.tsv` and a `VERSION` file:
 `scripts/stage-toolchain.sh` takes them from `fetch-recaulk.sh` (the pkg verified against its release's
 `SHA256SUMS`) and refuses a Recaulk prefix whose `mavergreen.plist` names another release. `toolchain_digest`
-covers `lib/recaulk`, so both pkgs carry the same bytes.
+covers `lib/recaulk`, and the importer's `lib/swift/recaulk-importer` and `lib/swift/apinotes`, so both pkgs
+carry the same bytes.
 
 The driver's linker, `libexec/mavergreen-swift/ld` (`toolchain/ld`), puts the archive on the line just before
 the driver's first `-lobjc` or `-lSystem`. ld pulls a member only for a symbol still undefined there, so a
@@ -386,7 +393,9 @@ about 125 s), async_task_cancellation_while_running (4 x 21 x 13.1 s, about 1100
 1.55 s, about 130 s), async_task_sleep_cancel and sleep_executor (4 x 21 x 0.79 s and 0.43 s, about 100 s), and
 our dispatch_overlay_test (4 x 510 x 0.26 s, about 530 s), so about 2355 s. The rest is CPU-bound: 465 s of the
 original upstream tests', about 185 s of ours and 1722 s of the 44 FileCheck tests' (their 134 s a run, less 52 s
-of that sleeping, x 21), about 2370 s. At Release 1's VM-to-box CPU ratio of 0.42 (run 40272925587), that rest
+of that sleeping, x 21: the 47 FileCheck tests less the 3 the Dispatch tests brought, of which async_task_sleep
+and async_task_sleep_cancel are counted among the sleep-bound suites above and custom_executors_globalActor runs
+in next to no time), about 2370 s. At Release 1's VM-to-box CPU ratio of 0.42 (run 40272925587), that rest
 takes about 995 s. The VM gate is then about 2355 + 995 = 3350 s, 56 min. Compiling in the VM is the larger
 cost: 310 binaries at a pessimistic 15 s each is 78 min. Install and smoke are allowed 18 min, a pessimistic
 allowance (the old estimate's hour less its compiles and gate; the whole old vm-test measured about 31 min).
