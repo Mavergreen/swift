@@ -15,9 +15,10 @@
 // sides, a barrier writer must run alone, however it is submitted (async(execute:) of a .barrier
 // DispatchWorkItem, async(flags:), async(group:flags:), sync(flags:), asyncAfter(flags:)).
 // What the overlay leaves out on 10.9 (dispatchPrecondition, DispatchWorkItem.wait/notify,
-// DispatchQueue.qos, autoreleaseFrequency:, .initiallyInactive, the user-data-replace source, the
-// target: initializer) is not tried, and no source is cast to a per-type protocol: on 10.9 every source
-// conforms to them all.
+// DispatchQueue.qos, autoreleaseFrequency:, .initiallyInactive, the user-data-replace source, and
+// activate(), which stays macOS 10.12) is not tried. Nor is the target: initializer, which the overlay keeps
+// and which always sets the target with setTarget(queue:). No source is cast to a per-type protocol: with
+// this overlay, every source conforms to them all.
 // Every wait has a timeout, so a broken path fails rather than hangs. It compiles with no warning in
 // Swift 6 mode too (the marker above). Exits non-zero on any failure.
 
@@ -250,8 +251,10 @@ final class RW: Sendable {
   let state = Box(State())
   let readerMs: Int
   init(readerMs: Int = 5) { self.readerMs = readerMs }
-  func reader() {
+  // A meeting reader, while in flight, signals its own semaphore and waits for the other's (3 s).
+  func reader(meeting: (mine: DispatchSemaphore, other: DispatchSemaphore, met: Box<Bool>)? = nil) {
     state.update { if $0.barrier { $0.violations += 1 }; $0.active += 1; $0.maxActive = max($0.maxActive, $0.active) }
+    if let m = meeting { m.mine.signal(); m.met.value = waits(m.other, 3000) }
     ms(readerMs)
     state.update { if $0.barrier { $0.violations += 1 }; $0.active -= 1 }
   }
@@ -265,7 +268,13 @@ func barrierCase(_ name: String, readerMs: Int = 5, _ submit: (DispatchQueue, RW
   let q = DispatchQueue(label: "dispatch-overlay-test.rw", attributes: .concurrent)
   let rw = RW(readerMs: readerMs), writerDone = DispatchSemaphore(value: 0)
   let readers = DispatchGroup()
-  for _ in 0..<8 { q.async(group: readers) { rw.reader() } }
+  // The first two readers meet, as the concurrent-queue case's blocks do: each, in flight, signals and then waits
+  // for the other, so on a concurrent queue both are in flight at once however slowly its threads start, and
+  // readers run one at a time (submitted as barriers, say) never meet.
+  let a = DispatchSemaphore(value: 0), b = DispatchSemaphore(value: 0), metA = Box(false), metB = Box(false)
+  q.async(group: readers) { rw.reader(meeting: (mine: a, other: b, met: metA)) }
+  q.async(group: readers) { rw.reader(meeting: (mine: b, other: a, met: metB)) }
+  for _ in 0..<6 { q.async(group: readers) { rw.reader() } }
   submit(q, rw, writerDone)
   for _ in 0..<8 { q.async(group: readers) { rw.reader() } }
   check(readers.wait(timeout: .now() + .seconds(10)) == .success, "\(name): the 16 readers finished")
@@ -273,6 +282,7 @@ func barrierCase(_ name: String, readerMs: Int = 5, _ submit: (DispatchQueue, RW
   let st = rw.state.value
   check(st.barriers == 1, "\(name): the writer ran once (\(st.barriers))")
   check(st.violations == 0, "\(name): the writer ran alone, \(st.violations) overlaps with readers")
+  check(metA.value && metB.value, "\(name): the first two readers met, in flight at once")
   check(st.maxActive >= 2, "\(name): readers ran concurrently (at most \(st.maxActive) at once)")
 }
 func barriers() {

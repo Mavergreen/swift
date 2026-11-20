@@ -5,7 +5,9 @@
 #   CI's one run of each toolchain it ships, where it runs: the cross toolchain in build-cross, on the
 #   arm64 runner; the native one in vm-test, on Mac OS X 10.9 (Mavergreen/mavericks-vm), after its pkg is
 #   installed. Its bin/swiftc compiles and links a hello world whose load commands record minOS 10.9 and
-#   SDK 10.9 and whose one rpath is the installed runtime's; links Recaulk (lib/recaulk, pins.env's
+#   SDK 10.9 and whose one rpath is the installed runtime's; compiles and links a program that imports Dispatch
+#   (a queue's sync and a group's wait), which loads libswiftDispatch through that rpath, and, on 10.9 (the
+#   native toolchain, beside its installed runtime), runs it; links Recaulk (lib/recaulk, pins.env's
 #   RECAULK_VERSION) into a program and a dylib, each defining Recaulk's fma, fmal and truncl, hidden,
 #   the program still taking puts and malloc from libSystem, while -c compiles alone; then builds the gate corpus through
 #   make-selftest.sh's SWIFTC= mode, and its clang links C that uses @available (its builtins archive is
@@ -14,7 +16,7 @@
 #   native_host_shim) links none. Its bare clang and clang++, given no flags, must build for 10.9 (clang.cfg and
 #   clang++.cfg), and its bare clang, given only the SDK, must link C with the toolchain's own ld64.lld (its
 #   default linker) and none of the flags a newer ld64 takes (its pinned host linker version):
-#   6.4.0-mavericks.8's clang ran the host's ld, with -no_deduplicate, which OS X 10.9's refuses. Nothing it
+#   6.4.0-mavericks.8's clang ran the host's ld, with -no_deduplicate, which OS X 10.9's refuses. Nothing else it
 #   builds is run here: running them is the gate's job. SKIPs (77) when there is no such toolchain, or when
 #   this host cannot run it natively (the cross one off Apple silicon, the native one off x86_64 or
 #   translated); release.yml fails its step on that SKIP. Load commands are read with otool and nm (OTOOL
@@ -75,6 +77,25 @@ echo "-- its one rpath is the installed runtime's"
 rp="$(macho_rpaths "$T/hello")" || fail "could not read $T/hello's rpaths"
 echo "$rp"
 [ "$rp" = /usr/local/mavergreen/swift-runtime/lib/swift ] || fail "the rpaths are [$rp], not the runtime's alone"
+
+echo "-- its swiftc compiles and links a program that imports Dispatch, which loads libswiftDispatch"
+cat > "$T/dispatch.swift" <<'F'
+import Dispatch
+let q = DispatchQueue(label: "dev.mavergreen.smoke")
+var n = 0
+q.sync { n += 1 }
+let g = DispatchGroup()
+DispatchQueue.global().async(group: g) { n += 1 }
+print(g.wait(timeout: .now() + .seconds(5)) == .success && n == 2 ? "dispatch ok" : "dispatch FAILED")
+F
+"$COPY" "$T/dispatch.swift" -o "$T/dispatch" || fail "its swiftc could not compile and link a program that imports Dispatch"
+"$OTOOL" -L "$T/dispatch" | grep -q '@rpath/libswiftDispatch\.dylib' || fail "$T/dispatch does not load @rpath/libswiftDispatch.dylib"
+p="$(plat "$T/dispatch")"
+[ "$p" = "10.9 10.9" ] || fail "the Dispatch program records minOS and SDK '$p', not '10.9 10.9'"
+if [ "$HOST" = x86_64 ]; then
+  out="$("$T/dispatch")" || fail "the Dispatch program failed on this 10.9, with the installed runtime: $out"
+  [ "$out" = "dispatch ok" ] || fail "the Dispatch program printed '$out', not 'dispatch ok'"
+fi
 
 echo "-- it links Recaulk's archive, pins.env's release, into every program and dylib"
 . "$REPO/pins.env"
