@@ -91,11 +91,12 @@ this", so `os_signpost_enabled` would turn its tracing on and then call the `os_
 `os_signpost_id_generate` no 10.9 has, and `objc_readClassPair` and `_objc_realizeClassFromSwift` would
 flip the realization paths upstream and patch 0005 choose by. `lib.sh`'s `recaulk_subset` picks, by symbol,
 the members that define each name in `RECAULK_RUNTIME_SYMBOLS` and what they need from the archive, and
-refuses a member that defines any other API, unless Recaulk lists it as an image-local shadow (below). A name those members need that OS X 10.9's libSystem defines (the 10.9
-SDK's stubs say which) binds to libSystem unless a `RECAULK_*_SYMBOLS` names it: since 20261118.1
-Recaulk's `socket_close` member shadows `close` and `dup2`, which its `os_system_version` member and
-legacy-support's `atcalls.c` call, and no dylib here takes those shadows. The link hides every global they define
-(`-unexported_symbols_list`), so libswiftCore exports what it did before. Step 7 refuses a runtime that
+refuses a member that defines any other API, unless Recaulk lists it as an image-local shadow (below). A
+name those members need that OS X 10.9's libSystem defines (the 10.9 SDK's stubs say which) binds to
+libSystem unless a `RECAULK_*_SYMBOLS` names it: since 20261118.1 Recaulk's `socket_close` member shadows
+`close` and `dup2`, which its `os_system_version` member and legacy-support's `atcalls.c` call, and no dylib
+here takes those shadows. The link hides every global they define (`-unexported_symbols_list`), so
+libswiftCore exports what it did before. Step 7 refuses a runtime that
 still imports a Recaulk-supplied API, does not define it, exports it or any `___recaulk_` name, or no
 longer weak-imports the APIs whose presence the runtime reads from the OS. The archive's SHA-256 is one of
 the stdlib build's stamped inputs, so a Recaulk bump starts that build afresh. Recaulk's notice is in
@@ -117,16 +118,18 @@ exported by nothing, and no longer an import.
 exports that the member deliberately defines again, hidden and weak, so that it binds only inside the image
 that links the member. A global a picked member defines is taken when it is a named API, `___recaulk_`-prefixed,
 or a (member, symbol) pair the list names; anything else is still refused, naming the member and the symbol.
-Each subset also names the shadows it expects to carry (`RECAULK_CONCURRENCY_SHADOWS`,
-`RECAULK_DISPATCH_SHADOWS`; none for libswiftCore and libswiftDarwin), and the build fails when the set taken
-differs in either direction, so a later Recaulk cannot add one to a member we link unseen. The shadows go into
-the unexported list with the rest, and step 7 holds each to its image: exported by nothing, and never imported
-(the link dead-strips a copy the image does not call). Which libraries carry which:
+Each subset also names the shadows it expects to carry, as `<member>:<symbol>` pairs
+(`RECAULK_CONCURRENCY_SHADOWS`, `RECAULK_DISPATCH_SHADOWS`; none for libswiftCore and libswiftDarwin), and the
+build fails when the pairs taken differ in either direction, so a later Recaulk cannot add a shadow to a member
+we link, or move one to another member, unseen. The shadows go into the unexported list with the rest. Step 7
+holds libswiftDispatch's to its image: each shadow and its `___recaulk_` name defined in the dylib and
+non-external. Which libraries carry which:
 - libswift_Concurrency: `dispatch_queue_create` and `dispatch_resume`, from the member that holds
   `dispatch_activate`'s 10.9 body (`recaulk-dispatch_inactive.o`). Recaulk keeps that member's
   inactive/activated state where every image's copy finds it (associated objects under process-unique
   selectors, guarded by `objc_sync`), so `dispatch_activate` must not be split from the two. On Apple platforms
-  libswift_Concurrency calls neither itself, so its link dead-strips both copies and they never bind there.
+  libswift_Concurrency calls neither itself, so its link drops both copies: the shipped dylib holds
+  `dispatch_activate`'s body and none of the shadows, and the subset's expected pairs are the only check.
 - libswiftDispatch: those two, and `dispatch_get_global_queue` (`recaulk-dispatch_global_qos.o`), which gives a
   QoS class a global queue where 10.9's answers NULL. Recaulk's `dispatch.h`, which the overlay compiles against,
   renames the three calls to `___recaulk_dispatch_get_global_queue`, `___recaulk_dispatch_queue_create` and
@@ -191,15 +194,16 @@ where noted, and the overlay patch that removes it is dropped:
 - `DispatchQueue.qos` (`0009`): `dispatch_queue_get_qos_class`.
 - The `autoreleaseFrequency:` argument of `DispatchQueue`'s initializer, `.inherit` included, so a caller
   that passes it must drop it (`0004`): `dispatch_queue_attr_make_with_autorelease_frequency` and its type.
-- `DispatchQueue.Attributes.initiallyInactive` (`0005`): `dispatch_queue_attr_make_initially_inactive`.
+- `DispatchQueue.Attributes.initiallyInactive` (`0005`): `dispatch_queue_attr_make_initially_inactive`, which
+  the pinned Recaulk now declares and defines (above), so this one can come back.
 - The user-data-replace source, `DispatchSource.makeUserDataReplaceSource` (`0010`):
   `DISPATCH_SOURCE_TYPE_DATA_REPLACE`.
 - `activate()`, on a queue or a source, below macOS 10.12: it keeps the SDK's 10.12 availability, so a 10.9
   program that calls it is refused at compile time (`0016`, which imports `dispatch_activate` as
-  `__activate()` under the overlay's own `activate()`). Recaulk's `dispatch_activate` is `dispatch_resume`, and
-  with no `initiallyInactive` every object is active already, so on 10.9 it could only over-resume and trap; a
-  new source is started with `resume()`. It comes back when Recaulk declares
-  `dispatch_queue_attr_make_initially_inactive` and defines a real `dispatch_activate`.
+  `__activate()` under the overlay's own `activate()`); a new source is started with `resume()`. The pinned
+  Recaulk declares `dispatch_queue_attr_make_initially_inactive` and defines a real `dispatch_activate`, which
+  starts a queue made inactive, or a source, once, and counts a first `resume()` as the activation (above), so
+  lowering `activate()` to 10.9 is now possible; this release still keeps it at 10.12.
 - `DispatchQueue(label:qos:attributes:target:)` keeps `target:`, but always creates the queue and then sets
   its target with `setTarget(queue:)`, on 10.12 and later too (`0006`): `dispatch_queue_create_with_target$V2`,
   which Recaulk defines but does not declare.

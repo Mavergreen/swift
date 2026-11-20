@@ -446,14 +446,14 @@ _sdk_stub_collect() {
 # RECAULK_IMAGE_LOCAL_SHADOWS names, Recaulk's reviewed list of the system exports a member deliberately
 # shadows inside the image that links it, one "<member> <symbol> <reason>" per line ("#" lines are
 # comments): a (member, global) pair it lists is taken, and hidden like the rest. RECAULK_EXPECTED_SHADOWS,
-# space-separated symbols (none when unset), names the shadows the caller expects the subset to carry;
-# it fails, naming each, when the set taken differs either way. Unset, or naming no file, the list takes
-# no shadow. A file RECAULK_SYSTEM_EXPORTS names (sdk_stub_exports of 10.9's libSystem) lists what the OS
-# defines itself: a member's need for one of those names, unless a <symbol>, binds to libSystem at the
-# link, so it picks no member (Recaulk's socket_close defines close and dup2, which its os_system_version
-# and macports-legacy-support's atcalls call). A <symbol> is always Recaulk's, the OS's or not (fma, fmal,
-# truncl), and every member picked is still held to the rule above. ${NM:-nm} reads the archive (-A),
-# ${AR:-ar} extracts and writes it.
+# space-separated <member>:<symbol> pairs (none when unset), names the shadows the caller expects the
+# subset to carry; it fails, naming each, when the pairs taken differ either way. Unset, the list takes no
+# shadow; naming no file, it is an error. A file RECAULK_SYSTEM_EXPORTS names (sdk_stub_exports of 10.9's
+# libSystem) lists what the OS defines itself: a member's need for one of those names, unless a <symbol>,
+# binds to libSystem at the link, so it picks no member (Recaulk's socket_close defines close and dup2,
+# which its os_system_version and macports-legacy-support's atcalls call). A <symbol> is always Recaulk's,
+# the OS's or not (fma, fmal, truncl), and every member picked is still held to the rule above.
+# ${NM:-nm} reads the archive (-A), ${AR:-ar} extracts and writes it.
 recaulk_subset() {
   _rs_in="$1"; _rs_out="$2"; _rs_unx="$3"; shift 3
   [ $# -gt 0 ] || { echo "recaulk_subset: no symbols named" >&2; return 2; }
@@ -467,7 +467,7 @@ recaulk_subset() {
   #       share one inactive/activated state across images and must not be split from it; a later Recaulk
   #       that adds a shadow to a member taken changes the caller's RECAULK_EXPECTED_SHADOWS, reviewed
   _rs_shf="${RECAULK_IMAGE_LOCAL_SHADOWS:-/dev/null}"
-  [ -f "$_rs_shf" ] || _rs_shf=/dev/null
+  [ -f "$_rs_shf" ] || [ "$_rs_shf" = /dev/null ] || { echo "recaulk_subset: RECAULK_IMAGE_LOCAL_SHADOWS names no file: $_rs_shf" >&2; return 1; }
   _rs_t="$(mktemp -d "${TMPDIR:-/tmp}/recaulk-subset.XXXXXX")" || return 1
   "${NM:-nm}" -A "$_rs_in" > "$_rs_t/nm" || { echo "recaulk_subset: ${NM:-nm} could not read $_rs_in" >&2; rm -rf "$_rs_t"; return 1; }
   # Each line is "<archive>:<member>: [value] <type> <name>": the member is the first word's second-last
@@ -478,7 +478,8 @@ recaulk_subset() {
       while ((getline l < sysf) > 0) sys[l] = 1
       while ((getline l < shf) > 0) {
         if (l ~ /^#/ || l ~ /^[ \t]*$/) continue
-        if (split(l, f, /[ \t]+/) < 3 || f[1] == "") { print "recaulk_subset: " shf ": not <member> <symbol> <reason>: " l > "/dev/stderr"; listbad = 1; exit 1 }
+        t = l; sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+        if (split(t, f, /[ \t]+/) < 3) { print "recaulk_subset: " shf ": not <member> <symbol> <reason>: " l > "/dev/stderr"; listbad = 1; exit 1 }
         shadow[f[1] " " f[2]] = 1
       }
     }
@@ -500,13 +501,13 @@ recaulk_subset() {
         ng = split(glob[m], g, " ")
         for (k = 1; k <= ng; k++) {
           ok = (g[k] ~ /^___recaulk_/); for (i = 1; i <= nw; i++) if (g[k] == w[i]) ok = 1
-          if (!ok && ((m " " g[k]) in shadow)) { ok = 1; carried[g[k]] = m }
+          if (!ok && ((m " " g[k]) in shadow)) { ok = 1; carried[m ":" g[k]] = 1 }
           if (!ok) { print "recaulk_subset: " m " also defines " g[k] ", which is not asked for" > "/dev/stderr"; bad = 1 }
           print g[k] > globals
         }
       }
       ne = split(expect, e, " "); for (i = 1; i <= ne; i++) expected[e[i]] = 1
-      for (n in carried) if (!(n in expected)) { print "recaulk_subset: " carried[n] " carries the shadow " n ", which is not expected" > "/dev/stderr"; bad = 1 }
+      for (n in carried) if (!(n in expected)) { print "recaulk_subset: the subset carries the shadow " n ", which is not expected" > "/dev/stderr"; bad = 1 }
       for (n in expected) if (!(n in carried)) { print "recaulk_subset: expected the shadow " n ", which no member taken carries" > "/dev/stderr"; bad = 1 }
       exit bad
     }' "$_rs_t/nm" || { rm -rf "$_rs_t"; return 1; }

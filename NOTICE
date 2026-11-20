@@ -130,9 +130,10 @@ project authors), with the local patches in ./patches/overlays:
         types are declared Sendable (unchecked), exactly where Apple's newest
         SDK declares them, as swift-5.4 predates the protocol.
   0016  DispatchObject.activate() is declared over dispatch_activate at macOS
-        10.12, as the SDK declares it: Recaulk declares dispatch_activate with no
-        availability and defines it as dispatch_resume, which on 10.9, where
-        every object is active already, could only over-resume.
+        10.12, as the SDK declares it. The pinned Recaulk declares and defines a
+        real dispatch_activate (it starts a queue made inactive, or a source,
+        once) and dispatch_queue_attr_make_initially_inactive, so lowering
+        activate() to 10.9 is now possible; this release does not yet.
 
 libswiftDarwin also contains, statically linked, the definition of openat from
 Recaulk (the release pinned in pins.env; its license is below), which Recaulk
@@ -240,8 +241,7 @@ sources as libswiftCore, under the same license, with the patches 0012-0017
 above), contains, statically linked, the definitions of clock_gettime,
 clock_getres, qos_class_self, voucher_copy, voucher_adopt, os_release,
 dispatch_activate and dispatch_assert_queue from Recaulk (the release pinned in pins.env; its license is
-below), with Recaulk's hidden copies of dispatch_queue_create and dispatch_resume, which
-dispatch_activate's code shares. Recaulk builds clock_gettime and clock_getres from MacPorts'
+below). Recaulk builds clock_gettime and clock_getres from MacPorts'
 legacy-support library (the same commit as above), whose src/time.c keeps its
 own license, its header:
 

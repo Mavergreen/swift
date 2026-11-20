@@ -112,9 +112,10 @@ done
 
 echo "-- each Recaulk symbol build.sh links, and each shadow it carries, is named"
 # By its API's name, as a whole word (fma is not fmax): a \$V2-style suffix, escaped in build.sh, is the
-# SDK's binding, not the API's name, and a ___recaulk_ name is Recaulk's definition of the API it names.
+# SDK's binding, not the API's name, a ___recaulk_ name is Recaulk's definition of the API it names, and a
+# shadow is named <member>:<symbol>.
 for s in $(sed -En 's/^RECAULK_(RUNTIME|DARWIN|CONCURRENCY|DISPATCH)_(SYMBOLS|SHADOWS)="([^"]*)"$/\3/p' "$REPO/build.sh"); do
-  a="${s#___recaulk_}"; a="${a#_}"; a="${a%%[\\\$]*}"
+  a="${s#*:}"; a="${a#___recaulk_}"; a="${a#_}"; a="${a%%[\\\$]*}"
   grep -qw -- "$a" "$N" || fail "NOTICE does not name Recaulk's $a, which build.sh links"
 done
 [ -n "$(sed -n 's/^RECAULK_DARWIN_SYMBOLS="\([^"]*\)"$/\1/p' "$REPO/build.sh")" ] || fail "read no RECAULK_DARWIN_SYMBOLS from build.sh"
