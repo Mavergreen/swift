@@ -92,6 +92,8 @@ local patch in ./patches/overlays:
         are marked to return non-nil, as the 10.9 headers, which carry no
         nullability annotations, do not say so, and DispatchGroup() and
         DispatchSemaphore(value:) would import as failable initializers.
+  0016  Dispatch.apinotes: dispatch_activate is imported as
+        DispatchObject.__activate(), under the overlay's activate() (below).
 
 The Dispatch overlay's sources (its Swift files and Dispatch.mm) and its shims header
 (DispatchOverlayShims.h) are from swift-5.4-RELEASE's stdlib/public/Darwin/Dispatch and
@@ -115,8 +117,8 @@ project authors), with the local patches in ./patches/overlays:
         10.9 header declares DISPATCH_SOURCE_TYPE_DATA_REPLACE.
   0011  DispatchData and DispatchIO unwrap the results and arguments the 10.9
         headers, which carry no nullability annotations, import as optionals.
-  0012  The availability of what uses the dispatch_block functions, dispatch_activate
-        and dispatch_queue_attr_make_with_qos_class is lowered to macOS 10.9, as
+  0012  The availability of what uses the dispatch_block functions and
+        dispatch_queue_attr_make_with_qos_class is lowered to macOS 10.9, as
         Recaulk defines and declares them.
   0013  Below macOS 10.10 a work item or block flagged barrier is submitted with
         dispatch_barrier_async or dispatch_barrier_sync, as Recaulk's
@@ -127,6 +129,10 @@ project authors), with the local patches in ./patches/overlays:
         Sendable) and the time, QoS, queue-attribute and IO and work-item flag
         types are declared Sendable (unchecked), exactly where Apple's newest
         SDK declares them, as swift-5.4 predates the protocol.
+  0016  DispatchObject.activate() is declared over dispatch_activate at macOS
+        10.12, as the SDK declares it: Recaulk declares dispatch_activate with no
+        availability and defines it as dispatch_resume, which on 10.9, where
+        every object is active already, could only over-resume.
 
 libswiftDarwin also contains, statically linked, the definition of openat from
 Recaulk (the release pinned in pins.env; its license is below), which Recaulk

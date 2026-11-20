@@ -77,17 +77,22 @@ done
 #         nowhere, and dispatch_assert_queue is not declared by Recaulk;
 #       0011 the 10.9 headers carry no nullability, so Data and IO unwrap what C never returns NULL for;
 #       0012 availability is lowered to 10.9 where Recaulk defines and declares the functions (the dispatch_block
-#         functions, dispatch_activate, dispatch_queue_attr_make_with_qos_class) and the QoS types that use them;
+#         functions, dispatch_queue_attr_make_with_qos_class) and the QoS types that use them; not activate();
 #       0013 Recaulk's dispatch_block_create drops its flags, so below macOS 10.10 a .barrier work item or block is
 #         submitted with dispatch_barrier_async/_sync (a group's by enter and leave around it) rather than run
-#         alongside the readers; the other flags mean nothing without vouchers and QoS, and are dropped.
+#         alongside the readers (a source's handler is not submitted, so its flag is a no-op on any macOS); the other
+#         flags mean nothing without vouchers and QoS, and are dropped.
 #  0014 apinotes -- Dispatch.apinotes again, after 0002: dispatch_group_create and dispatch_semaphore_create return
 #       non-nil (10.9's headers carry no nullability, so DispatchGroup() and DispatchSemaphore(value:) would be failable
 #       initializers, as no SDK's are).
 #  0015 Sendable -- 5.4 predates it: DispatchObject (so queues, groups, semaphores, sources, IO), DispatchData, DispatchSpecificKey
 #       (where its value is) and the time, QoS and flag value types are @unchecked Sendable, exactly where Apple's newest
 #       SDK has them and nowhere else, so a Swift 6 client can capture a queue or a semaphore in a @Sendable closure.
-OVERLAY_PATCHES="0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013 0014 0015"
+#  0016 activate -- Dispatch.apinotes and Dispatch.swift: Recaulk declares dispatch_activate with no availability and
+#       defines it as dispatch_resume, and every object is active already (0005), so the C function is imported as
+#       DispatchObject.__activate() and the overlay declares activate() over it at macOS 10.12, as the SDK does: a
+#       10.9 program that calls activate() is refused at compile time rather than over-resume and trap.
+OVERLAY_PATCHES="0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016"
 PATCHES_DIR="$HERE/patches/overlays"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $OVERLAY_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED" >&2
@@ -105,6 +110,7 @@ grep -q 'Mavericks: the 10.9 SDK declares -hash a method' "$P/ObjectiveC.swift" 
 AP="$OUT/.patch/apinotes/Dispatch.apinotes"
 [ "$(grep -c '^    NoEscape: true$' "$AP")" = 2 ] && grep -q '^  SwiftWrapper: struct$' "$AP" || { echo "overlay-sources.sh: overlay patch 0002 (Dispatch.apinotes) not applied" >&2; exit 1; }
 [ "$(grep -c '^  NullabilityOfRet: N$' "$AP")" = 2 ] || { echo "overlay-sources.sh: overlay patch 0014 (Dispatch.apinotes) not applied" >&2; exit 1; }
+grep -q "^  SwiftName: 'DispatchObject.__activate(self:)'$" "$AP" || { echo "overlay-sources.sh: overlay patch 0016 (Dispatch.apinotes) not applied" >&2; exit 1; }
 # One marker per patch, in the file it patches; a grep that finds none means a patch applied to nothing it meant.
 dmark() { grep -q "$3" "$PD/$2" || { echo "overlay-sources.sh: overlay patch $1 ($4) not applied" >&2; exit 1; }; }
 dmark 0003 Queue.swift "Mavericks: 10.9's dispatch_get_global_queue" "global(qos:)"
@@ -120,11 +126,13 @@ grep -q 'Mavericks: no DATA_REPLACE' "$PS/DispatchOverlayShims.h" || { echo "ove
 dmark 0011 Data.swift "Mavericks: the 10.9 headers carry no nullability" "nullability"
 dmark 0011 IO.swift "Mavericks: the 10.9 headers carry no nullability" "nullability"
 dmark 0012 Block.swift "Mavericks: Recaulk defines and declares dispatch_block_create" "availability"
-dmark 0012 Source.swift "Mavericks: Recaulk defines and declares dispatch_activate" "availability"
+dmark 0012 Source.swift "Mavericks: Recaulk defines and declares dispatch_block_create" "availability"
 dmark 0013 Queue.swift "Mavericks: 10.9's dispatch_block_create drops DISPATCH_BLOCK_BARRIER" "barrier routing"
 dmark 0013 Block.swift "Mavericks: 10.9's dispatch_block_create drops its flags" "barrier routing"
 dmark 0013 Dispatch.swift "Mavericks: a barrier-flagged block is submitted as a barrier below 10.10" "barrier routing"
+dmark 0013 Source.swift "Mavericks: a .barrier flag is not routed here" "barrier routing"
 dmark 0015 Dispatch.swift "Mavericks: 5.4 predates Sendable" "Sendable"
+dmark 0016 Dispatch.swift "Mavericks: activate() keeps 10.12's availability" "activate"
 cp "$P/ObjectiveC.swift" "$OUT/ObjectiveC/"
 for f in $DFILES; do cp "$PD/$f" "$OUT/Dispatch/"; done
 cp "$PS/DispatchOverlayShims.h" "$OUT/Dispatch/shims/"

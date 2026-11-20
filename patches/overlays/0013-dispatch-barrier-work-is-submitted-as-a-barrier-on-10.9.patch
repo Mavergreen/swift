@@ -163,3 +163,13 @@
  		_swift_dispatch_after(wallDeadline.rawValue, self, execute._block)
  	}
  
+--- stdlib/public/Darwin/Dispatch/Source.swift
++++ stdlib/public/Darwin/Dispatch/Source.swift
+@@ -16,6 +16,7 @@
+ extension DispatchSourceProtocol {
+ 	public typealias DispatchSourceHandler = @convention(block) () -> Void
+ 
++	// Mavericks: a .barrier flag is not routed here as DispatchQueue routes it below 10.10: from 10.10 on, DISPATCH_BLOCK_BARRIER acts only on a block submitted to a concurrent queue (dispatch/block.h), and a source invokes its handlers itself, so the flag is a no-op on a source's handler there too
+ 	public func setEventHandler(qos: DispatchQoS = .unspecified, flags: DispatchWorkItemFlags = [], handler: DispatchSourceHandler?) {
+ 		// Mavericks: Recaulk defines and declares dispatch_block_create, _create_with_qos_class, _cancel, _testcancel and dispatch_queue_attr_make_with_qos_class, so what uses them is 10.9
+ 		if #available(macOS 10.9, iOS 8.0, *),

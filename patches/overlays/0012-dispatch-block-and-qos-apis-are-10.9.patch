@@ -272,7 +272,7 @@
                     let h = handler,
                     qos != .unspecified || !flags.isEmpty {
  			let item = DispatchWorkItem(qos: qos, flags: flags, block: h)
-@@ -59,12 +60,13 @@
+@@ -59,7 +60,7 @@
  		}
  	}
  
@@ -280,11 +280,4 @@
 +	@available(macOS 10.9, iOS 8.0, *)
  	public func setRegistrationHandler(handler: DispatchWorkItem) {
  		_swift_dispatch_source_set_registration_handler(self as! DispatchSource, handler._block)
- 	}
- 
--	@available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
-+	// Mavericks: Recaulk defines and declares dispatch_activate
-+	@available(macOS 10.9, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
- 	public func activate() {
- 		(self as! DispatchSource).activate()
  	}

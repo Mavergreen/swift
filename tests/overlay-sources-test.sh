@@ -6,7 +6,7 @@
 #   Darwin/Dispatch, patched for 10.9 by patches/overlays 0003 onward -- each patch's marker present, the
 #   QoS-to-priority mapping under an #available(macOS 10.10, *) else-branch, and nothing the 10.9 SDK and
 #   Recaulk declare nowhere (autorelease frequency, initiallyInactive, block wait/notify, DATA_REPLACE,
-#   dispatchPrecondition, DispatchQueue.qos) left in a source -- and its shims, DispatchOverlayShims.h under
+#   dispatchPrecondition, DispatchQueue.qos) left in a source, and activate() at macOS 10.12 -- and its shims, DispatchOverlayShims.h under
 #   its own module map. Skips, saying so, when the trees are absent.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -55,10 +55,11 @@ mark 0011 Data.swift "Mavericks: the 10.9 headers carry no nullability"
 mark 0011 IO.swift "Mavericks: the 10.9 headers carry no nullability"
 mark 0012 Block.swift "Mavericks: Recaulk defines and declares dispatch_block_create"
 mark 0012 Queue.swift "Mavericks: Recaulk defines and declares dispatch_block_create"
-mark 0012 Source.swift "Mavericks: Recaulk defines and declares dispatch_activate"
+mark 0012 Source.swift "Mavericks: Recaulk defines and declares dispatch_block_create"
 mark 0013 Queue.swift "Mavericks: 10.9's dispatch_block_create drops DISPATCH_BLOCK_BARRIER"
 mark 0013 Block.swift "Mavericks: 10.9's dispatch_block_create drops its flags"
 mark 0013 Dispatch.swift "Mavericks: a barrier-flagged block is submitted as a barrier below 10.10"
+mark 0013 Source.swift "Mavericks: a .barrier flag is not routed here"
 
 echo "-- patch 0014: DispatchGroup() and DispatchSemaphore(value:) are not failable (10.9's headers carry no nullability)"
 A="$T/out/apinotes/Dispatch.apinotes"; [ -f "$A" ] || fail "no $A"
@@ -67,6 +68,16 @@ for f in dispatch_group_create dispatch_semaphore_create; do
 done
 mark 0015 Dispatch.swift "Mavericks: 5.4 predates Sendable"
 grep -q '^extension DispatchObject : @unchecked Sendable {}$' "$D/Dispatch.swift" || fail "patch 0015: DispatchObject is not Sendable"
+
+echo "-- patch 0016: activate() is macOS 10.12, as the SDK's, both of them (Recaulk's dispatch_activate is dispatch_resume)"
+mark 0016 Dispatch.swift "Mavericks: activate() keeps 10.12's availability"
+grep -A1 '^- Name: dispatch_activate$' "$A" | grep -q "^  SwiftName: 'DispatchObject.__activate(self:)'$" \
+  || fail "patch 0016 not applied: Dispatch.apinotes still imports dispatch_activate as activate()"
+for f in Dispatch.swift Source.swift; do
+  grep -B1 '^	public func activate() {$' "$D/$f" | grep -q '^	@available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, \*)$' \
+    || fail "$f's activate() is not @available(macOS 10.12, ...): a 10.9 program could call it and over-resume"
+done
+[ "$(grep -c 'public func activate()' "$D"/*.swift | awk -F: '{s+=$2} END{print s}')" = 2 ] || fail "an activate() other than DispatchObject's and DispatchSourceProtocol's"
 
 echo "-- below macOS 10.10, every path that submits a barrier-flagged block routes it through a barrier function"
 # sync(execute:) and the three async forms (execute:, group:execute:, group:qos:flags:), asyncAfter (4), notify (2)

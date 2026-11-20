@@ -389,9 +389,10 @@ build_overlay ObjectiveC swiftObjectiveC --I "$OVS/ObjectiveC/shims" -- "$OVS/Ob
 #       declares and overlay patch 0012 makes 10.9 API: dispatch_block_create and
 #       dispatch_block_create_with_qos_class for every DispatchWorkItem (Block.swift, through the shims),
 #       dispatch_block_cancel and dispatch_block_testcancel for its cancel() and isCancelled,
-#       dispatch_queue_attr_make_with_qos_class for a queue given a QoS (Queue.swift) and dispatch_activate for
-#       activate() (Source.swift). Recaulk's, linked and hidden, as Darwin takes openat: one copy in the
-#       overlay, so a block the overlay creates is the one it cancels.
+#       dispatch_queue_attr_make_with_qos_class for a queue given a QoS (Queue.swift), and dispatch_activate for
+#       activate(), which overlay patch 0016 keeps at macOS 10.12 (no 10.9 program calls it; 10.9's libSystem
+#       lacks it, so the overlay still takes Recaulk's). Recaulk's, linked and hidden, as Darwin takes openat:
+#       one copy in the overlay, so a block the overlay creates is the one it cancels.
 RECAULK_DISPATCH_SYMBOLS="_dispatch_block_create _dispatch_block_create_with_qos_class _dispatch_block_cancel _dispatch_block_testcancel _dispatch_activate _dispatch_queue_attr_make_with_qos_class"
 RECAULK_DISPATCH_A="$ROOT/recaulk-dispatch.a"; RECAULK_DISPATCH_UNX="$ROOT/recaulk-dispatch.unexported"
 # shellcheck disable=SC2086  # space-free symbol names

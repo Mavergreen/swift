@@ -1,0 +1,34 @@
+--- apinotes/Dispatch.apinotes
++++ apinotes/Dispatch.apinotes
+@@ -170,7 +170,7 @@
+ - Name: dispatch_set_target_queue
+   SwiftName: 'DispatchObject.setTarget(self:queue:)'
+ - Name: dispatch_activate
+-  SwiftName: 'DispatchObject.activate(self:)'
++  SwiftName: 'DispatchObject.__activate(self:)'
+ - Name: dispatch_suspend
+   SwiftName: 'DispatchObject.suspend(self:)'
+ - Name: dispatch_resume
+--- stdlib/public/Darwin/Dispatch/Dispatch.swift
++++ stdlib/public/Darwin/Dispatch/Dispatch.swift
+@@ -17,6 +17,20 @@
+ 
+ // Mavericks: no DispatchPredicate or dispatchPrecondition -- dispatch_assert_queue_barrier and dispatch_assert_queue_not are in no 10.9 header and no Recaulk one, and dispatch_assert_queue is not yet declared by Recaulk's
+ 
++/// dispatch_activate
++
++// Mavericks: activate() keeps 10.12's availability, so a program for an earlier macOS that calls it is refused at
++// compile time, as with the SDK's. Recaulk declares dispatch_activate with no availability and defines it as
++// dispatch_resume, and with no initially-inactive attribute every queue is active already, so below 10.12 it could
++// only over-resume and trap. The apinotes name the C function DispatchObject.__activate(), and this is the
++// activate() a client sees.
++extension DispatchObject {
++	@available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
++	public func activate() {
++		__activate()
++	}
++}
++
+ /// qos_class_t
+ 
+ public struct DispatchQoS : Equatable {
