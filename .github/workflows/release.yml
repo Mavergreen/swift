@@ -713,7 +713,10 @@ jobs:
             /usr/local/bin/mavergreen check
             /usr/local/mavergreen/bin/swiftc -version
             # spec: INGREDIENTS.md "Every Swift bump merges on green, the real-10.9 gate included" -- FileCheck (clang22's) checks the gate's output, so clang22 and Longboat go in before the self-test is built.
-            install longboat/longboat-[0-9]*.pkg clang22/mavericks-clang-22-native-*.pkg
+            install longboat/longboat-[0-9]*.pkg
+            # platform: mavericks-clang-22's preinstall refuses without Longboat's 10.9 SDK (dev.mavergreen.longboat.sdk109) installed.
+            sudo /usr/local/mavergreen/bin/longboat sdk install 10.9
+            install clang22/mavericks-clang-22-native-*.pkg
             # Upstream's tests too (dist/selftest-support, build-cross's). Their support modules are binary
             # .swiftmodule files, which only the compiler that wrote them reads: build-cross's cross toolchain,
             # this release's Swift, as the native swiftc installed above is.
