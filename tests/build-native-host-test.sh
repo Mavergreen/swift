@@ -117,6 +117,9 @@ done
 # Recaulk: recaulk_subset reads the archive with clang22's llvm-nm -A and writes the subset with its llvm-ar.
 # fwd-97.o calls close, which a socket_close member shadows beside dup2, as in Recaulk 20261118.1: the
 # 10.9 SDK's libSystem stub (llvm-nm -gU, below) exports close, so the subset leaves socket_close out.
+# spec: Recaulk's share/recaulk/image-local-shadows.txt -- since 20261120.3 dispatch_activate's body is in
+#       dispatch_inactive.o beside hidden copies of dispatch_queue_create and dispatch_resume, which that list
+#       (the fake pkg's, below) names.
 cat > "$C22/bin/llvm-nm" <<'F'
 #!/bin/sh
 case "$*" in *libSystem.B.dylib) printf '%s\n' "0000000000001000 T _close" "0000000000001010 T _dup2" "0000000000001020 T _fma"; exit 0 ;; esac
@@ -134,7 +137,14 @@ printf '%s\n' "$2:fwd-97.o: 0000000000000000 T _os_system_version_get_current_ve
   "$2:fwd-41.o: 0000000000000000 T _clock_getres" "$2:fwd-41.o:                  U ___recaulk_resolve" \
   "$2:recaulk-qos_class.o: 0000000000000000 T _qos_class_self" \
   "$2:recaulk-dispatch_modern.o: 0000000000000000 T _voucher_copy" "$2:recaulk-dispatch_modern.o: 0000000000000010 T _voucher_adopt" \
-  "$2:recaulk-dispatch_modern.o: 0000000000000020 T _os_release" "$2:recaulk-dispatch_modern.o: 0000000000000030 T _dispatch_activate" \
+  "$2:recaulk-dispatch_modern.o: 0000000000000020 T _os_release" \
+  "$2:fwd-46.o: 0000000000000000 T _dispatch_activate" "$2:fwd-46.o:                  U ___recaulk_impl_dispatch_activate" \
+  "$2:fwd-46.o:                  U ___recaulk_resolve" \
+  "$2:recaulk-dispatch_inactive.o: 0000000000000000 T ___recaulk_impl_dispatch_activate" \
+  "$2:recaulk-dispatch_inactive.o: 0000000000000010 T ___recaulk_dispatch_queue_create" \
+  "$2:recaulk-dispatch_inactive.o: 0000000000000020 T _dispatch_queue_create" \
+  "$2:recaulk-dispatch_inactive.o: 0000000000000030 T ___recaulk_dispatch_resume" \
+  "$2:recaulk-dispatch_inactive.o: 0000000000000040 T _dispatch_resume" \
   "$2:recaulk-dispatch_modern.o: 0000000000000040 T ___recaulk_copy_helper_block_8_32b" \
   "$2:fwd-47.o: 0000000000000000 T _dispatch_assert_queue\$V2" "$2:fwd-47.o:                  U ___recaulk_resolve" \
   "$2:recaulk-dispatch_assert_queue.o: 0000000000000000 T ___recaulk_impl_dispatch_assert_queue\$V2"
@@ -151,7 +161,11 @@ cat > "$T/shipyard/fetch_product_pkg.sh" <<'F'
 #!/bin/sh
 for d in "$@"; do :; done
 case " $* " in
-  *" recaulk "*) mkdir -p "$d/lib" "$d/share/recaulk" && : > "$d/lib/librecaulk.a" && : > "$d/share/recaulk/notices.tsv" ;;
+  *" recaulk "*) mkdir -p "$d/lib" "$d/share/recaulk" && : > "$d/lib/librecaulk.a" && : > "$d/share/recaulk/notices.tsv"
+                 [ -n "${FAKE_RECAULK_NO_SHADOWS:-}" ] \
+                   || printf '%s\n' '# <member> <symbol> <reason>' 'recaulk-libm_fma.o _fma rounds once' \
+                        'recaulk-socket_close.o _dup2 does not hang' 'recaulk-dispatch_inactive.o _dispatch_queue_create starts inactive' \
+                        'recaulk-dispatch_inactive.o _dispatch_resume counts as the activation' > "$d/share/recaulk/image-local-shadows.txt" ;;
   *) mkdir -p "$d/lib" && : > "$d/lib/libc++.1.dylib" && : > "$d/lib/libc++abi.1.dylib" ;;
 esac
 F
@@ -208,6 +222,11 @@ build_native() {  # build.sh's native mode past step 1, everything faked; ninja 
       unset SWIFT_WORK SWIFT_BUILTINS NM
       sh "$REPO/build.sh" ) > "$T/out" 2>&1; then fail "build.sh got past a build that failed: $(cat "$T/out")"; fi
 }
+echo "-- a Recaulk pkg without share/recaulk/image-local-shadows.txt is refused at step 1"
+FAKE_RECAULK_NO_SHADOWS=1; export FAKE_RECAULK_NO_SHADOWS
+build_native
+grep -q 'share/recaulk/image-local-shadows.txt -- payload layout changed?' "$T/out" || fail "took a Recaulk with no image-local-shadows.txt: $(cat "$T/out")"
+unset FAKE_RECAULK_NO_SHADOWS; rm -rf "$T/recaulk-cache"
 build_native
 grep -qxF "fetch_pinned_source https://github.com/swiftlang/swift.git $SWIFT_SHA $SWIFT_TARBALL_SHA256 swift" "$T/log" \
   || fail "did not fetch the swift tarball by its pin: $(cat "$T/out")"
@@ -227,14 +246,15 @@ grep -q -e "^  -DCMAKE_SHARED_LINKER_FLAGS=.* -nostdlib++ $LCX -Wl,-syslibroot,$
 [ "$(tr '\n' ' ' < "$R/swift/work/recaulk-runtime.unexported")" = "___recaulk_fma ___recaulk_libm_exact_sum ___recaulk_resolve ___recaulk_truncl _fma _fmal _objc_readClassPair _os_system_version_get_current_version _truncl " ] \
   || fail "Recaulk's subset: $(cat "$R/swift/work/recaulk-runtime.unexported")"
 # libswift_Concurrency: built, and its own subset reaches its link alone, through patch 0013's hook; the
-# dispatch member's block helper (___recaulk_-prefixed since Recaulk 20261108.3) is hidden with the rest.
+# dispatch member's block helper (___recaulk_-prefixed since Recaulk 20261108.3) is hidden with the rest, and
+# so are the dispatch_queue_create and dispatch_resume shadows dispatch_activate's member carries.
 grep -qxF -e "  -DSWIFT_ENABLE_EXPERIMENTAL_CONCURRENCY=ON" "$T/log" || fail "the stdlib configure does not turn Concurrency on: $(cat "$T/log")"
 # Strict availability: StdlibDeploymentTarget N keeps SwiftStdlib N's OS versions in the shipped modules,
 # not the deployment target's (AddSwiftStdlib.cmake), so a client from 10.14.4 gets upstream's diagnostics.
 grep -qxF -e "  -DSWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY=ON" "$T/log" || fail "the stdlib configure does not turn strict availability on: $(cat "$T/log")"
 grep -qxF -e "  -DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$R/swift/work/recaulk-concurrency.a -Wl,-unexported_symbols_list,$R/swift/work/recaulk-concurrency.unexported" "$T/log" \
   || fail "Concurrency's link does not take its Recaulk subset, hidden: $(grep MAVERGREEN_CONCURRENCY "$T/log")"
-[ "$(tr '\n' ' ' < "$R/swift/work/recaulk-concurrency.unexported")" = "___recaulk_copy_helper_block_8_32b ___recaulk_resolve _clock_getres _clock_gettime _dispatch_activate _dispatch_assert_queue\$V2 _os_release _qos_class_self _voucher_adopt _voucher_copy " ] \
+[ "$(tr '\n' ' ' < "$R/swift/work/recaulk-concurrency.unexported")" = "___recaulk_copy_helper_block_8_32b ___recaulk_dispatch_queue_create ___recaulk_dispatch_resume ___recaulk_impl_dispatch_activate ___recaulk_resolve _clock_getres _clock_gettime _dispatch_activate _dispatch_assert_queue\$V2 _dispatch_queue_create _dispatch_resume _os_release _qos_class_self _voucher_adopt _voucher_copy " ] \
   || fail "Recaulk's subset for Concurrency: $(cat "$R/swift/work/recaulk-concurrency.unexported")"
 # Test support only runs on this runtime: step 5b's test support (below) takes --runtime-floor (every released
 # SwiftStdlib version is 10.9 there), and the shipped overlays' build_overlay never does.

@@ -91,7 +91,7 @@ this", so `os_signpost_enabled` would turn its tracing on and then call the `os_
 `os_signpost_id_generate` no 10.9 has, and `objc_readClassPair` and `_objc_realizeClassFromSwift` would
 flip the realization paths upstream and patch 0005 choose by. `lib.sh`'s `recaulk_subset` picks, by symbol,
 the members that define each name in `RECAULK_RUNTIME_SYMBOLS` and what they need from the archive, and
-refuses a member that defines any other API. A name those members need that OS X 10.9's libSystem defines (the 10.9
+refuses a member that defines any other API, unless Recaulk lists it as an image-local shadow (below). A name those members need that OS X 10.9's libSystem defines (the 10.9
 SDK's stubs say which) binds to libSystem unless a `RECAULK_*_SYMBOLS` names it: since 20261118.1
 Recaulk's `socket_close` member shadows `close` and `dup2`, which its `os_system_version` member and
 legacy-support's `atcalls.c` call, and no dylib here takes those shadows. The link hides every global they define
@@ -107,9 +107,30 @@ pick into libswiftDarwin and hides every global it defines, so the dylib exports
 define and nothing of Recaulk's. Its members are Recaulk's forwarder and resolver and two files of
 macports-legacy-support, `atcalls.c` (under the APSL 2.0) and `pthread_chdir.c` (MIT). Every global they
 define is `openat` or `___recaulk_`-prefixed: since 20261108.3 Recaulk also prefixes the incidental globals
-it once left bare (clang's block helpers in its dispatch member, legacy-support's `best_fchdir`), so
-`recaulk_subset` has no list of exceptions and a stray global is a request to Recaulk. Step 7 checks
-libswiftDarwin as it does libswiftCore: `openat` defined in it, exported by nothing, and no longer an import.
+it once left bare (clang's block helpers in its dispatch member, legacy-support's `best_fchdir`), so a stray
+global is a request to Recaulk. Step 7 checks libswiftDarwin as it does libswiftCore: `openat` defined in it,
+exported by nothing, and no longer an import.
+
+`recaulk_subset` has one list of exceptions, and it is Recaulk's: `share/recaulk/image-local-shadows.txt`
+(since 20261120.3; `fetch-recaulk.sh` refuses a Recaulk without it, and `build.sh` hands it over as
+`RECAULK_IMAGE_LOCAL_SHADOWS`). Each line, `<member> <symbol> <reason>`, is a name 10.9's libSystem already
+exports that the member deliberately defines again, hidden and weak, so that it binds only inside the image
+that links the member. A global a picked member defines is taken when it is a named API, `___recaulk_`-prefixed,
+or a (member, symbol) pair the list names; anything else is still refused, naming the member and the symbol.
+Each subset also names the shadows it expects to carry (`RECAULK_CONCURRENCY_SHADOWS`,
+`RECAULK_DISPATCH_SHADOWS`; none for libswiftCore and libswiftDarwin), and the build fails when the set taken
+differs in either direction, so a later Recaulk cannot add one to a member we link unseen. The shadows go into
+the unexported list with the rest, and step 7 holds each to its image: exported by nothing, and never imported
+(the link dead-strips a copy the image does not call). Which libraries carry which:
+- libswift_Concurrency: `dispatch_queue_create` and `dispatch_resume`, from the member that holds
+  `dispatch_activate`'s 10.9 body (`recaulk-dispatch_inactive.o`). Recaulk keeps that member's
+  inactive/activated state where every image's copy finds it (associated objects under process-unique
+  selectors, guarded by `objc_sync`), so `dispatch_activate` must not be split from the two. On Apple platforms
+  libswift_Concurrency calls neither itself, so its link dead-strips both copies and they never bind there.
+- libswiftDispatch: those two, and `dispatch_get_global_queue` (`recaulk-dispatch_global_qos.o`), which gives a
+  QoS class a global queue where 10.9's answers NULL. Recaulk's `dispatch.h`, which the overlay compiles against,
+  renames the three calls to `___recaulk_dispatch_get_global_queue`, `___recaulk_dispatch_queue_create` and
+  `___recaulk_dispatch_resume`, which `RECAULK_DISPATCH_SYMBOLS` names, so the overlay takes those members.
 
 `atcalls.c` is Apple's code under the APSL 2.0, whose section 2.3 asks for the "source is available"
 notice "in the code itself as well as in related documentation". Since 20261108.3 Recaulk compiles that
@@ -136,29 +157,28 @@ gives Concurrency's link a hook, `MAVERGREEN_CONCURRENCY_LINK_FLAGS`, so this su
 list reach that dylib alone. The members include legacy-support's `src/time.c` (`clock_gettime`,
 `clock_getres`), whose own notice is in `NOTICE`; it has no notices-list row (it is not APSL), so
 `RECAULK_NOTICES_REVIEWED` names `mp-time.o` and step 7's notice check runs over libswift_Concurrency too.
-Every global the subset defines is a named API or `___recaulk_`-prefixed, the dispatch member's block
-helpers among them. Step 7 checks libswift_Concurrency
+Every global the subset defines is a named API, `___recaulk_`-prefixed (the dispatch member's block helpers
+among them), or one of its two image-local shadows (above). Step 7 checks libswift_Concurrency
 as it does libswiftCore, and holds its tracing's weak imports (`os_signpost_*`, `_os_log_create`) to the OS's.
 
 libswiftDispatch takes a fourth, `RECAULK_DISPATCH_SYMBOLS`: `dispatch_block_create` and
 `dispatch_block_create_with_qos_class` (every `DispatchWorkItem`), `dispatch_block_cancel` and
 `dispatch_block_testcancel` (its `cancel()` and `isCancelled`), `dispatch_queue_attr_make_with_qos_class` (a
 queue made with a QoS), the APIs macOS 10.10 added that overlay patch 0012 makes the overlay's 10.9 API, and
-`dispatch_activate`, which the overlay's `activate()` calls, at macOS 10.12 (patch 0016, below). The overlay calls
-them, so on 10.9 they would be imports that fail to load. `build.sh` links them into libswiftDispatch alone and hides every global they define, as for libswiftDarwin,
+`dispatch_activate`, which the overlay's `activate()` calls, at macOS 10.12 (patch 0016, below); and the
+`___recaulk_` definitions of `dispatch_get_global_queue`, `dispatch_queue_create` and `dispatch_resume`, which
+Recaulk's `dispatch.h` binds the overlay's calls to (above). The overlay calls them, so on 10.9 they would be
+imports that fail to load. `build.sh` links them into libswiftDispatch alone and hides every global they define, as for libswiftDarwin,
 and step 7 checks libswiftDispatch as it does the others. The members are Recaulk's own code; its block member
 keeps the cancel flag in a `CFData`, so libswiftDispatch links CoreFoundation, as libswift_Concurrency does. The overlay is
 compiled against the declarations every program's `swiftc` shows the importer (`recaulk-importer`, built from the
 same Recaulk by `lib.sh`'s `recaulk_importer_layout`) and the patched `Dispatch.apinotes`, so it declares what a
 program sees.
 
-A known risk: Recaulk keeps a block's cancel flag per copy of Recaulk. Each image that links Recaulk has its own
-copy, and so its own key for the flag, so a block created by one copy and cancelled by another stays
-uncancelled. The overlay creates and cancels a `DispatchWorkItem`'s block with its own copy, so Swift that
-uses only `DispatchWorkItem` is safe. A raw C block that crosses is not: one the program's own copy of Recaulk
-created (the toolchains link one into every program, below) and the overlay's copy cancels, or the reverse,
-runs anyway. Until Recaulk shares the key between copies, cancel a block through the same image that created
-it.
+Each image that links Recaulk has its own copy of it, and since 20261120 those copies share a block's cancel
+state, as they share a queue's activation: Recaulk keys both by process-unique selectors, so a raw C block the
+program's own copy of Recaulk created (the toolchains link one into every program, below) and the overlay's copy
+cancels, or the reverse, is cancelled.
 
 What a program loses of Swift 5.4's Dispatch overlay, on any macOS, because neither the 10.9 SDK nor Recaulk
 declares the C function the API calls; each comes back when Recaulk declares that function, and defines it

@@ -110,11 +110,11 @@ for m in $REVA; do
   grep -q "$f" "$N" || fail "NOTICE does not name $f, the source of $m, which build.sh vouches for"
 done
 
-echo "-- each Recaulk symbol build.sh links is named"
+echo "-- each Recaulk symbol build.sh links, and each shadow it carries, is named"
 # By its API's name, as a whole word (fma is not fmax): a \$V2-style suffix, escaped in build.sh, is the
-# SDK's binding, not the API's name.
-for s in $(sed -En 's/^RECAULK_(RUNTIME|DARWIN|CONCURRENCY|DISPATCH)_SYMBOLS="([^"]*)"$/\2/p' "$REPO/build.sh"); do
-  a="${s#_}"; a="${a%%[\\\$]*}"
+# SDK's binding, not the API's name, and a ___recaulk_ name is Recaulk's definition of the API it names.
+for s in $(sed -En 's/^RECAULK_(RUNTIME|DARWIN|CONCURRENCY|DISPATCH)_(SYMBOLS|SHADOWS)="([^"]*)"$/\3/p' "$REPO/build.sh"); do
+  a="${s#___recaulk_}"; a="${a#_}"; a="${a%%[\\\$]*}"
   grep -qw -- "$a" "$N" || fail "NOTICE does not name Recaulk's $a, which build.sh links"
 done
 [ -n "$(sed -n 's/^RECAULK_DARWIN_SYMBOLS="\([^"]*\)"$/\1/p' "$REPO/build.sh")" ] || fail "read no RECAULK_DARWIN_SYMBOLS from build.sh"

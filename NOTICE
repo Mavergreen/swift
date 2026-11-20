@@ -240,7 +240,8 @@ sources as libswiftCore, under the same license, with the patches 0012-0017
 above), contains, statically linked, the definitions of clock_gettime,
 clock_getres, qos_class_self, voucher_copy, voucher_adopt, os_release,
 dispatch_activate and dispatch_assert_queue from Recaulk (the release pinned in pins.env; its license is
-below). Recaulk builds clock_gettime and clock_getres from MacPorts'
+below), with Recaulk's hidden copies of dispatch_queue_create and dispatch_resume, which
+dispatch_activate's code shares. Recaulk builds clock_gettime and clock_getres from MacPorts'
 legacy-support library (the same commit as above), whose src/time.c keeps its
 own license, its header:
 
@@ -261,8 +262,9 @@ own license, its header:
 
 libswiftDispatch, the Dispatch overlay, contains, statically linked, the definitions
 of dispatch_block_create, dispatch_block_create_with_qos_class, dispatch_block_cancel,
-dispatch_block_testcancel, dispatch_activate and dispatch_queue_attr_make_with_qos_class
-from Recaulk (the release pinned in pins.env; its license is below), Recaulk's own code.
+dispatch_block_testcancel, dispatch_activate, dispatch_queue_attr_make_with_qos_class,
+dispatch_get_global_queue, dispatch_queue_create and dispatch_resume from Recaulk (the
+release pinned in pins.env; its license is below), Recaulk's own code.
 
 libswiftCore also contains, statically linked, the definitions of
 os_system_version_get_current_version, objc_readClassPair, fma, fmal and truncl from Recaulk (librecaulk.a, the release

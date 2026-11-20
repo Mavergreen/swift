@@ -148,9 +148,16 @@ RECAULK_SYSTEM_EXPORTS="$ROOT/libsystem-10.9.exports"; rm -f "$RECAULK_SYSTEM_EX
   && [ -s "$RECAULK_SYSTEM_EXPORTS" ] || { echo "FAIL: read no exports from $SDK109/usr/lib/libSystem.B.dylib"; exit 1; }
 export RECAULK_SYSTEM_EXPORTS
 RECAULK_PREFIX="$(sh "$HERE/fetch-recaulk.sh")" || { echo "FAIL: could not fetch Recaulk $RECAULK_VERSION"; exit 1; }
+# spec: INGREDIENTS.md "Recaulk" -- a member may define, hidden, its own copy of a name 10.9's libSystem exports,
+#       when Recaulk's share/recaulk/image-local-shadows.txt lists the pair; each subset names the shadows it
+#       expects to carry (RECAULK_*_SHADOWS), and recaulk_subset fails when it takes others, or fewer.
+RECAULK_IMAGE_LOCAL_SHADOWS="$RECAULK_PREFIX/share/recaulk/image-local-shadows.txt"
+[ -f "$RECAULK_IMAGE_LOCAL_SHADOWS" ] || { echo "FAIL: Recaulk $RECAULK_VERSION has no $RECAULK_IMAGE_LOCAL_SHADOWS"; exit 1; }
+export RECAULK_IMAGE_LOCAL_SHADOWS
 RECAULK_A="$ROOT/recaulk-runtime.a"; RECAULK_UNX="$ROOT/recaulk-runtime.unexported"
 # shellcheck disable=SC2086  # space-free symbol names
-( NM="$X/llvm-nm"; AR="$X/llvm-ar"; recaulk_subset "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_A" "$RECAULK_UNX" $RECAULK_RUNTIME_SYMBOLS ) \
+( NM="$X/llvm-nm"; AR="$X/llvm-ar"; RECAULK_EXPECTED_SHADOWS=""
+  recaulk_subset "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_A" "$RECAULK_UNX" $RECAULK_RUNTIME_SYMBOLS ) \
   || { echo "FAIL: could not take $RECAULK_RUNTIME_SYMBOLS from $RECAULK_PREFIX/lib/librecaulk.a"; exit 1; }
 echo "    Recaulk $RECAULK_VERSION: $RECAULK_RUNTIME_SYMBOLS, $(grep -c . "$RECAULK_UNX") globals, all unexported"
 # spec: INGREDIENTS.md "Recaulk" -- libswift_Concurrency calls, unguarded or strongly, these APIs 10.9
@@ -161,13 +168,17 @@ echo "    Recaulk $RECAULK_VERSION: $RECAULK_RUNTIME_SYMBOLS, $(grep -c . "$RECA
 #       and dispatch_assert_queue$V2, weak and called unguarded (ExecutorBridge.cpp:80), when
 #       MainActor.assumeIsolated, preconditionIsolated or assertIsolated ask the main executor off its own
 #       job. Its own subset, linked into it alone through patch 0013's hook and hidden as Core's is.
+#       dispatch_activate's body brings its member's hidden dispatch_queue_create and dispatch_resume, which
+#       track an inactive queue's or a source's activation in state every image's copy shares; on Apple
+#       platforms libswift_Concurrency calls neither, so its link dead-strips both.
 RECAULK_CONCURRENCY_SYMBOLS="_clock_gettime _clock_getres _qos_class_self _voucher_copy _voucher_adopt _os_release _dispatch_activate _dispatch_assert_queue\$V2"
+RECAULK_CONCURRENCY_SHADOWS="_dispatch_queue_create _dispatch_resume"
 RECAULK_CONC_A="$ROOT/recaulk-concurrency.a"; RECAULK_CONC_UNX="$ROOT/recaulk-concurrency.unexported"
 # shellcheck disable=SC2086  # space-free symbol names
-( NM="$X/llvm-nm"; AR="$X/llvm-ar"
+( NM="$X/llvm-nm"; AR="$X/llvm-ar"; RECAULK_EXPECTED_SHADOWS="$RECAULK_CONCURRENCY_SHADOWS"
   recaulk_subset "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_CONC_A" "$RECAULK_CONC_UNX" $RECAULK_CONCURRENCY_SYMBOLS ) \
   || { echo "FAIL: could not take $RECAULK_CONCURRENCY_SYMBOLS from $RECAULK_PREFIX/lib/librecaulk.a"; exit 1; }
-echo "    Recaulk $RECAULK_VERSION for Concurrency: $RECAULK_CONCURRENCY_SYMBOLS, $(grep -c . "$RECAULK_CONC_UNX") globals, all unexported"
+echo "    Recaulk $RECAULK_VERSION for Concurrency: $RECAULK_CONCURRENCY_SYMBOLS, shadowing $RECAULK_CONCURRENCY_SHADOWS, $(grep -c . "$RECAULK_CONC_UNX") globals, all unexported"
 clang_resource_shim "$CLANG_INC" "$BUILTINS" "$ROOT/clang-resource" || { echo "FAIL: could not lay out $ROOT/clang-resource"; exit 1; }
 echo "    host compiler $TC; SDK $SDK_RUNTIME; linker $LLD; builtins $BUILTINS"
 
@@ -354,7 +365,7 @@ SDK_OVERLAYS="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$SHIPYARD/fetch_sdk.sh")" || {
 RECAULK_DARWIN_SYMBOLS="_openat"
 RECAULK_DARWIN_A="$ROOT/recaulk-darwin.a"; RECAULK_DARWIN_UNX="$ROOT/recaulk-darwin.unexported"
 # shellcheck disable=SC2086  # space-free symbol names
-( NM="$X/llvm-nm"; AR="$X/llvm-ar"
+( NM="$X/llvm-nm"; AR="$X/llvm-ar"; RECAULK_EXPECTED_SHADOWS=""
   recaulk_subset "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_DARWIN_A" "$RECAULK_DARWIN_UNX" $RECAULK_DARWIN_SYMBOLS ) \
   || { echo "FAIL: could not take $RECAULK_DARWIN_SYMBOLS from $RECAULK_PREFIX/lib/librecaulk.a"; exit 1; }
 echo "    Recaulk $RECAULK_VERSION for Darwin: $RECAULK_DARWIN_SYMBOLS, $(grep -c . "$RECAULK_DARWIN_UNX") globals, all unexported"
@@ -392,14 +403,19 @@ build_overlay ObjectiveC swiftObjectiveC --I "$OVS/ObjectiveC/shims" -- "$OVS/Ob
 #       dispatch_queue_attr_make_with_qos_class for a queue given a QoS (Queue.swift), and dispatch_activate for
 #       activate(), which overlay patch 0016 keeps at macOS 10.12 (no 10.9 program calls it; 10.9's libSystem
 #       lacks it, so the overlay still takes Recaulk's). Recaulk's, linked and hidden, as Darwin takes openat:
-#       one copy in the overlay, so a block the overlay creates is the one it cancels.
-RECAULK_DISPATCH_SYMBOLS="_dispatch_block_create _dispatch_block_create_with_qos_class _dispatch_block_cancel _dispatch_block_testcancel _dispatch_activate _dispatch_queue_attr_make_with_qos_class"
+#       one copy in the overlay, so a block the overlay creates is the one it cancels. Recaulk's dispatch.h, which
+#       the overlay compiles against, renames dispatch_get_global_queue, dispatch_queue_create and dispatch_resume
+#       to their ___recaulk_ definitions (a QoS class's global queue, an initially inactive queue, and a resume
+#       that counts as the activation), so the overlay takes those too, and their members' hidden copies of the
+#       three plain names.
+RECAULK_DISPATCH_SYMBOLS="_dispatch_block_create _dispatch_block_create_with_qos_class _dispatch_block_cancel _dispatch_block_testcancel _dispatch_activate _dispatch_queue_attr_make_with_qos_class ___recaulk_dispatch_get_global_queue ___recaulk_dispatch_queue_create ___recaulk_dispatch_resume"
+RECAULK_DISPATCH_SHADOWS="_dispatch_get_global_queue _dispatch_queue_create _dispatch_resume"
 RECAULK_DISPATCH_A="$ROOT/recaulk-dispatch.a"; RECAULK_DISPATCH_UNX="$ROOT/recaulk-dispatch.unexported"
 # shellcheck disable=SC2086  # space-free symbol names
-( NM="$X/llvm-nm"; AR="$X/llvm-ar"
+( NM="$X/llvm-nm"; AR="$X/llvm-ar"; RECAULK_EXPECTED_SHADOWS="$RECAULK_DISPATCH_SHADOWS"
   recaulk_subset "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_DISPATCH_A" "$RECAULK_DISPATCH_UNX" $RECAULK_DISPATCH_SYMBOLS ) \
   || { echo "FAIL: could not take $RECAULK_DISPATCH_SYMBOLS from $RECAULK_PREFIX/lib/librecaulk.a"; exit 1; }
-echo "    Recaulk $RECAULK_VERSION for Dispatch: $RECAULK_DISPATCH_SYMBOLS, $(grep -c . "$RECAULK_DISPATCH_UNX") globals, all unexported"
+echo "    Recaulk $RECAULK_VERSION for Dispatch: $RECAULK_DISPATCH_SYMBOLS, shadowing $RECAULK_DISPATCH_SHADOWS, $(grep -c . "$RECAULK_DISPATCH_UNX") globals, all unexported"
 # spec: INGREDIENTS.md "Recaulk" -- the clang importer reads Dispatch as the toolchains' swiftc shows it to every
 #       program: Recaulk's dispatch declarations over the SDK's (lib.sh's recaulk_vfs_yaml), from an importer dir
 #       laid out from the Recaulk just fetched as stage-toolchain.sh lays out lib/swift/recaulk-importer, and
@@ -573,6 +589,20 @@ recaulk_hidden "$DARWIN" "$RECAULK_DARWIN_UNX" $RECAULK_DARWIN_SYMBOLS
 recaulk_hidden "$CONCURRENCY" "$RECAULK_CONC_UNX" $RECAULK_CONCURRENCY_SYMBOLS
 # shellcheck disable=SC2086  # space-free symbol names
 recaulk_hidden "$DISPATCH" "$RECAULK_DISPATCH_UNX" $RECAULK_DISPATCH_SYMBOLS
+# spec: INGREDIENTS.md "Recaulk" -- a shadow a subset carries binds inside its image, never to libSystem's:
+#       its name is not imported (recaulk_hidden has already held it unexported).
+# recaulk_shadows_bound <dylib> <symbol>...
+recaulk_shadows_bound() {
+  _rb_lib="$1"; shift
+  _rb_imp="$(DYLDINFO="$DYLDINFO" macho_imports "$_rb_lib")" || { echo "FAIL: could not read $_rb_lib's imports"; exit 1; }
+  for _rb_s in "$@"; do
+    if printf '%s\n' "$_rb_imp" | awk -v s="$_rb_s" '$1 == s { f = 1 } END { exit !f }'; then echo "FAIL: $_rb_lib imports $_rb_s, which its Recaulk subset shadows"; exit 1; fi
+  done
+}
+# shellcheck disable=SC2086  # space-free symbol names
+recaulk_shadows_bound "$CONCURRENCY" $RECAULK_CONCURRENCY_SHADOWS
+# shellcheck disable=SC2086  # space-free symbol names
+recaulk_shadows_bound "$DISPATCH" $RECAULK_DISPATCH_SHADOWS
 # spec: INGREDIENTS.md "Recaulk" -- APSL 2.0 section 2.3 wants the "source is available" notice in the code
 #       itself and in the documentation. Recaulk embeds it in each Apple-derived member and lists it in
 #       share/recaulk/notices.tsv: every dylib that links a Recaulk subset (libswiftCore, libswiftDarwin,
