@@ -299,8 +299,8 @@ native_host_shim() {
 host_toolchain_release() {
   _hr_info="$(pkgutil --file-info "$1/bin/swift-frontend")" || {
     echo "FAIL: pkgutil could not look up the receipt of $1/bin/swift-frontend" >&2; return 1; }
-  _hr_v="$(printf '%s\n' "$_hr_info" | sed -n 's/^pkg-version: *//p' | sort -u)"
-  _hr_id="$(printf '%s\n' "$_hr_info" | sed -n 's/^pkgid: *//p' | sort -u | tr '\n' ' ')"
+  _hr_v="$(printf '%s\n' "$_hr_info" | sed -n 's/^pkg-version: *//p' | LC_ALL=C sort -u)"
+  _hr_id="$(printf '%s\n' "$_hr_info" | sed -n 's/^pkgid: *//p' | LC_ALL=C sort -u | tr '\n' ' ')"
   case "$_hr_v" in *'
 '*) echo "FAIL: $1/bin/swift-frontend belongs to more than one release: $(printf '%s' "$_hr_v" | tr '\n' ' ')(pkgs ${_hr_id% })" >&2
     return 1 ;;
@@ -511,14 +511,16 @@ recaulk_subset() {
       for (n in expected) if (!(n in carried)) { print "recaulk_subset: expected the shadow " n ", which no member taken carries" > "/dev/stderr"; bad = 1 }
       exit bad
     }' "$_rs_t/nm" || { rm -rf "$_rs_t"; return 1; }
-  _rs_m="$(sort "$_rs_t/members")"
+  # platform: OS X 10.9's sort and a modern macOS's order recaulk-dispatch.o and recaulk-dispatch_*.o apart in a
+  #           UTF-8 locale; the members' order is the archive's, and so the link's, so it is the C locale's.
+  _rs_m="$(LC_ALL=C sort "$_rs_t/members")"
   mkdir "$_rs_t/x"
   # shellcheck disable=SC2086  # member names are space-free words
   ( cd "$_rs_t/x" && "${AR:-ar}" x "$_rs_in" $_rs_m ) || { echo "recaulk_subset: ${AR:-ar} could not extract from $_rs_in" >&2; rm -rf "$_rs_t"; return 1; }
   rm -f "$_rs_out"
   # shellcheck disable=SC2086
   ( cd "$_rs_t/x" && "${AR:-ar}" rcs "$_rs_out" $_rs_m ) || { echo "recaulk_subset: ${AR:-ar} could not write $_rs_out" >&2; rm -rf "$_rs_t"; return 1; }
-  sort -u "$_rs_t/globals" > "$_rs_unx"
+  LC_ALL=C sort -u "$_rs_t/globals" > "$_rs_unx"
   rm -rf "$_rs_t"
 }
 

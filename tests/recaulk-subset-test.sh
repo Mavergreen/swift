@@ -145,4 +145,18 @@ for _b in 'shadow-q.o _q_create' 'shadow-q.o _q_create ' 'shadow-q.o _q_create	'
        recaulk_subset "$T/q.a" "$T/x.a" "$T/x.unx" _api_q ) 2> "$T/err"; then fail "accepted the list line '$_b', which has no reason"; fi
   grep -q 'not <member> <symbol> <reason>' "$T/err" || fail "did not name the malformed line '$_b': $(cat "$T/err")"
 done
+
+echo "-- the members' order, and the unexported list's, are the C locale's, whatever the caller's"
+# platform: in a UTF-8 locale a modern macOS's sort puts rc-x_a.o before rc-x.o and _rcx_a before _rcx_B, as
+#           OS X 10.9's does not, so the archive (and the link) differed between the two hosts.
+o rc-x 'int rcx_B(void) { return 7; }'
+o rc-x_a 'int rcx_a(void) { return 8; }'
+( cd "$T" && ar rcs loc.a rc-x_a.o rc-x.o ) || fail "cannot build the locale fixture"
+utf8="$(locale -a 2>/dev/null | grep -i -m1 -e '^en_US\.UTF-8$' -e '^en_US\.utf8$' || :)"
+[ -n "$utf8" ] || fail "no en_US.UTF-8 locale to test the order under"
+( LC_ALL="$utf8"; export LC_ALL; recaulk_subset "$T/loc.a" "$T/loc-utf8.a" "$T/loc-utf8.unx" _rcx_a _rcx_B ) || fail "refused _rcx_a _rcx_B under $utf8"
+[ "$(members "$T/loc-utf8.a")" = "rc-x.o rc-x_a.o " ] || fail "under $utf8 the members are in the order $(members "$T/loc-utf8.a")"
+[ "$(tr '\n' ' ' < "$T/loc-utf8.unx")" = "_rcx_B _rcx_a " ] || fail "under $utf8 the unexported list is $(tr '\n' ' ' < "$T/loc-utf8.unx")"
+( LC_ALL=C; export LC_ALL; recaulk_subset "$T/loc.a" "$T/loc-c.a" "$T/loc-c.unx" _rcx_a _rcx_B ) || fail "refused _rcx_a _rcx_B under C"
+cmp -s "$T/loc-utf8.a" "$T/loc-c.a" && cmp -s "$T/loc-utf8.unx" "$T/loc-c.unx" || fail "the subset differs between $utf8 and C"
 echo "PASS"
