@@ -15,13 +15,17 @@
 // sides, a barrier writer must run alone, however it is submitted (async(execute:) of a .barrier
 // DispatchWorkItem, async(flags:), async(group:flags:), sync(flags:), asyncAfter(flags:), and a work item's
 // notify(flags:)).
-// What macOS 10.10 and 10.12 added past DispatchWorkItem, which Recaulk gives 10.9: dispatchPrecondition
-// (only its passing forms: a failing one traps, and this test runs in one process), on a queue and on a
-// queue targeting it; DispatchWorkItem's wait (returning once the work ran, and timing out while it cannot)
+// What macOS 10.10 and 10.12 added past DispatchWorkItem, which Recaulk gives 10.9: dispatchPrecondition,
+// passing on a queue and on a queue targeting it, and trapping on the wrong queue (in a child process: this
+// program run again with --dispatch-precondition-child, which must die by SIGILL or SIGTRAP; Recaulk's checks
+// are lenient where 10.9 cannot tell the current queue, so the child asks where it can: .notOnQueue(q) inside
+// q.sync); DispatchWorkItem's wait (returning once the work ran, and timing out while it cannot)
 // and notify (running after the work item); an initially inactive queue, running nothing until activate(),
-// a resume() before activate() that does not trap, and a source started with activate(); each
+// a source's resume() before activate() that does not trap, and a source started with activate(); each
 // autoreleaseFrequency:, and target: at creation (a concurrent queue on a serial target runs one block at a
-// time, and sees the target's specific). What the overlay leaves out on 10.9 (DispatchQueue.qos, which
+// time, and sees the target's specific; that cannot tell a target set at creation from one set by
+// setTarget(queue:) after it, so only build.sh's check of libswiftDispatch's imports and symbols shows the
+// initializer takes dispatch_queue_create_with_target$V2). What the overlay leaves out on 10.9 (DispatchQueue.qos, which
 // Recaulk cannot read back, and the user-data-replace source) is not tried. No source is cast to a per-type
 // protocol: with this overlay, every source conforms to them all.
 // Every wait has a timeout, so a broken path fails rather than hangs. It compiles with no warning in
@@ -48,6 +52,46 @@ let failures = Box(0)
 func check(_ ok: Bool, _ what: String) { if !ok { print("FAIL: \(what)"); failures.update { $0 += 1 } } }
 func waits(_ s: DispatchSemaphore, _ ms: Int = 5000) -> Bool { s.wait(timeout: .now() + .milliseconds(ms)) == .success }
 func ms(_ n: Int) { usleep(UInt32(n * 1000)) }
+
+// --- the child process of the trapping dispatchPrecondition case: it must not return
+let preconditionChildFlag = "--dispatch-precondition-child"
+if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == preconditionChildFlag {
+  let q = DispatchQueue(label: "dispatch-overlay-test.precondition-trap")
+  q.sync { dispatchPrecondition(condition: .notOnQueue(q)) }
+  print("dispatchPrecondition(.notOnQueue(q)) returned inside q.sync")
+  exit(0)
+}
+let selfPath = CommandLine.arguments[0]
+
+// Runs this program as the child above; nil when the child died by SIGILL or SIGTRAP within 20 s, else what it
+// did instead. It inherits the environment, Guard Malloc's included, and stays in this run's process group.
+func preconditionTrapsInAChild() -> String? {
+  var attr: posix_spawnattr_t? = nil
+  guard posix_spawnattr_init(&attr) == 0 else { return "posix_spawnattr_init failed" }
+  defer { posix_spawnattr_destroy(&attr) }
+  // platform: with no EXC_CRASH port (EXC_MASK_CRASH, 1 << EXC_CRASH 10), the expected trap is no crash report
+  //           for ReportCrash to write, which would also hold the child's exit back while it did.
+  _ = posix_spawnattr_setexceptionports_np(&attr, exception_mask_t(1 << 10), mach_port_t(0), exception_behavior_t(1), thread_state_flavor_t(0))
+  let argv: [UnsafeMutablePointer<CChar>?] = [strdup(selfPath), strdup(preconditionChildFlag), nil]
+  defer { for p in argv { free(p) } }
+  var pid = pid_t()
+  let rc = posix_spawn(&pid, selfPath, nil, &attr, argv, environ)
+  guard rc == 0 else { return "posix_spawn of \(selfPath) failed (\(rc))" }
+  var status: Int32 = 0
+  for _ in 0..<200 {
+    let w = waitpid(pid, &status, WNOHANG)
+    if w < 0 { return "waitpid failed (errno \(errno))" }
+    if w == pid {
+      // platform: <sys/wait.h>'s WIFSIGNALED and WTERMSIG are macros Swift does not import.
+      let sig = status & 0x7f
+      if sig == SIGILL || sig == SIGTRAP { return nil }
+      return sig != 0 ? "the child died by signal \(sig), not SIGILL or SIGTRAP" : "the child exited \((status >> 8) & 0xff)"
+    }
+    ms(100)
+  }
+  kill(pid, SIGKILL); _ = waitpid(pid, &status, 0)
+  return "the child did not end in 20 s"
+}
 
 // --- the main queue
 // platform: dispatchMain() ends the main thread (pthread_exit) and libdispatch's own threads drain the main
@@ -323,7 +367,7 @@ func barriers() {
   }
 }
 
-// --- dispatchPrecondition: the passing forms (a failing one traps)
+// --- dispatchPrecondition: the passing forms, and a failing one, which traps, in a child process
 func preconditions() {
   let q = DispatchQueue(label: "dispatch-overlay-test.precondition")
   let other = DispatchQueue(label: "dispatch-overlay-test.precondition-other")
@@ -353,6 +397,9 @@ func preconditions() {
   check(waits(s), "dispatchPrecondition(.onQueue) of a queue's target returned")
   other.sync { dispatchPrecondition(condition: .notOnQueue(q)); passed.update { $0 += 1 } }
   check(passed.value == 4, "every passing dispatchPrecondition returned (\(passed.value) of 4 blocks)")
+  if let why = preconditionTrapsInAChild() {
+    check(false, "dispatchPrecondition(.notOnQueue(q)) inside q.sync trapped in a child process: \(why)")
+  }
 }
 
 // --- DispatchWorkItem: wait and notify
@@ -368,12 +415,11 @@ func waitAndNotify() {
   gate.signal()
   check(waits(ranGated), "the gated work item ran once let go")
 
-  // wait() returns once the work has run.
+  // wait(timeout:) returns .success once the work has run.
   let ran = Box(false)
   let slow = DispatchWorkItem { ms(20); ran.value = true }
   q.async(execute: slow)
-  slow.wait()
-  check(ran.value, "wait() returned after the work item ran")
+  check(slow.wait(timeout: .now() + .seconds(5)) == .success && ran.value, "wait(timeout:) returned .success after the work item ran")
   let walled = DispatchWorkItem { ms(5); ran.value = false }
   q.async(execute: walled)
   check(walled.wait(wallTimeout: .now() + .seconds(5)) == .success && !ran.value, "wait(wallTimeout:) returned after the work item ran")
@@ -420,14 +466,18 @@ func inactiveQueues() {
   c.activate()
   check(waits(done) && waits(done) && metA.value && metB.value, "the activated queue is concurrent: its two blocks met")
 
-  // A resume() first counts as the activation, so activate() after it does not over-resume and trap.
-  let r = DispatchQueue(label: "dispatch-overlay-test.resumed", attributes: .initiallyInactive)
-  r.async { s.signal() }
+  // A source's first resume() counts as its activation, so activate() after it does not over-resume and trap.
+  // (A source, not a queue: from 10.12 on libdispatch traps on a resume() of a queue made inactive.)
+  let rq = DispatchQueue(label: "dispatch-overlay-test.resumed")
+  let r = DispatchSource.makeUserDataAddSource(queue: rq)
+  r.setEventHandler { s.signal() }
   r.resume()
-  check(waits(s), "resume() started an initially inactive queue")
+  r.add(data: 1)
+  check(waits(s), "resume() started a source")
   r.activate()
-  r.async { s.signal() }
-  check(waits(s), "activate() after resume() did not trap, and the queue still runs")
+  r.add(data: 1)
+  check(waits(s), "activate() after resume() did not trap, and the source still delivers")
+  r.cancel()
 
   // A source, started with activate() rather than resume().
   let src = DispatchSource.makeUserDataAddSource(queue: DispatchQueue(label: "dispatch-overlay-test.activate-source"))
@@ -467,8 +517,8 @@ func targets() {
   conc.async { sawTarget.value = DispatchQueue.getSpecific(key: key) == 9; s.signal() }
   check(waits(s) && sawTarget.value, "a queue created with target: sees its target's specific value")
 
-  // On a serial target, a concurrent queue's two blocks run one at a time: each, waiting 200 ms for the other,
-  // never meets it, and no two are ever in flight.
+  // On a serial target, a concurrent queue's two blocks run one at a time: no two are ever in flight, and the
+  // first, waiting 200 ms for the second, times out (the second then finds the first's signal, so at most one meets).
   let active = Box(0), maxActive = Box(0)
   let a = DispatchSemaphore(value: 0), b = DispatchSemaphore(value: 0), done = DispatchSemaphore(value: 0)
   let metA = Box(true), metB = Box(true)
