@@ -13,12 +13,17 @@
 // Barriers: below 10.10 Recaulk's dispatch_block_create ignores its flags, so the overlay submits
 // barrier-flagged work with dispatch_barrier_async/sync; on a concurrent queue with readers on both
 // sides, a barrier writer must run alone, however it is submitted (async(execute:) of a .barrier
-// DispatchWorkItem, async(flags:), async(group:flags:), sync(flags:), asyncAfter(flags:)).
-// What the overlay leaves out on 10.9 (dispatchPrecondition, DispatchWorkItem.wait/notify,
-// DispatchQueue.qos, autoreleaseFrequency:, .initiallyInactive, the user-data-replace source, and
-// activate(), which stays macOS 10.12) is not tried. Nor is the target: initializer, which the overlay keeps
-// and which always sets the target with setTarget(queue:). No source is cast to a per-type protocol: with
-// this overlay, every source conforms to them all.
+// DispatchWorkItem, async(flags:), async(group:flags:), sync(flags:), asyncAfter(flags:), and a work item's
+// notify(flags:)).
+// What macOS 10.10 and 10.12 added past DispatchWorkItem, which Recaulk gives 10.9: dispatchPrecondition
+// (only its passing forms: a failing one traps, and this test runs in one process), on a queue and on a
+// queue targeting it; DispatchWorkItem's wait (returning once the work ran, and timing out while it cannot)
+// and notify (running after the work item); an initially inactive queue, running nothing until activate(),
+// a resume() before activate() that does not trap, and a source started with activate(); each
+// autoreleaseFrequency:, and target: at creation (a concurrent queue on a serial target runs one block at a
+// time, and sees the target's specific). What the overlay leaves out on 10.9 (DispatchQueue.qos, which
+// Recaulk cannot read back, and the user-data-replace source) is not tried. No source is cast to a per-type
+// protocol: with this overlay, every source conforms to them all.
 // Every wait has a timeout, so a broken path fails rather than hangs. It compiles with no warning in
 // Swift 6 mode too (the marker above). Exits non-zero on any failure.
 
@@ -310,6 +315,181 @@ func barriers() {
   barrierCase("asyncAfter(flags: .barrier)", readerMs: 20) { q, rw, done in
     q.asyncAfter(deadline: .now() + .milliseconds(8), flags: .barrier) { rw.writer(); done.signal() }
   }
+  // The item runs elsewhere; its notification, flagged barrier, is submitted to the readers' queue as one.
+  barrierCase("notify(flags: .barrier)", readerMs: 20) { q, rw, done in
+    let item = DispatchWorkItem { ms(8) }
+    item.notify(flags: .barrier, queue: q) { rw.writer(); done.signal() }
+    DispatchQueue.global().async(execute: item)
+  }
+}
+
+// --- dispatchPrecondition: the passing forms (a failing one traps)
+func preconditions() {
+  let q = DispatchQueue(label: "dispatch-overlay-test.precondition")
+  let other = DispatchQueue(label: "dispatch-overlay-test.precondition-other")
+  let child = DispatchQueue(label: "dispatch-overlay-test.precondition-child", target: q)
+  let passed = Box(0)
+  dispatchPrecondition(condition: .notOnQueue(q))
+  q.sync {
+    dispatchPrecondition(condition: .onQueue(q))
+    dispatchPrecondition(condition: .onQueueAsBarrier(q))
+    dispatchPrecondition(condition: .notOnQueue(other))
+    passed.update { $0 += 1 }
+  }
+  let s = DispatchSemaphore(value: 0)
+  q.async {
+    dispatchPrecondition(condition: .onQueue(q))
+    passed.update { $0 += 1 }
+    s.signal()
+  }
+  check(waits(s), "an async block's dispatchPrecondition(.onQueue) returned")
+  child.async {
+    dispatchPrecondition(condition: .onQueue(child))
+    dispatchPrecondition(condition: .onQueue(q))
+    dispatchPrecondition(condition: .notOnQueue(other))
+    passed.update { $0 += 1 }
+    s.signal()
+  }
+  check(waits(s), "dispatchPrecondition(.onQueue) of a queue's target returned")
+  other.sync { dispatchPrecondition(condition: .notOnQueue(q)); passed.update { $0 += 1 } }
+  check(passed.value == 4, "every passing dispatchPrecondition returned (\(passed.value) of 4 blocks)")
+}
+
+// --- DispatchWorkItem: wait and notify
+func waitAndNotify() {
+  let q = DispatchQueue(label: "dispatch-overlay-test.wait", attributes: .concurrent)
+  let gate = DispatchSemaphore(value: 0), ranGated = DispatchSemaphore(value: 0)
+  let order = Box([String]())
+
+  // wait(timeout:) times out while the item cannot run; the item is not waited on again.
+  let gated = DispatchWorkItem { _ = waits(gate); order.update { $0.append("gated") }; ranGated.signal() }
+  q.async(execute: gated)
+  check(gated.wait(timeout: .now() + .milliseconds(20)) == .timedOut, "wait(timeout:) timed out on a work item that cannot run")
+  gate.signal()
+  check(waits(ranGated), "the gated work item ran once let go")
+
+  // wait() returns once the work has run.
+  let ran = Box(false)
+  let slow = DispatchWorkItem { ms(20); ran.value = true }
+  q.async(execute: slow)
+  slow.wait()
+  check(ran.value, "wait() returned after the work item ran")
+  let walled = DispatchWorkItem { ms(5); ran.value = false }
+  q.async(execute: walled)
+  check(walled.wait(wallTimeout: .now() + .seconds(5)) == .success && !ran.value, "wait(wallTimeout:) returned after the work item ran")
+
+  // notify runs after the work item, both forms.
+  let notified = DispatchSemaphore(value: 0)
+  let gate2 = DispatchSemaphore(value: 0)
+  let item = DispatchWorkItem { _ = waits(gate2); order.update { $0.append("item") } }
+  item.notify(queue: q) { order.update { $0.append("notify") }; notified.signal() }
+  item.notify(queue: q, execute: DispatchWorkItem { order.update { $0.append("notify-item") }; notified.signal() })
+  q.async(execute: item)
+  ms(20)
+  check(!order.value.contains("notify") && !order.value.contains("notify-item"), "notify did not run before its work item")
+  gate2.signal()
+  check(waits(notified) && waits(notified), "both of a work item's notify blocks ran")
+  let o = order.value
+  if let i = o.firstIndex(of: "item"), let n = o.firstIndex(of: "notify"), let m = o.firstIndex(of: "notify-item") {
+    check(i < n && i < m, "notify ran after its work item: \(o)")
+  } else {
+    check(false, "the work item and its notify blocks all ran: \(o)")
+  }
+}
+
+// --- initially inactive queues and activate()
+func inactiveQueues() {
+  let s = DispatchSemaphore(value: 0)
+  let ran = Box(0)
+  let q = DispatchQueue(label: "dispatch-overlay-test.inactive", attributes: .initiallyInactive)
+  q.async { ran.update { $0 += 1 }; s.signal() }
+  check(!waits(s, 50) && ran.value == 0, "an initially inactive queue ran nothing before activate()")
+  q.activate()
+  check(waits(s) && ran.value == 1, "activate() started the inactive queue (ran \(ran.value))")
+  q.activate()
+  q.async { ran.update { $0 += 1 }; s.signal() }
+  check(waits(s) && ran.value == 2, "a second activate() left the active queue running")
+
+  let c = DispatchQueue(label: "dispatch-overlay-test.inactive-concurrent", qos: .utility,
+                        attributes: [.concurrent, .initiallyInactive])
+  let a = DispatchSemaphore(value: 0), b = DispatchSemaphore(value: 0), done = DispatchSemaphore(value: 0)
+  let metA = Box(false), metB = Box(false)
+  c.async { a.signal(); metA.value = waits(b, 3000); done.signal() }
+  c.async { b.signal(); metB.value = waits(a, 3000); done.signal() }
+  check(!waits(done, 50), "an initially inactive concurrent queue ran nothing before activate()")
+  c.activate()
+  check(waits(done) && waits(done) && metA.value && metB.value, "the activated queue is concurrent: its two blocks met")
+
+  // A resume() first counts as the activation, so activate() after it does not over-resume and trap.
+  let r = DispatchQueue(label: "dispatch-overlay-test.resumed", attributes: .initiallyInactive)
+  r.async { s.signal() }
+  r.resume()
+  check(waits(s), "resume() started an initially inactive queue")
+  r.activate()
+  r.async { s.signal() }
+  check(waits(s), "activate() after resume() did not trap, and the queue still runs")
+
+  // A source, started with activate() rather than resume().
+  let src = DispatchSource.makeUserDataAddSource(queue: DispatchQueue(label: "dispatch-overlay-test.activate-source"))
+  let got = Box(UInt(0))
+  src.setEventHandler { got.update { $0 += src.data }; s.signal() }
+  src.activate()
+  src.add(data: 5)
+  check(waits(s) && got.value == 5, "a source started with activate() delivered its data (\(got.value))")
+  src.cancel()
+}
+
+// --- autoreleaseFrequency:
+func autoreleaseFrequencies() {
+  let s = DispatchSemaphore(value: 0)
+  let cases: [(DispatchQueue.AutoreleaseFrequency, String)] = [(.inherit, "inherit"), (.workItem, "workItem"), (.never, "never")]
+  for (f, name) in cases {
+    let q = DispatchQueue(label: "dispatch-overlay-test.autorelease-\(name)", autoreleaseFrequency: f)
+    let n = Box(0)
+    for _ in 0..<3 { q.async { n.update { $0 += 1 } } }
+    q.async { s.signal() }
+    check(waits(s) && n.value == 3, "a queue with autoreleaseFrequency: .\(name) ran its blocks (\(n.value) of 3)")
+  }
+  let c = DispatchQueue(label: "dispatch-overlay-test.autorelease-concurrent", attributes: .concurrent,
+                        autoreleaseFrequency: .workItem)
+  c.async { s.signal() }
+  check(waits(s), "a concurrent queue with autoreleaseFrequency: .workItem ran a block")
+}
+
+// --- target: at creation
+func targets() {
+  let key = DispatchSpecificKey<Int>()
+  let serial = DispatchQueue(label: "dispatch-overlay-test.target")
+  serial.setSpecific(key: key, value: 9)
+  let conc = DispatchQueue(label: "dispatch-overlay-test.targeted", attributes: .concurrent, target: serial)
+  let s = DispatchSemaphore(value: 0)
+  let sawTarget = Box(false)
+  conc.async { sawTarget.value = DispatchQueue.getSpecific(key: key) == 9; s.signal() }
+  check(waits(s) && sawTarget.value, "a queue created with target: sees its target's specific value")
+
+  // On a serial target, a concurrent queue's two blocks run one at a time: each, waiting 200 ms for the other,
+  // never meets it, and no two are ever in flight.
+  let active = Box(0), maxActive = Box(0)
+  let a = DispatchSemaphore(value: 0), b = DispatchSemaphore(value: 0), done = DispatchSemaphore(value: 0)
+  let metA = Box(true), metB = Box(true)
+  @Sendable func body(_ mine: DispatchSemaphore, _ other: DispatchSemaphore, _ met: Box<Bool>) {
+    active.update { $0 += 1; let n = $0; maxActive.update { $0 = max($0, n) } }
+    mine.signal(); met.value = waits(other, 200)
+    active.update { $0 -= 1 }
+    done.signal()
+  }
+  conc.async { body(a, b, metA) }
+  conc.async { body(b, a, metB) }
+  check(waits(done) && waits(done), "both blocks of the targeted concurrent queue finished")
+  check(maxActive.value == 1, "a concurrent queue on a serial target ran its blocks one at a time (\(maxActive.value) at once)")
+  check(!(metA.value && metB.value), "the targeted queue's two blocks never ran at once")
+
+  let inactive = DispatchQueue(label: "dispatch-overlay-test.targeted-inactive", attributes: .initiallyInactive, target: serial)
+  inactive.async { sawTarget.value = DispatchQueue.getSpecific(key: key) == 9; s.signal() }
+  check(!waits(s, 50), "an inactive queue created with target: ran nothing before activate()")
+  sawTarget.value = false
+  inactive.activate()
+  check(waits(s) && sawTarget.value, "the activated queue ran on its target")
 }
 
 // --- DispatchData
@@ -337,7 +517,8 @@ func data() {
 let suite = DispatchQueue(label: "dispatch-overlay-test.suite")
 suite.async {
   mainQueue(); globalQueues(); serialAndConcurrent(); groups(); semaphores(); timing(); sources()
-  workItems(); barriers(); data()
+  workItems(); barriers(); preconditions(); waitAndNotify(); inactiveQueues(); autoreleaseFrequencies(); targets()
+  data()
   DispatchQueue.main.async {
     if failures.value > 0 { print("dispatch_overlay_test FAILED (\(failures.value))"); exit(1) }
     print("dispatch_overlay_test OK")
