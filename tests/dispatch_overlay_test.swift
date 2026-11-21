@@ -28,7 +28,9 @@
 // initializer takes dispatch_queue_create_with_target$V2). What the overlay leaves out on 10.9 (DispatchQueue.qos, which
 // Recaulk cannot read back, and the user-data-replace source) is not tried. No source is cast to a per-type
 // protocol: with this overlay, every source conforms to them all.
-// Every wait has a timeout, so a broken path fails rather than hangs. It compiles with no warning in
+// Every wait has a timeout, so a broken path fails rather than hangs. Waits for work that must run allow
+// seconds; a wait that must time out, or a sleep that only gives a broken path room to misbehave, is a few ms,
+// as on a correct path its check cannot fail however long it lasts. It compiles with no warning in
 // Swift 6 mode too (the marker above). Exits non-zero on any failure.
 
 import Darwin
@@ -81,7 +83,7 @@ func preconditionTrapsInAChild() -> String? {
   let rc = posix_spawn(&pid, selfPath, nil, &attr, argv, environ)
   guard rc == 0 else { return "posix_spawn of \(selfPath) failed (\(rc))" }
   var status: Int32 = 0
-  for _ in 0..<200 {
+  for _ in 0..<10_000 {
     let w = waitpid(pid, &status, WNOHANG)
     if w < 0 { return "waitpid failed (errno \(errno))" }
     if w == pid {
@@ -90,7 +92,7 @@ func preconditionTrapsInAChild() -> String? {
       if sig == SIGILL || sig == SIGTRAP { return nil }
       return sig != 0 ? "the child died by signal \(sig), not SIGILL or SIGTRAP" : "the child exited \((status >> 8) & 0xff)"
     }
-    ms(100)
+    ms(2)
   }
   kill(pid, SIGKILL); _ = waitpid(pid, &status, 0)
   return "the child did not end in 20 s"
@@ -167,22 +169,22 @@ func groups() {
   check(atNotify.value == 10, "notify ran after all 10 members (saw \(atNotify.value))")
   check(g.wait(timeout: .now() + .seconds(1)) == .success, "wait on a finished group succeeds")
   g.enter()
-  check(g.wait(timeout: .now() + .milliseconds(10)) == .timedOut, "wait on a group never left times out")
+  check(g.wait(timeout: .now() + .milliseconds(2)) == .timedOut, "wait on a group never left times out")
   g.leave()
   let g2 = DispatchGroup()
-  g2.enter(); q.asyncAfter(deadline: .now() + .milliseconds(5)) { g2.leave() }
+  g2.enter(); q.asyncAfter(deadline: .now() + .milliseconds(2)) { g2.leave() }
   check(g2.wait(timeout: .now() + .seconds(5)) == .success, "wait returns once the last member leaves")
 }
 
 // --- a semaphore
 func semaphores() {
   let s = DispatchSemaphore(value: 0)
-  check(s.wait(timeout: .now() + .milliseconds(10)) == .timedOut, "an empty semaphore's wait times out")
+  check(s.wait(timeout: .now() + .milliseconds(2)) == .timedOut, "an empty semaphore's wait times out")
   DispatchQueue.global().async { ms(2); _ = s.signal() }
   check(waits(s), "a signal from another queue wakes the wait")
   let two = DispatchSemaphore(value: 2)
   check(two.wait(timeout: .now()) == .success && two.wait(timeout: .now()) == .success, "a semaphore of 2 takes two waits")
-  check(two.wait(timeout: .now() + .milliseconds(5)) == .timedOut, "and no third")
+  check(two.wait(timeout: .now() + .milliseconds(2)) == .timedOut, "and no third")
   // platform: libdispatch traps when a semaphore is released holding less than it was created with
   //           ("Semaphore/group object deallocated while in use"), so the two are given back first.
   two.signal(); two.signal()
@@ -216,10 +218,10 @@ func timing() {
   check(order.value == [10, 20, 30], "asyncAfter ran in deadline order: \(order.value)")
   check(firedAt.value >= start.uptimeNanoseconds + 9_500_000, "asyncAfter(10 ms) did not fire early")
   let s = DispatchSemaphore(value: 0)
-  q.asyncAfter(wallDeadline: .now() + .milliseconds(5)) { s.signal() }
+  q.asyncAfter(wallDeadline: .now() + .milliseconds(2)) { s.signal() }
   check(waits(s), "asyncAfter(wallDeadline:) ran")
   let w = DispatchWorkItem { s.signal() }
-  q.asyncAfter(deadline: .now() + .milliseconds(5), execute: w)
+  q.asyncAfter(deadline: .now() + .milliseconds(2), execute: w)
   check(waits(s), "asyncAfter(deadline:execute: DispatchWorkItem) ran")
 }
 
@@ -241,7 +243,7 @@ func sources() {
   timer.cancel()
   check(waits(cancelled), "the timer's cancel handler ran")
   let atCancel = fired.value
-  ms(25)
+  ms(12)
   check(fired.value == atCancel, "the timer did not fire after its cancel handler ran (\(atCancel) -> \(fired.value))")
   check(timer.isCancelled, "the cancelled timer reports isCancelled")
 
@@ -302,7 +304,7 @@ final class RW: Sendable {
   struct State: Sendable { var active = 0, maxActive = 0, barrier = false, violations = 0, barriers = 0 }
   let state = Box(State())
   let readerMs: Int
-  init(readerMs: Int = 5) { self.readerMs = readerMs }
+  init(readerMs: Int = 2) { self.readerMs = readerMs }
   // A meeting reader, while in flight, signals its own semaphore and waits for the other's (3 s).
   func reader(meeting: (mine: DispatchSemaphore, other: DispatchSemaphore, met: Box<Bool>)? = nil) {
     state.update { if $0.barrier { $0.violations += 1 }; $0.active += 1; $0.maxActive = max($0.maxActive, $0.active) }
@@ -312,11 +314,11 @@ final class RW: Sendable {
   }
   func writer() {
     state.update { if $0.active != 0 || $0.barrier { $0.violations += 1 }; $0.barrier = true }
-    ms(10)
+    ms(4)
     state.update { if $0.active != 0 { $0.violations += 1 }; $0.barrier = false; $0.barriers += 1 }
   }
 }
-func barrierCase(_ name: String, readerMs: Int = 5, _ submit: (DispatchQueue, RW, DispatchSemaphore) -> Void) {
+func barrierCase(_ name: String, readerMs: Int = 2, _ submit: (DispatchQueue, RW, DispatchSemaphore) -> Void) {
   let q = DispatchQueue(label: "dispatch-overlay-test.rw", attributes: .concurrent)
   let rw = RW(readerMs: readerMs), writerDone = DispatchSemaphore(value: 0)
   let readers = DispatchGroup()
@@ -357,14 +359,14 @@ func barriers() {
     q.sync(flags: .barrier) { rw.writer() }
     done.signal()
   }
-  // The readers last 20 ms, so they are still running when the 8 ms deadline passes: a barrier that is not
+  // The readers last 8 ms, so they are still running when the 3 ms deadline passes: a barrier that is not
   // routed as one starts then, with readers active, and the writer's own check (active == 0 at its start) fails.
-  barrierCase("asyncAfter(flags: .barrier)", readerMs: 20) { q, rw, done in
-    q.asyncAfter(deadline: .now() + .milliseconds(8), flags: .barrier) { rw.writer(); done.signal() }
+  barrierCase("asyncAfter(flags: .barrier)", readerMs: 8) { q, rw, done in
+    q.asyncAfter(deadline: .now() + .milliseconds(3), flags: .barrier) { rw.writer(); done.signal() }
   }
   // The item runs elsewhere; its notification, flagged barrier, is submitted to the readers' queue as one.
-  barrierCase("notify(flags: .barrier)", readerMs: 20) { q, rw, done in
-    let item = DispatchWorkItem { ms(8) }
+  barrierCase("notify(flags: .barrier)", readerMs: 8) { q, rw, done in
+    let item = DispatchWorkItem { ms(3) }
     item.notify(flags: .barrier, queue: q) { rw.writer(); done.signal() }
     DispatchQueue.global().async(execute: item)
   }
@@ -414,16 +416,16 @@ func waitAndNotify() {
   // wait(timeout:) times out while the item cannot run; the item is not waited on again.
   let gated = DispatchWorkItem { _ = waits(gate); order.update { $0.append("gated") }; ranGated.signal() }
   q.async(execute: gated)
-  check(gated.wait(timeout: .now() + .milliseconds(20)) == .timedOut, "wait(timeout:) timed out on a work item that cannot run")
+  check(gated.wait(timeout: .now() + .milliseconds(5)) == .timedOut, "wait(timeout:) timed out on a work item that cannot run")
   gate.signal()
   check(waits(ranGated), "the gated work item ran once let go")
 
   // wait(timeout:) returns .success once the work has run.
   let ran = Box(false)
-  let slow = DispatchWorkItem { ms(20); ran.value = true }
+  let slow = DispatchWorkItem { ms(5); ran.value = true }
   q.async(execute: slow)
   check(slow.wait(timeout: .now() + .seconds(5)) == .success && ran.value, "wait(timeout:) returned .success after the work item ran")
-  let walled = DispatchWorkItem { ms(5); ran.value = false }
+  let walled = DispatchWorkItem { ms(2); ran.value = false }
   q.async(execute: walled)
   check(walled.wait(wallTimeout: .now() + .seconds(5)) == .success && !ran.value, "wait(wallTimeout:) returned after the work item ran")
 
@@ -434,7 +436,7 @@ func waitAndNotify() {
   item.notify(queue: q) { order.update { $0.append("notify") }; notified.signal() }
   item.notify(queue: q, execute: DispatchWorkItem { order.update { $0.append("notify-item") }; notified.signal() })
   q.async(execute: item)
-  ms(20)
+  ms(5)
   check(!order.value.contains("notify") && !order.value.contains("notify-item"), "notify did not run before its work item")
   gate2.signal()
   check(waits(notified) && waits(notified), "both of a work item's notify blocks ran")
@@ -452,7 +454,7 @@ func inactiveQueues() {
   let ran = Box(0)
   let q = DispatchQueue(label: "dispatch-overlay-test.inactive", attributes: .initiallyInactive)
   q.async { ran.update { $0 += 1 }; s.signal() }
-  check(!waits(s, 50) && ran.value == 0, "an initially inactive queue ran nothing before activate()")
+  check(!waits(s, 10) && ran.value == 0, "an initially inactive queue ran nothing before activate()")
   q.activate()
   check(waits(s) && ran.value == 1, "activate() started the inactive queue (ran \(ran.value))")
   q.activate()
@@ -465,7 +467,7 @@ func inactiveQueues() {
   let metA = Box(false), metB = Box(false)
   c.async { a.signal(); metA.value = waits(b, 3000); done.signal() }
   c.async { b.signal(); metB.value = waits(a, 3000); done.signal() }
-  check(!waits(done, 50), "an initially inactive concurrent queue ran nothing before activate()")
+  check(!waits(done, 10), "an initially inactive concurrent queue ran nothing before activate()")
   c.activate()
   check(waits(done) && waits(done) && metA.value && metB.value, "the activated queue is concurrent: its two blocks met")
 
@@ -521,13 +523,13 @@ func targets() {
   check(waits(s) && sawTarget.value, "a queue created with target: sees its target's specific value")
 
   // On a serial target, a concurrent queue's two blocks run one at a time: no two are ever in flight, and the
-  // first, waiting 200 ms for the second, times out (the second then finds the first's signal, so at most one meets).
+  // first, waiting 20 ms for the second, times out (the second then finds the first's signal, so at most one meets).
   let active = Box(0), maxActive = Box(0)
   let a = DispatchSemaphore(value: 0), b = DispatchSemaphore(value: 0), done = DispatchSemaphore(value: 0)
   let metA = Box(true), metB = Box(true)
   @Sendable func body(_ mine: DispatchSemaphore, _ other: DispatchSemaphore, _ met: Box<Bool>) {
     active.update { $0 += 1; let n = $0; maxActive.update { $0 = max($0, n) } }
-    mine.signal(); met.value = waits(other, 200)
+    mine.signal(); met.value = waits(other, 20)
     active.update { $0 -= 1 }
     done.signal()
   }
@@ -539,7 +541,7 @@ func targets() {
 
   let inactive = DispatchQueue(label: "dispatch-overlay-test.targeted-inactive", attributes: .initiallyInactive, target: serial)
   inactive.async { sawTarget.value = DispatchQueue.getSpecific(key: key) == 9; s.signal() }
-  check(!waits(s, 50), "an inactive queue created with target: ran nothing before activate()")
+  check(!waits(s, 10), "an inactive queue created with target: ran nothing before activate()")
   sawTarget.value = false
   inactive.activate()
   check(waits(s) && sawTarget.value, "the activated queue ran on its target")
