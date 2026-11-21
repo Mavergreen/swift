@@ -49,12 +49,12 @@ include test/Concurrency/Runtime/async_task_detach.swift
 exclude test/Concurrency/Runtime/async_task_executor_and_serial_executor_both_executor.swift -- RUN runs env
 exclude test/Concurrency/Runtime/async_task_executor_and_serial_executor_nonisolated_async_func_legacy.swift -- RUN runs env
 exclude test/Concurrency/Runtime/async_task_executor_and_serial_executor_nonisolated_async_func_swift6.swift -- RUN runs env
-exclude test/Concurrency/Runtime/async_task_executor_default_actor_funcs.swift -- uses dispatchPrecondition (line 62), which this release's Dispatch overlay lacks: no 10.9 or Recaulk header declares dispatch_assert_queue
-exclude test/Concurrency/Runtime/async_task_executor_nonisolated_async_func.swift -- uses dispatchPrecondition (line 34), which this release's Dispatch overlay lacks: no 10.9 or Recaulk header declares dispatch_assert_queue
+include test/Concurrency/Runtime/async_task_executor_default_actor_funcs.swift
+include test/Concurrency/Runtime/async_task_executor_nonisolated_async_func.swift
 exclude test/Concurrency/Runtime/async_task_executor_nsobject.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/Concurrency/Runtime/async_task_executor_structured_concurrency.swift -- uses dispatchPrecondition (line 39), which this release's Dispatch overlay lacks: no 10.9 or Recaulk header declares dispatch_assert_queue
-exclude test/Concurrency/Runtime/async_task_executor_unstructured_task_ownership.swift -- uses dispatchPrecondition (line 56), which this release's Dispatch overlay lacks: no 10.9 or Recaulk header declares dispatch_assert_queue
-exclude test/Concurrency/Runtime/async_task_executor_withExecutor.swift -- uses dispatchPrecondition (line 35), which this release's Dispatch overlay lacks: no 10.9 or Recaulk header declares dispatch_assert_queue
+include test/Concurrency/Runtime/async_task_executor_structured_concurrency.swift
+include test/Concurrency/Runtime/async_task_executor_unstructured_task_ownership.swift
+include test/Concurrency/Runtime/async_task_executor_withExecutor.swift
 include test/Concurrency/Runtime/async_task_handle_cancellation.swift
 exclude test/Concurrency/Runtime/async_task_locals_async_let.swift -- RUN uses %swift-plugin-dir
 exclude test/Concurrency/Runtime/async_task_locals_basic.swift -- RUN uses %swift-plugin-dir
@@ -129,7 +129,7 @@ include test/Concurrency/Runtime/future_fibonacci.swift
 include test/Concurrency/Runtime/isolated_conformance.swift
 exclude test/Concurrency/Runtime/isolated_deinit_main_sync.swift -- RUN uses %target-future-triple
 include test/Concurrency/Runtime/isolated_macro_in_nonisolated_nonsending_func.swift
-exclude test/Concurrency/Runtime/mainactor.swift -- uses dispatchPrecondition (line 21), which this release's Dispatch overlay lacks: no 10.9 or Recaulk header declares dispatch_assert_queue
+include test/Concurrency/Runtime/mainactor.swift
 exclude test/Concurrency/Runtime/must_not_hop_withContinuation.swift -- REQUIRES: synchronization does not hold on 10.9
 exclude test/Concurrency/Runtime/noncopyable_continuation.swift -- RUN merges the test's stderr into FileCheck's input
 exclude test/Concurrency/Runtime/nonisolated_inherits_isolation.swift -- REQUIRES: asserts does not hold on 10.9
