@@ -1,0 +1,1 @@
+The 10.9 toolchain now ships dsymutil, so swiftc -g links a program on a Mac without the Command Line Tools.

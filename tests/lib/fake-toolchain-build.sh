@@ -23,7 +23,7 @@ fake_toolchain_build() {
     "$_fw/stdlib-build/lib/swift/macosx/Dispatch.swiftmodule" \
     "$_fw/stdlib-build/lib/swift/macosx/_Concurrency.swiftmodule" "$_fw/stdlib-build/lib/swift/macosx/_Builtin_float.swiftmodule" \
     "$_fw/stdlib-build/lib/swift/shims" "$_fw/llvm-project/llvm" "$_fw/builtins-x86/lib/darwin"
-  for _ff in $_fs/bin/swift-frontend $_fl/bin/lld $_fl/bin/clang $_fl/lib/clang/21/include/stdint.h \
+  for _ff in $_fs/bin/swift-frontend $_fl/bin/lld $_fl/bin/clang $_fl/bin/dsymutil $_fl/lib/clang/21/include/stdint.h \
     stdlib-build/lib/swift/macosx/x86_64/libswiftCore.dylib stdlib-build/lib/swift/macosx/x86_64/libswiftSwiftOnoneSupport.dylib \
     stdlib-build/lib/swift/macosx/x86_64/libswiftDarwin.dylib stdlib-build/lib/swift/macosx/x86_64/libswiftObjectiveC.dylib \
     stdlib-build/lib/swift/macosx/x86_64/libswiftDispatch.dylib \

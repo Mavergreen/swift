@@ -56,7 +56,7 @@ BUILTINS="${BUILTINS:-$W/builtins-x86/lib/darwin/libclang_rt.osx.a}"
 # A reused build root keeps the previous LLVM major's resource dir beside the new one; picking either
 # silently could ship the wrong clang headers, so none, or more than one, is refused, named.
 CLANG_INC="$(clang_resource_include "$LB")" || { echo "stage-toolchain: run build-toolchain.sh --host ${STAGE_HOST:-x86_64}" >&2; exit 1; }
-for f in "$SB/bin/swift-frontend" "$LB/bin/lld" "$LB/bin/clang" "$BUILTINS" "$SB/share/swift/compatibility-symbols" \
+for f in "$SB/bin/swift-frontend" "$LB/bin/lld" "$LB/bin/clang" "$LB/bin/dsymutil" "$BUILTINS" "$SB/share/swift/compatibility-symbols" \
          "$W/llvm-project/llvm/LICENSE.TXT" "$SHIPYARD/sdk-pins.sh"; do
   [ -e "$f" ] || { echo "stage-toolchain: missing $f -- run build-builtins.sh, build.sh and build-toolchain.sh --host ${STAGE_HOST:-x86_64}" >&2; exit 1; }
 done
@@ -112,6 +112,9 @@ mkdir -p "$P/bin" "$P/libexec/mavergreen-swift" "$P/lib/swift/macosx" "$P/lib/cl
 cp "$SB/bin/swift-frontend" "$P/bin/swift-frontend"
 cp "$LB/bin/lld" "$P/bin/ld64.lld"
 cp "$LB/bin/clang" "$P/bin/clang"
+# platform: swiftc -g links an executable through dsymutil, which the driver looks for beside swift-frontend
+#           before xcrun; 10.9 without the Command Line Tools has none, so without this copy -g fails there.
+cp "$LB/bin/dsymutil" "$P/bin/dsymutil"
 ln -s clang "$P/bin/clang++"
 # clang loads <driver>.cfg from its own bin/: clang.cfg for clang, clang++.cfg for clang++ (toolchain/clang.cfg).
 cp "$HERE/toolchain/clang.cfg" "$P/bin/clang.cfg"

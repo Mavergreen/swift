@@ -187,7 +187,7 @@ x86_both() {  # what the x86_64 toolchain's configure is in either mode; $2 is t
   has "$1" "  -DCMAKE_Swift_COMPILER=<T>/host/bin/swiftc"
   has "$1" "  -DCMAKE_EXE_LINKER_FLAGS=-L<T>/w/swiftdarwin-x86"
   has "$1" "  -DSWIFT_COMPILER_SOURCES_SDK_FLAGS=-sdk;<T>/sdk/MacOSX11.3.sdk;-Xcc;-D_LIBCPP_DISABLE_AVAILABILITY;-Xfrontend;-disable-availability-checking;-runtime-compatibility-version;none;-module-cache-path;<T>/w/swift-x86-modcache"
-  has "$1" "guard ALLOW= LIPO=<T>/$2/bin/llvm-lipo OTOOL=<T>/$2/bin/llvm-otool NM=<T>/$2/bin/llvm-nm STRINGS=<T>/$2/bin/llvm-strings <T>/w/swift-x86/bin/swift-frontend <T>/w/llvm-x86/bin/lld <T>/w/llvm-x86/bin/clang"
+  has "$1" "guard ALLOW= LIPO=<T>/$2/bin/llvm-lipo OTOOL=<T>/$2/bin/llvm-otool NM=<T>/$2/bin/llvm-nm STRINGS=<T>/$2/bin/llvm-strings <T>/w/swift-x86/bin/swift-frontend <T>/w/llvm-x86/bin/lld <T>/w/llvm-x86/bin/clang <T>/w/llvm-x86/bin/dsymutil"
   lacks "$1" "otool -l"
   lacks "$1" "<T>/sdk/MacOSX10.9.sdk"
   lacks "$1" "toolchain/usr/bin/swiftc"
@@ -198,7 +198,7 @@ x86_both() {  # what the x86_64 toolchain's configure is in either mode; $2 is t
     || fail "$1: swiftdarwin-x86 does not hold the 11.3 SDK's libswiftDarwin.tbd alone"
   [ "$(ls "$W/swiftdarwin-x86")" = libswiftDarwin.tbd ] || fail "$1: swiftdarwin-x86 holds more than libswiftDarwin.tbd"
   grep -qx '    host: Swift version 6.4 (host)' "$T/$1.out" || fail "$1: did not print the host's version: $(cat "$T/$1.out")"
-  grep -qx 'OK: swift-frontend, lld and clang for x86_64 / 10.9' "$T/$1.out" || fail "$1 did not finish OK: $(cat "$T/$1.out")"
+  grep -qx 'OK: swift-frontend, lld, clang and dsymutil for x86_64 / 10.9' "$T/$1.out" || fail "$1 did not finish OK: $(cat "$T/$1.out")"
 }
 
 echo "-- x86_64, cross (CI): clang22-cross, build-llvm.sh's TableGen, the native helpers, the named host toolchain"
@@ -343,9 +343,9 @@ lacks arm64 "runtime-compatibility-version"
 lacks arm64 "clang22"
 lacks arm64 "llvm-x86"
 lacks arm64 "stubs"
-has arm64 "guard ALLOW=arm64 LIPO= OTOOL= NM= STRINGS= <T>/w/swift-arm64/bin/swift-frontend <T>/w/llvm-arm64/bin/lld <T>/w/llvm-arm64/bin/clang"
+has arm64 "guard ALLOW=arm64 LIPO= OTOOL= NM= STRINGS= <T>/w/swift-arm64/bin/swift-frontend <T>/w/llvm-arm64/bin/lld <T>/w/llvm-arm64/bin/clang <T>/w/llvm-arm64/bin/dsymutil"
 has arm64 "python3 <T>/repo/scripts/audit-imports.py <T>/w/swift-arm64/bin/swift-frontend <T>/sdk/MacOSX11.3.sdk"
-grep -qx 'OK: swift-frontend, lld and clang for arm64 / macOS 11.0, targeting x86_64 / OS X 10.9' "$T/arm64.out" \
+grep -qx 'OK: swift-frontend, lld, clang and dsymutil for arm64 / macOS 11.0, targeting x86_64 / OS X 10.9' "$T/arm64.out" \
   || fail "arm64 did not finish OK: $(cat "$T/arm64.out")"
 
 echo "-- arm64 with no host swiftc (build.sh's): refused before step 1"

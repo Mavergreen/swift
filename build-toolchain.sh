@@ -174,7 +174,7 @@ else
     -DCMAKE_LINKER="$NATIVE/bin/ld64.lld" -DCLANG_DEFAULT_LINKER=lld -DHOST_LINK_VERSION="$HOST_LINK_VERSION"
 fi
 printf '%s\n' "$LLVM_SRC" > "$L/mavergreen-inputs.stamp"
-ninja -C "$L" -j "$JOBS" llvm-libraries clang-libraries clang-resource-headers lld clang
+ninja -C "$L" -j "$JOBS" llvm-libraries clang-libraries clang-resource-headers lld clang dsymutil
 
 echo "==> 2. swift-cmark"
 check_release_pin swift-cmark "$CMARK_SWIFT_RELEASE" "$CMARK_TAG" "$CMARK_SHA" "$CMARK_REPO_URL"
@@ -309,21 +309,22 @@ if [ "$MODE" = cross ]; then DI="$(xcrun -f dyld_info 2>/dev/null || :)"; fi
 if [ "$HOST" = x86_64 ]; then
   echo "==> 6. check: minOS and SDK $DEPLOYMENT, 10.9-safe imports, the frontend's own rpath"
   OTOOL="$X/llvm-otool"; export OTOOL
-  for b in "$S/bin/swift-frontend" "$L/bin/lld" "$L/bin/clang"; do
+  for b in "$S/bin/swift-frontend" "$L/bin/lld" "$L/bin/clang" "$L/bin/dsymutil"; do
     vers="$(DYLDINFO="$DI" macho_version "$b")" || { echo "FAIL: cannot read $b's minOS and SDK"; exit 1; }
     [ "$vers" = "$DEPLOYMENT $DEPLOYMENT" ] || { echo "FAIL: $b records minOS/SDK '$vers', not $DEPLOYMENT/$DEPLOYMENT"; exit 1; }
   done
   LIPO="$X/llvm-lipo" NM="$X/llvm-nm" STRINGS="$X/llvm-strings" \
-    MAVERICKS_DEVIATIONS_ROOT="$HERE" sh "$HERE/scripts/guard.sh" "$S/bin/swift-frontend" "$L/bin/lld" "$L/bin/clang"
+    MAVERICKS_DEVIATIONS_ROOT="$HERE" sh "$HERE/scripts/guard.sh" "$S/bin/swift-frontend" "$L/bin/lld" "$L/bin/clang" \
+    "$L/bin/dsymutil"
   RPATHS="$(DYLDINFO="$DI" macho_rpaths "$S/bin/swift-frontend")" || { echo "FAIL: cannot read swift-frontend's rpaths"; exit 1; }
   printf '%s\n' "$RPATHS" | grep -qx '@loader_path/../lib/swift/macosx' \
     || { echo "FAIL: swift-frontend's rpath is not @loader_path/../lib/swift/macosx"; exit 1; }
-  echo "OK: swift-frontend, lld and clang for $ARCH / $DEPLOYMENT"
+  echo "OK: swift-frontend, lld, clang and dsymutil for $ARCH / $DEPLOYMENT"
 else
   echo "==> 6. check: arm64 at minOS 11.0 / SDK 11.3, the OS's Swift runtime, and only macOS 11 imports"
   # The guard holds each to arm64 alone and the family's arm64 pin (sdk-pins.sh: minos 11.0, sdk 11.3).
   MAVERICKS_ALLOW_ARCHS=arm64 MAVERICKS_DEVIATIONS_ROOT="$HERE" sh "$HERE/scripts/guard.sh" \
-    "$S/bin/swift-frontend" "$L/bin/lld" "$L/bin/clang"
+    "$S/bin/swift-frontend" "$L/bin/lld" "$L/bin/clang" "$L/bin/dsymutil"
   # Captured before any test: a reader that failed must fail the check, not read as "no such load".
   DEPS="$("$DI" -dependents "$S/bin/swift-frontend")" || { echo "FAIL: cannot read swift-frontend's dependents"; exit 1; }
   RPATHS="$(DYLDINFO="$DI" macho_rpaths "$S/bin/swift-frontend")" || { echo "FAIL: cannot read swift-frontend's rpaths"; exit 1; }
@@ -337,5 +338,5 @@ else
   # link path, so the link alone proves nothing about macOS 11: every import is audited against the
   # pinned 11.3 SDK instead.
   python3 "$HERE/scripts/audit-imports.py" "$S/bin/swift-frontend" "$SDK113"
-  echo "OK: swift-frontend, lld and clang for arm64 / macOS 11.0, targeting x86_64 / OS X 10.9"
+  echo "OK: swift-frontend, lld, clang and dsymutil for arm64 / macOS 11.0, targeting x86_64 / OS X 10.9"
 fi

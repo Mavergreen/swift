@@ -40,11 +40,11 @@ rm -rf "$OUT/Library"
 SCR="$DIST/pkg-scripts-$TH_PAYLOAD"; rm -rf "$SCR"
 # spec: shipyard docs/superpowers/specs/2026-09-24-install-layout-design.md decision 4 -- a bare name two
 #       groups want makes `mavergreen link` refuse the whole product, and clang22's group owns clang,
-#       clang++ and ld64.lld (clang22-cross's too, on the modern Mac); clang's cfgs are not commands.
-#       swift-frontend run directly would skip swiftc's 10.9 defaults. One list: both toolchains exclude
-#       the same six.
+#       clang++, ld64.lld and dsymutil (clang22-cross's too, on the modern Mac); clang's cfgs are not
+#       commands. swift-frontend run directly would skip swiftc's 10.9 defaults. One list: both
+#       toolchains exclude the same seven.
 set -- --exclude bin/swift-frontend --exclude bin/ld64.lld --exclude bin/clang --exclude bin/clang++ \
-  --exclude bin/clang.cfg --exclude bin/clang++.cfg --scripts-out "$SCR"
+  --exclude bin/clang.cfg --exclude bin/clang++.cfg --exclude bin/dsymutil --scripts-out "$SCR"
 if [ "$PRODUCT" = swift-toolchain ]; then
   set -- --stage "$OUT" --product "$PRODUCT" --name "Mavericks Swift Toolchain" --group swift --version "$VERSION" "$@"
 else

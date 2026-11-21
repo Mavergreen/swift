@@ -95,7 +95,7 @@ mkdir -p "$T/out/usr/stale" "$T/out/Library/keep"
 SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$W/recaulk" "$T/out"
 P=usr/local/mavergreen/swift-toolchain
 got="$(cd "$T/out" && find usr Library -type f | sort)"
-want="$(printf '%s\n' "$P/bin/clang" "$P/bin/clang.cfg" "$P/bin/clang++.cfg" "$P/bin/ld64.lld" "$P/bin/swift-frontend" "$P/bin/swiftc" \
+want="$(printf '%s\n' "$P/bin/clang" "$P/bin/clang.cfg" "$P/bin/clang++.cfg" "$P/bin/dsymutil" "$P/bin/ld64.lld" "$P/bin/swift-frontend" "$P/bin/swiftc" \
   "$P/lib/clang/21/include/stdint.h" "$P/lib/clang/21/lib/darwin/libclang_rt.osx.a" \
   "$P/lib/recaulk/librecaulk.a" "$P/lib/recaulk/notices.tsv" "$P/lib/recaulk/VERSION" \
   "$P/lib/swift/apinotes/Dispatch.apinotes" "$P/lib/swift/recaulk-importer/Dispatch.modulemap" \
@@ -214,14 +214,14 @@ xwant="$(printf '%s\n' "$want" | sed "s|^$P/|$X/|" | sort)"
 $got
 wanted
 $xwant"
-for f in bin/swift-frontend:swift-arm64/bin/swift-frontend bin/ld64.lld:llvm-arm64/bin/lld bin/clang:llvm-arm64/bin/clang \
+for f in bin/swift-frontend:swift-arm64/bin/swift-frontend bin/ld64.lld:llvm-arm64/bin/lld bin/clang:llvm-arm64/bin/clang bin/dsymutil:llvm-arm64/bin/dsymutil \
          share/swift/compatibility-symbols:swift-arm64/share/swift/compatibility-symbols \
          share/swift/diagnostics/en.db:swift-arm64/share/swift/diagnostics/en.db; do
   [ "$(cat "$T/xout/$X/${f%%:*}")" = "${f#*:}" ] || fail "cross $X/${f%%:*} is not ${f#*:}"
 done
 # Everything else is the native payload's bytes: one stdlib build, one builtins archive, one set of wrappers.
 ( cd "$T/out/$P" && find . -type f ) | while IFS= read -r f; do
-  case "$f" in ./bin/swift-frontend|./bin/ld64.lld|./bin/clang|./share/swift/*|./lib/clang/*/include/*) continue ;; esac
+  case "$f" in ./bin/swift-frontend|./bin/ld64.lld|./bin/clang|./bin/dsymutil|./share/swift/*|./lib/clang/*/include/*) continue ;; esac
   cmp -s "$T/out/$P/$f" "$T/xout/$X/$f" || fail "cross $f differs from the native payload's"
 done
 [ "$(readlink "$T/xout/$X/lib/swift/clang")" = ../clang/21 ] || fail "cross lib/swift/clang is not a link to ../clang/21"

@@ -70,6 +70,9 @@ swiftc hello.swift -o hello
 ./hello
 ```
 
+Neither needs the Command Line Tools: the toolchain brings its own `clang`, `ld64.lld` and, for `swiftc -g`,
+`dsymutil`.
+
 ### From Apple Silicon
 
 ```sh

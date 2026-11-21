@@ -86,7 +86,7 @@ pb() { /usr/libexec/PlistBuddy -c "Print :$1" "$M" 2>/dev/null; }
 [ "$(pb group)" = swift ] || fail "the manifest's group is '$(pb group)', not swift"
 [ "$(pb appcast)" = "$FEED" ] || fail "the manifest's appcast is '$(pb appcast)'"
 ex=""; i=0; while e="$(pb "exports-exclude:$i")"; do ex="$ex$e "; i=$((i + 1)); done
-[ "$ex" = "bin/swift-frontend bin/ld64.lld bin/clang bin/clang++ bin/clang.cfg bin/clang++.cfg " ] || fail "the manifest excludes [$ex]"
+[ "$ex" = "bin/swift-frontend bin/ld64.lld bin/clang bin/clang++ bin/clang.cfg bin/clang++.cfg bin/dsymutil " ] || fail "the manifest excludes [$ex]"
 
 echo "-- its preinstall requires swift-runtime of its own version or later, and libcxx22"
 # Programs this toolchain builds link @rpath/libswift_Concurrency.dylib (swiftc imports _Concurrency
@@ -117,7 +117,7 @@ pre_on "$RUNTIME_MIN" || fail "the preinstall refused swift-runtime $RUNTIME_MIN
 
 echo "-- beside an installed clang22, linking exports swiftc alone and takes none of clang22's names"
 C="$T/c22"; mkdir -p "$C/usr/local/mavergreen/clang22/bin"
-for f in clang clang++ ld64.lld; do : > "$C/usr/local/mavergreen/clang22/bin/$f"; done
+for f in clang clang++ ld64.lld dsymutil; do : > "$C/usr/local/mavergreen/clang22/bin/$f"; done
 sh "$SHIPYARD/render-manifest.sh" --stage "$C" --product clang22 --name "Clang 22" \
   --version 22.1.1-mavericks.5 --group clang --line 22 >/dev/null || fail "render-manifest.sh failed for the fake clang22"
 cp -R "$C/usr/local/mavergreen/clang22" "$V/usr/local/mavergreen/"
@@ -127,7 +127,7 @@ sh "$MG" --root "$V" link swift-toolchain 2> "$T/link.err" \
   || fail "linking swift-toolchain beside clang22 was refused: $(cat "$T/link.err")"
 F="$V/usr/local/mavergreen/bin"
 [ "$(readlink "$F/swiftc")" = ../swift-toolchain/bin/swiftc ] || fail "bin/swiftc links to '$(readlink "$F/swiftc")'"
-for n in clang clang++ ld64.lld; do
+for n in clang clang++ ld64.lld dsymutil; do
   [ "$(readlink "$F/$n")" = "../clang22/bin/$n" ] || fail "bin/$n links to '$(readlink "$F/$n")', not clang22's"
 done
 # Every link into the toolchain, anywhere in the farm: the staged bin/ holds more than swiftc, and
@@ -186,7 +186,7 @@ M="$XV/$XP/mavergreen.plist"
 [ "$(pb line)" = cross ] || fail "the cross manifest's line is '$(pb line)', not cross"
 [ "$(pb appcast)" = "$XFEED" ] || fail "the cross manifest's appcast is '$(pb appcast)'"
 ex=""; i=0; while e="$(pb "exports-exclude:$i")"; do ex="$ex$e "; i=$((i + 1)); done
-[ "$ex" = "bin/swift-frontend bin/ld64.lld bin/clang bin/clang++ bin/clang.cfg bin/clang++.cfg " ] \
+[ "$ex" = "bin/swift-frontend bin/ld64.lld bin/clang bin/clang++ bin/clang.cfg bin/clang++.cfg bin/dsymutil " ] \
   || fail "the cross manifest excludes [$ex]"
 
 echo "-- the cross toolchain requires no swift-runtime: it runs nothing it builds"
@@ -194,7 +194,7 @@ if grep -q swift-runtime "$xcomp/Scripts/preinstall" 2>/dev/null; then fail "the
 
 echo "-- beside clang22-cross and a native toolchain linked first: swiftc-cross alone, then swiftc once selected"
 C="$T/c22x"; mkdir -p "$C/usr/local/mavergreen/clang22-cross/bin"
-for f in clang clang++ ld64.lld; do : > "$C/usr/local/mavergreen/clang22-cross/bin/$f"; done
+for f in clang clang++ ld64.lld dsymutil; do : > "$C/usr/local/mavergreen/clang22-cross/bin/$f"; done
 sh "$SHIPYARD/render-manifest.sh" --stage "$C" --product clang22-cross --name "Clang 22 (cross)" \
   --version 22.1.1-mavericks.6 --group clang --line 22-cross >/dev/null || fail "render-manifest.sh failed for the fake clang22-cross"
 cp -R "$C/usr/local/mavergreen/clang22-cross" "$XV/usr/local/mavergreen/"
@@ -206,7 +206,7 @@ sh "$MG" --root "$XV" link swift-toolchain-cross 2> "$T/xlink.err" \
 F="$XV/usr/local/mavergreen/bin"
 [ "$(readlink "$F/swiftc")" = ../swift-toolchain/bin/swiftc ] || fail "bin/swiftc links to '$(readlink "$F/swiftc")', not the native toolchain's, which was linked first"
 [ "$(readlink "$F/swiftc-cross")" = ../swift-toolchain-cross/bin/swiftc ] || fail "bin/swiftc-cross links to '$(readlink "$F/swiftc-cross")'"
-for n in clang clang++ ld64.lld; do
+for n in clang clang++ ld64.lld dsymutil; do
   [ "$(readlink "$F/$n")" = "../clang22-cross/bin/$n" ] || fail "bin/$n links to '$(readlink "$F/$n")', not clang22-cross's"
 done
 xexported() {  # [volume], $XV by default
