@@ -414,37 +414,43 @@ merges like any other, as the family's default has it.
 The gate is sized, so that upstream's tests can grow. `run-selftest.sh --gate` runs our own binaries
 500x plus 10x under Guard Malloc (36 of them) and upstream's, each included test at -O and -Onone and once per
 variant (`SELFTEST_UPSTREAM_RUNS`, default 20, plus 1 under Guard Malloc), after a `--loads` run. The lists
-include 7 Darwin, 4 ObjectiveC and 67 Concurrency tests (most of those built twice: lit runs them again in
-Swift 5 mode with NonisolatedNonsendingByDefault), 137 builds, 274 upstream binaries, 310 with ours. 47 of those
-tests have their output checked with FileCheck, 176 of the binaries.
+include 7 Darwin, 4 ObjectiveC and 73 Concurrency tests (most of those built twice: lit runs them again in
+Swift 5 mode with NonisolatedNonsendingByDefault), 149 builds, 298 upstream binaries, 334 with ours. 49 of those
+tests have their output checked with FileCheck, 184 of the binaries.
 
 Measured on the real box (ultimate-hat, 12 cores, shared: load 3 to 5.5): the whole `--gate`, 274 binaries,
 took 70 min 41 s and passed; 280 binaries, 65 min 1 s; 310, with the Dispatch tests, 79 min 32 s (load 2 to 3;
-the bundle's 310 compiles there took 3 min 39 s). Upstream's runs have their own limit,
+the bundle's 310 compiles there took 3 min 39 s); 334, with the six tests that use dispatchPrecondition, 128 min
+35 s (load 13 to 25 for its first hour, another session's build, then 2 to 5; the 334 compiles took 8 min 32 s).
+Of that, our dispatch_overlay_test's four binaries took 42 min: a run takes 0.8 s, nearly all of it asleep (0.26 s
+at 310). Upstream's runs have their own limit,
 `SELFTEST_UPSTREAM_TIMEOUT`, 180 s. Every binary's slowest single run on the box: clock's Guard Malloc runs take
 40 to 45 s (its unguarded runs 1.3 to 1.8 s), and cancellation_handler_concurrent's -Onone Guard Malloc run takes
-65 s (100,000 tasks; 16 s at -O). async_task_cancellation_while_running takes 13.1 s a run, asleep. Everything
-else is under 5 s, ours included. So 180 s is three to four times the box's worst. A hang still fails, three
+65 s (100,000 tasks; 16 s at -O). async_task_cancellation_while_running takes 13.1 s a run, asleep, and
+async_task_executor_default_actor_funcs 6.0 s, asleep. Everything else is under 5 s, ours included. So 180 s
+is three to four times the box's worst. A hang still fails, three
 minutes later.
 
-The VM estimate has to tell sleeping from computing, because a VM is no faster at sleeping. Six suites are
+The VM estimate has to tell sleeping from computing, because a VM is no faster at sleeping. Seven suites are
 sleep-bound: basic_future (4 binaries x 21 runs x 4.4 s, about 370 s), clock's unguarded runs (4 x 20 x 1.55 s,
 about 125 s), async_task_cancellation_while_running (4 x 21 x 13.1 s, about 1100 s), async_task_sleep (4 x 21 x
-1.55 s, about 130 s), async_task_sleep_cancel and sleep_executor (4 x 21 x 0.79 s and 0.43 s, about 100 s), and
-our dispatch_overlay_test (4 x 510 x 0.26 s, about 530 s), so about 2355 s. The rest is CPU-bound: 465 s of the
-original upstream tests', about 185 s of ours and 1722 s of the 44 FileCheck tests' (their 134 s a run, less 52 s
-of that sleeping, x 21: the 47 FileCheck tests less the 3 the Dispatch tests brought, of which async_task_sleep
-and async_task_sleep_cancel are counted among the sleep-bound suites above and custom_executors_globalActor runs
-in next to no time), about 2370 s. At Release 1's VM-to-box CPU ratio of 0.42 (run 40272925587), that rest
-takes about 995 s. The VM gate is then about 2355 + 995 = 3350 s, 56 min. Compiling in the VM is the larger
-cost: 310 binaries at a pessimistic 15 s each is 78 min. Install and smoke are allowed 18 min, a pessimistic
-allowance (the old estimate's hour less its compiles and gate; the whole old vm-test measured about 31 min).
-Install, compiles, gate and smoke total about 152 min at the worst, so `vm-test`'s `timeout-minutes` is 300,
-about twice that, under GitHub's 360. 20 runs stay: 20 plus 1 under Guard Malloc is a short, deterministic-test
+1.55 s, about 130 s), async_task_sleep_cancel and sleep_executor (4 x 21 x 0.79 s and 0.43 s, about 100 s),
+async_task_executor_default_actor_funcs (4 x 21 x 6.0 s, about 505 s), and our dispatch_overlay_test (4 x 510 x
+0.8 s, about 1630 s), so about 3960 s. The rest is CPU-bound: 465 s of the original upstream tests', about 185 s
+of ours and 1722 s of the 44 FileCheck tests' (their 134 s a run, less 52 s of that sleeping, x 21: the 49
+FileCheck tests less the 5 the Dispatch tests brought, of which async_task_sleep and async_task_sleep_cancel are
+counted among the sleep-bound suites above and custom_executors_globalActor, mainactor and
+async_task_executor_unstructured_task_ownership run in next to no time, as do the other new executor tests),
+about 2370 s. At Release 1's VM-to-box CPU ratio of 0.42 (run 40272925587), that rest takes about 995 s. The VM
+gate is then about 3960 + 995 = 4955 s, 83 min. Compiling in the VM costs as much: 334 binaries at a pessimistic
+15 s each is 84 min. Install and smoke are allowed 18 min, a pessimistic allowance (the old estimate's hour less
+its compiles and gate; the whole old vm-test measured about 31 min). Install, compiles, gate and smoke total
+about 185 min at the worst, so `vm-test`'s `timeout-minutes` is 355, the most under GitHub's 360, and about
+1.9 times that, short of the twice the gate had before. 20 runs stay: 20 plus 1 under Guard Malloc is a short, deterministic-test
 budget.
 
-The 300 minutes must be re-sized when more tests come in: each added binary is 15 s of compiles plus its run
-time x 21 (x 510 for one of ours).
+The 355 minutes cannot grow, so before more tests come in the gate must be made shorter by what they add:
+each added binary is 15 s of compiles plus its run time x 21 (x 510 for one of ours).
 
 Owed: upstream tests the gate excludes because 10.9 or this release lacks something, each owed
 until its blocker goes (the reasons are in `tests/upstream/*.list`):
