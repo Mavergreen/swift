@@ -19,9 +19,8 @@ For a target of 10.14.4 and later the program loads the OS's own `/usr/lib/swift
 availability apply unchanged. A program that uses any of this needs the runtime package of its toolchain's
 release or later, and each toolchain package requires it. Programs link Recaulk, so `fma`, `fmal` and `truncl`
 are correct, with the notice duty described under "Recaulk in every program", below. Still owed, and not in
-this release's gate: upstream tests that set environment variables, that use `dispatchPrecondition` or
-`Synchronization`, that use `@TaskLocal` (a macro; the toolchain has no macro plugins), or whose RUN: lines
-the gate does not translate.
+this release's gate: upstream tests that set environment variables, that use `Synchronization`, that use
+`@TaskLocal` (a macro; the toolchain has no macro plugins), or whose RUN: lines the gate does not translate.
 
 An app that bundles this runtime must copy the `libswiftCompatibilitySpan.dylib` link, which points at
 `libswiftCore.dylib`, along with the libraries. Under an rpath that finds another Core first, 10.9's dyld
@@ -39,12 +38,11 @@ without Foundation. Both are Swift 6.2's and 5.4's own sources, built against th
 
 `import Dispatch` gives Swift 5.4's Dispatch overlay over 10.9's own libdispatch: `DispatchQueue`, groups,
 semaphores, `asyncAfter`, sources, `DispatchWorkItem`, `DispatchData` and QoS, with Recaulk supplying the
-functions macOS 10.10 added. Not in this overlay, on any macOS: `dispatchPrecondition`,
-`DispatchWorkItem`'s `wait` and `notify`, `DispatchQueue.qos`, the `autoreleaseFrequency:` argument,
-`.initiallyInactive` and the user-data-replace source; and `activate()` stays macOS 10.12, so a 10.9 program
-that calls it is refused at compile time (start a new source with `resume()`). INGREDIENTS.md lists them and
-what brings each back. Recaulk's Dispatch declarations follow the SDK `swiftc` uses by default, or `SDKROOT`'s;
-a program built with its own `-sdk` gets that SDK's own Dispatch module map, without them.
+functions macOS 10.10 and 10.12 added: `dispatchPrecondition`, `DispatchWorkItem`'s `wait` and `notify`, the
+`autoreleaseFrequency:` argument, `.initiallyInactive` and `activate()`. Not in this overlay, on any macOS:
+`DispatchQueue.qos` and the user-data-replace source. INGREDIENTS.md lists them, what brings each back, and
+how the restored APIs behave on 10.9. Recaulk's Dispatch declarations follow the SDK `swiftc` uses by default,
+or `SDKROOT`'s; a program built with its own `-sdk` gets that SDK's own Dispatch module map, without them.
 
 The 10.9 SDK differs from later ones where a Swift class overrides `NSObject`: `hash` is a method there,
 so write `override func hash() -> Int`, not `override var hash: Int`. It also has no nullability, so
