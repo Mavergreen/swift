@@ -1,1 +1,1 @@
-Programs built with either toolchain now take Recaulk 20261121.1, whose close and dup2 no longer hang on a socket another thread is reading on 10.9, and whose dispatch blocks and queues keep one cancel and activation state between a program and libswiftDispatch.
+Programs now take Recaulk 20261121.1: close and dup2 no longer hang on a socket another thread reads, and dispatch state is shared between a program and libswiftDispatch.

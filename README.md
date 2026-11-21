@@ -41,7 +41,7 @@ semaphores, `asyncAfter`, sources, `DispatchWorkItem`, `DispatchData` and QoS, w
 functions macOS 10.10 and 10.12 added: `dispatchPrecondition`, `DispatchWorkItem`'s `wait` and `notify`, the
 `autoreleaseFrequency:` argument, `.initiallyInactive` and `activate()`. Not in this overlay, on any macOS:
 `DispatchQueue.qos` and the user-data-replace source. INGREDIENTS.md lists them, what brings each back, and
-how the restored APIs behave on 10.9. Recaulk's Dispatch declarations follow the SDK `swiftc` uses by default,
+how the restored APIs behave on 10.9 (and, on 10.10 and 10.11, that an initially inactive queue drops its QoS). Recaulk's Dispatch declarations follow the SDK `swiftc` uses by default,
 or `SDKROOT`'s; a program built with its own `-sdk` gets that SDK's own Dispatch module map, without them.
 
 The 10.9 SDK differs from later ones where a Swift class overrides `NSObject`: `hash` is a method there,

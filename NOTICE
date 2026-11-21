@@ -105,7 +105,8 @@ project authors), with the local patches in ./patches/overlays:
   0004  AutoreleaseFrequency's .workItem and .never are macOS 10.9, as Recaulk
         defines and declares dispatch_queue_attr_make_with_autorelease_frequency.
   0005  The initially-inactive queue attribute is macOS 10.9, as Recaulk defines
-        and declares dispatch_queue_attr_make_initially_inactive.
+        and declares dispatch_queue_attr_make_initially_inactive; on macOS 10.10
+        and 10.11 an initially inactive queue is made without its QoS.
   0006  DispatchQueue.init(label:...target:) passes the target at creation on
         macOS 10.9, as Recaulk defines and declares dispatch_queue_create_with_target.
   0008  DispatchPredicate and dispatchPrecondition are macOS 10.9, as Recaulk

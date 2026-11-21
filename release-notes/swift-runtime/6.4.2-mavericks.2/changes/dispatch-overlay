@@ -1,1 +1,1 @@
-Swift programs on 10.9 can now import Dispatch (libswiftDispatch), with the Dispatch overlay's APIs, dispatchPrecondition, DispatchWorkItem's wait and notify and inactive queues among them, all but DispatchQueue.qos and the user-data-replace source, which the readme lists.
+Swift programs on 10.9 can import Dispatch, with dispatchPrecondition, DispatchWorkItem's wait and notify, and initiallyInactive; DispatchQueue.qos and the data-replace source are absent (see the readme).

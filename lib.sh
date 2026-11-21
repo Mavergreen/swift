@@ -447,8 +447,8 @@ _sdk_stub_collect() {
 # shadows inside the image that links it, one "<member> <symbol> <reason>" per line ("#" lines are
 # comments): a (member, global) pair it lists is taken, and hidden like the rest. RECAULK_EXPECTED_SHADOWS,
 # space-separated <member>:<symbol> pairs (none when unset), names the shadows the caller expects the
-# subset to carry; it fails, naming each, when the pairs taken differ either way. Unset, the list takes no
-# shadow; naming no file, it is an error. A file RECAULK_SYSTEM_EXPORTS names (sdk_stub_exports of 10.9's
+# subset to carry; it fails, naming each, when the pairs taken differ either way. RECAULK_IMAGE_LOCAL_SHADOWS unset, no
+# shadow is taken; naming no file, it is an error. A file RECAULK_SYSTEM_EXPORTS names (sdk_stub_exports of 10.9's
 # libSystem) lists what the OS defines itself: a member's need for one of those names, unless a <symbol>,
 # binds to libSystem at the link, so it picks no member (Recaulk's socket_close defines close and dup2,
 # which its os_system_version and macports-legacy-support's atcalls call). A <symbol> is always Recaulk's,
