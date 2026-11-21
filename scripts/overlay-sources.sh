@@ -22,7 +22,7 @@
 #              Source and Time.swift and Dispatch.mm, not Schedulers+DispatchQueue.swift (it imports Combine) --
 #              patched by patches/overlays 0003 onward for the 10.9 SDK and Recaulk's dispatch declarations
 #              (each in OVERLAY_PATCHES below), and shims/: 5.4's stdlib/public/SwiftShims/DispatchOverlayShims.h,
-#              patched by 0007 and 0010, under a one-module module.modulemap, _SwiftDispatchOverlayShims, which
+#              patched by 0010, under a one-module module.modulemap, _SwiftDispatchOverlayShims, which
 #              the overlay imports @_implementationOnly. The header is copied, not named in place: a map that
 #              pointed into the 5.4 tree would load that tree's SwiftShims map and redefine SwiftShims.
 #   Env: PYTHON (gyb's python, default python3: build.sh names the one CMake found).
@@ -67,32 +67,36 @@ done
 #       headers lack DISPATCH_NOESCAPE, which a C redeclaration cannot add as far as Swift sees), and
 #       SwiftWrapper: struct on dispatch_block_flags_t (Recaulk declares it a plain integer, not an option set).
 #  0003 .. 0013 -- the Dispatch overlay, from the 5.4 root: the 10.9 SDK declares neither a QoS-class global queue nor
-#       several of 5.4's functions, and Recaulk declares only some of them. Each concerns one thing:
+#       several of 5.4's functions, which Recaulk declares and defines, all but the DATA_REPLACE source. Each concerns one
+#       thing (0007 is retired):
 #       0003 global(qos:) maps the QoS to a 10.9 priority below macOS 10.10;
-#       0004, 0005, 0009, 0010 remove autorelease frequency, initiallyInactive, DispatchQueue.qos and the DATA_REPLACE
-#         source: declared by no 10.9 or Recaulk header;
-#       0006 the target: initializer sets the target after creating the queue (no dispatch_queue_create_with_target);
-#       0007 DispatchWorkItem loses wait and notify, and the shims their two calls (dispatch_block_wait, _notify);
-#       0008 DispatchPredicate and dispatchPrecondition go: dispatch_assert_queue_barrier and _not are declared
-#         nowhere, and dispatch_assert_queue is not declared by Recaulk;
+#       0004, 0005, 0006, 0008 lower to 10.9 what macOS 10.12 added and Recaulk declares and defines: the autorelease
+#         frequencies, initiallyInactive, the target: initializer's dispatch_queue_create_with_target ($V2), and
+#         DispatchPredicate and dispatchPrecondition (dispatch_assert_queue and _not as $V2, and _barrier);
+#       0009, 0010 remove DispatchQueue.qos (Recaulk's dispatch_queue_get_qos_class answers QOS_CLASS_UNSPECIFIED,
+#         whatever the queue was made with) and the DATA_REPLACE source (declared by no 10.9 or Recaulk header);
 #       0011 the 10.9 headers carry no nullability, so Data and IO unwrap what C never returns NULL for;
 #       0012 availability is lowered to 10.9 where Recaulk defines and declares the functions (the dispatch_block
-#         functions, dispatch_queue_attr_make_with_qos_class) and the QoS types that use them; not activate();
+#         functions, wait and notify among them, dispatch_queue_attr_make_with_qos_class, dispatch_activate) and the
+#         QoS types and the source's activate() that use them;
 #       0013 Recaulk's dispatch_block_create drops its flags, so below macOS 10.10 a .barrier work item or block is
-#         submitted with dispatch_barrier_async/_sync (a group's by enter and leave around it) rather than run
+#         submitted with dispatch_barrier_async/_sync (a group's by enter and leave around it, a notification's
+#         once the group or work item it waits on is done) rather than run
 #         alongside the readers (a source's handler is not submitted, so its flag is a no-op on any macOS); the other
 #         flags mean nothing without vouchers and QoS, and are dropped.
 #  0014 apinotes -- Dispatch.apinotes again, after 0002: dispatch_group_create and dispatch_semaphore_create return
 #       non-nil (10.9's headers carry no nullability, so DispatchGroup() and DispatchSemaphore(value:) would be failable
 #       initializers, as no SDK's are).
 #  0015 Sendable -- 5.4 predates it: DispatchObject (so queues, groups, semaphores, sources, IO), DispatchData, DispatchSpecificKey
-#       (where its value is) and the time, QoS and flag value types are @unchecked Sendable, exactly where Apple's newest
-#       SDK has them and nowhere else, so a Swift 6 client can capture a queue or a semaphore in a @Sendable closure.
-#  0016 activate -- Dispatch.apinotes and Dispatch.swift: Recaulk declares dispatch_activate with no availability and
-#       defines it as dispatch_resume, and every object is active already (0005), so the C function is imported as
-#       DispatchObject.__activate() and the overlay declares activate() over it at macOS 10.12, as the SDK does: a
-#       10.9 program that calls activate() is refused at compile time rather than over-resume and trap.
-OVERLAY_PATCHES="0001 0002 0003 0004 0005 0006 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016"
+#       (where its value is) and the time, QoS, flag, autorelease-frequency and predicate value types are @unchecked
+#       Sendable, exactly where Apple's newest SDK has them and nowhere else, so a Swift 6 client can capture a queue or a
+#       semaphore in a @Sendable closure.
+#  0016 activate -- Dispatch.apinotes and Dispatch.swift: dispatch_activate is imported as DispatchObject.__activate(),
+#       and the overlay declares activate() over it at macOS 10.9, so a program's activate() calls libswiftDispatch,
+#       which links Recaulk's real dispatch_activate, as for every other function 10.9's libSystem lacks, rather than
+#       import dispatch_activate itself, which only a program linked with Recaulk would load.
+#  0007 is retired: Recaulk now declares and defines dispatch_block_wait and _notify.
+OVERLAY_PATCHES="0001 0002 0003 0004 0005 0006 0008 0009 0010 0011 0012 0013 0014 0015 0016"
 PATCHES_DIR="$HERE/patches/overlays"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $OVERLAY_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED" >&2
@@ -114,12 +118,10 @@ grep -q "^  SwiftName: 'DispatchObject.__activate(self:)'$" "$AP" || { echo "ove
 # One marker per patch, in the file it patches; a grep that finds none means a patch applied to nothing it meant.
 dmark() { grep -q "$3" "$PD/$2" || { echo "overlay-sources.sh: overlay patch $1 ($4) not applied" >&2; exit 1; }; }
 dmark 0003 Queue.swift "Mavericks: 10.9's dispatch_get_global_queue" "global(qos:)"
-dmark 0004 Queue.swift "Mavericks: no AutoreleaseFrequency" "autorelease frequency"
-dmark 0005 Queue.swift "Mavericks: no initially-inactive attribute" "initiallyInactive"
-dmark 0006 Queue.swift "Mavericks: no dispatch_queue_create_with_target" "target:"
-dmark 0007 Block.swift "Mavericks: no wait or notify" "block wait/notify"
-grep -q 'Mavericks: no _swift_dispatch_block_wait' "$PS/DispatchOverlayShims.h" || { echo "overlay-sources.sh: overlay patch 0007 (block wait/notify) not applied to the shims" >&2; exit 1; }
-dmark 0008 Dispatch.swift "Mavericks: no DispatchPredicate" "dispatchPrecondition"
+dmark 0004 Queue.swift "Mavericks: Recaulk defines and declares dispatch_queue_attr_make_with_autorelease_frequency" "autorelease frequency"
+dmark 0005 Queue.swift "Mavericks: Recaulk defines and declares dispatch_queue_attr_make_initially_inactive" "initiallyInactive"
+dmark 0006 Queue.swift "Mavericks: Recaulk defines and declares dispatch_queue_create_with_target" "target:"
+dmark 0008 Dispatch.swift "Mavericks: Recaulk defines and declares dispatch_assert_queue" "dispatchPrecondition"
 dmark 0009 Queue.swift "Mavericks: no qos" "DispatchQueue.qos"
 dmark 0010 Source.swift "Mavericks: no makeUserDataReplaceSource" "DATA_REPLACE"
 grep -q 'Mavericks: no DATA_REPLACE' "$PS/DispatchOverlayShims.h" || { echo "overlay-sources.sh: overlay patch 0010 (DATA_REPLACE) not applied to the shims" >&2; exit 1; }
@@ -132,7 +134,7 @@ dmark 0013 Block.swift "Mavericks: 10.9's dispatch_block_create drops its flags"
 dmark 0013 Dispatch.swift "Mavericks: a barrier-flagged block is submitted as a barrier below 10.10" "barrier routing"
 dmark 0013 Source.swift "Mavericks: a .barrier flag is not routed here" "barrier routing"
 dmark 0015 Dispatch.swift "Mavericks: 5.4 predates Sendable" "Sendable"
-dmark 0016 Dispatch.swift "Mavericks: activate() keeps 10.12's availability" "activate"
+dmark 0016 Dispatch.swift "Mavericks: activate() is the overlay's" "activate"
 cp "$P/ObjectiveC.swift" "$OUT/ObjectiveC/"
 for f in $DFILES; do cp "$PD/$f" "$OUT/Dispatch/"; done
 cp "$PS/DispatchOverlayShims.h" "$OUT/Dispatch/shims/"

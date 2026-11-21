@@ -1,0 +1,21 @@
+--- stdlib/public/Darwin/Dispatch/Queue.swift
++++ stdlib/public/Darwin/Dispatch/Queue.swift
+@@ -30,7 +30,8 @@
+ 
+ 		public static let concurrent = Attributes(rawValue: 1<<1)
+ 
+-		@available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
++		// Mavericks: Recaulk defines and declares dispatch_queue_attr_make_initially_inactive, whose queue its dispatch_activate starts, so the attribute is 10.9
++		@available(macOS 10.9, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+ 		public static let initiallyInactive = Attributes(rawValue: 1<<2)
+ 
+ 		fileprivate func _attr() -> __OS_dispatch_queue_attr? {
+@@ -39,7 +40,7 @@
+ 			if self.contains(.concurrent) {
+ 				attr = _swift_dispatch_queue_concurrent()
+ 			}
+-			if #available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *) {
++			if #available(macOS 10.9, iOS 10.0, tvOS 10.0, watchOS 3.0, *) {
+ 				if self.contains(.initiallyInactive) {
+ 					attr = __dispatch_queue_attr_make_initially_inactive(attr)
+ 				}

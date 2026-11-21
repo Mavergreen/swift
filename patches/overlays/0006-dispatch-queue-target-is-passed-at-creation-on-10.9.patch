@@ -1,0 +1,12 @@
+--- stdlib/public/Darwin/Dispatch/Queue.swift
++++ stdlib/public/Darwin/Dispatch/Queue.swift
+@@ -173,7 +173,8 @@
+ 			attr = __dispatch_queue_attr_make_with_qos_class(attr, qos.qosClass.rawValue, Int32(qos.relativePriority))
+ 		}
+ 
+-		if #available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *) {
++		// Mavericks: Recaulk defines and declares dispatch_queue_create_with_target ($V2), so the target is passed at creation on 10.9
++		if #available(macOS 10.9, iOS 10.0, tvOS 10.0, watchOS 3.0, *) {
+ 			self.init(__label: label, attr: attr, queue: target)
+ 		} else {
+ 			self.init(__label: label, attr: attr)

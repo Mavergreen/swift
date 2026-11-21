@@ -1,6 +1,6 @@
 --- stdlib/public/Darwin/Dispatch/Private.swift
 +++ stdlib/public/Darwin/Dispatch/Private.swift
-@@ -176,11 +176,7 @@
+@@ -186,11 +186,7 @@
  	fatalError()
  }
  
@@ -15,7 +15,7 @@
  public func dispatch_after(_ when: dispatch_time_t, _ queue: DispatchQueue, _ block: () -> Void)
 --- stdlib/public/Darwin/Dispatch/Queue.swift
 +++ stdlib/public/Darwin/Dispatch/Queue.swift
-@@ -435,12 +435,7 @@
+@@ -481,12 +481,7 @@
  		_swift_dispatch_after(wallDeadline.rawValue, self, execute._block)
  	}
  
@@ -25,7 +25,7 @@
 -		let cls = DispatchQoS.QoSClass(rawValue: __dispatch_queue_get_qos_class(self, &relPri))!
 -		return DispatchQoS(qosClass: cls, relativePriority: Int(relPri))
 -	}
-+	// Mavericks: no qos -- dispatch_queue_get_qos_class is in no 10.9 header and no Recaulk one
++	// Mavericks: no qos -- Recaulk's dispatch_queue_get_qos_class answers QOS_CLASS_UNSPECIFIED whatever the queue was made with (10.9 keeps no class), so qos could not read back what was set
  
  	public func getSpecific<T>(key: DispatchSpecificKey<T>) -> T? {
  		let k = Unmanaged.passUnretained(key).toOpaque()

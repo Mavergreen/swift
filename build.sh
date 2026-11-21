@@ -398,18 +398,20 @@ build_overlay Darwin swiftDarwin --link "$RECAULK_DARWIN_A" --unexported "$RECAU
 # ObjectiveC imports Darwin, found in --out, where Darwin was just written.
 build_overlay ObjectiveC swiftObjectiveC --I "$OVS/ObjectiveC/shims" -- "$OVS/ObjectiveC/ObjectiveC.swift"
 # spec: INGREDIENTS.md "Recaulk" -- libswiftDispatch calls these APIs 10.9 lacks, which Recaulk defines and
-#       declares and overlay patch 0012 makes 10.9 API: dispatch_block_create and
+#       declares and overlay patches 0004 to 0012 make 10.9 API: dispatch_block_create and
 #       dispatch_block_create_with_qos_class for every DispatchWorkItem (Block.swift, through the shims),
-#       dispatch_block_cancel and dispatch_block_testcancel for its cancel() and isCancelled,
-#       dispatch_queue_attr_make_with_qos_class for a queue given a QoS (Queue.swift), and dispatch_activate for
-#       activate(), which overlay patch 0016 keeps at macOS 10.12 (no 10.9 program calls it; 10.9's libSystem
-#       lacks it, so the overlay still takes Recaulk's). Recaulk's, linked and hidden, as Darwin takes openat:
-#       one copy in the overlay, so a block the overlay creates is the one it cancels. Recaulk's dispatch.h, which
-#       the overlay compiles against, renames dispatch_get_global_queue, dispatch_queue_create and dispatch_resume
-#       to their ___recaulk_ definitions (a QoS class's global queue, an initially inactive queue, and a resume
-#       that counts as the activation), so the overlay takes those too, and their members' hidden copies of the
-#       three plain names.
-RECAULK_DISPATCH_SYMBOLS="_dispatch_block_create _dispatch_block_create_with_qos_class _dispatch_block_cancel _dispatch_block_testcancel _dispatch_activate _dispatch_queue_attr_make_with_qos_class ___recaulk_dispatch_get_global_queue ___recaulk_dispatch_queue_create ___recaulk_dispatch_resume"
+#       dispatch_block_cancel and dispatch_block_testcancel for its cancel() and isCancelled, dispatch_block_wait
+#       and dispatch_block_notify for its wait and notify (the shims), dispatch_queue_attr_make_with_qos_class,
+#       _with_autorelease_frequency and _initially_inactive for a queue given a QoS, an autorelease frequency or
+#       .initiallyInactive, dispatch_queue_create_with_target$V2 for every queue the initializer makes
+#       (Queue.swift), dispatch_activate for activate() (overlay patch 0016 and Source.swift), and dispatch_assert_queue$V2,
+#       dispatch_assert_queue_not$V2 and dispatch_assert_queue_barrier for dispatchPrecondition (Dispatch.swift).
+#       Recaulk's, linked and hidden, as Darwin takes openat: one copy in the overlay, so a block the overlay
+#       creates is the one it cancels. Recaulk's dispatch.h, which the overlay compiles against, renames
+#       dispatch_get_global_queue, dispatch_queue_create and dispatch_resume to their ___recaulk_ definitions (a
+#       QoS class's global queue, an initially inactive queue, and a resume that counts as the activation), so
+#       the overlay takes those too, and their members' hidden copies of the three plain names.
+RECAULK_DISPATCH_SYMBOLS="_dispatch_block_create _dispatch_block_create_with_qos_class _dispatch_block_cancel _dispatch_block_testcancel _dispatch_block_wait _dispatch_block_notify _dispatch_activate _dispatch_queue_attr_make_with_qos_class _dispatch_queue_attr_make_with_autorelease_frequency _dispatch_queue_attr_make_initially_inactive _dispatch_queue_create_with_target\$V2 _dispatch_assert_queue\$V2 _dispatch_assert_queue_not\$V2 _dispatch_assert_queue_barrier ___recaulk_dispatch_get_global_queue ___recaulk_dispatch_queue_create ___recaulk_dispatch_resume"
 RECAULK_DISPATCH_SHADOWS="recaulk-dispatch_global_qos.o:_dispatch_get_global_queue recaulk-dispatch_inactive.o:_dispatch_queue_create recaulk-dispatch_inactive.o:_dispatch_resume"
 RECAULK_DISPATCH_A="$ROOT/recaulk-dispatch.a"; RECAULK_DISPATCH_UNX="$ROOT/recaulk-dispatch.unexported"
 # shellcheck disable=SC2086  # space-free symbol names

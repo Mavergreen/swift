@@ -1,0 +1,33 @@
+--- apinotes/Dispatch.apinotes
++++ apinotes/Dispatch.apinotes
+@@ -170,7 +170,7 @@
+ - Name: dispatch_set_target_queue
+   SwiftName: 'DispatchObject.setTarget(self:queue:)'
+ - Name: dispatch_activate
+-  SwiftName: 'DispatchObject.activate(self:)'
++  SwiftName: 'DispatchObject.__activate(self:)'
+ - Name: dispatch_suspend
+   SwiftName: 'DispatchObject.suspend(self:)'
+ - Name: dispatch_resume
+--- stdlib/public/Darwin/Dispatch/Dispatch.swift
++++ stdlib/public/Darwin/Dispatch/Dispatch.swift
+@@ -44,6 +44,19 @@
+ 	precondition(_dispatchPreconditionTest(condition()), "dispatchPrecondition failure")
+ }
+ 
++/// dispatch_activate
++
++// Mavericks: activate() is the overlay's, so a program that calls it calls libswiftDispatch, which links Recaulk's
++// dispatch_activate (it starts a queue made inactive, or a source, once), as for every other function macOS 10.10
++// and 10.12 added. Imported as is, the C function would be the program's own import, which 10.9's libSystem lacks:
++// only a program linked with Recaulk would load. The apinotes name it DispatchObject.__activate().
++extension DispatchObject {
++	@available(macOS 10.9, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
++	public func activate() {
++		__activate()
++	}
++}
++
+ /// qos_class_t
+ 
+ public struct DispatchQoS : Equatable {

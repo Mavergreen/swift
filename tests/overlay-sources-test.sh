@@ -4,10 +4,11 @@
 #   scripts/overlay-sources.sh lays out the Dispatch overlay's sources from the pinned trees build.sh fetches
 #   ($SWIFT_WORK, default $MAVERICKS_BUILD_ROOT/swift/work: swift-6.2, swift-5.4, swift): swift-5.4's
 #   Darwin/Dispatch, patched for 10.9 by patches/overlays 0003 onward -- each patch's marker present, the
-#   QoS-to-priority mapping under an #available(macOS 10.10, *) else-branch, and nothing the 10.9 SDK and
-#   Recaulk declare nowhere (autorelease frequency, initiallyInactive, block wait/notify, DATA_REPLACE,
-#   dispatchPrecondition, DispatchQueue.qos) left in a source, and activate() at macOS 10.12 -- and its shims, DispatchOverlayShims.h under
-#   its own module map. Skips, saying so, when the trees are absent.
+#   QoS-to-priority mapping under an #available(macOS 10.10, *) else-branch, what Recaulk declares and defines
+#   (autorelease frequency, initiallyInactive, the target at creation, block wait/notify, dispatchPrecondition,
+#   activate()) at macOS 10.9, and neither DATA_REPLACE, declared nowhere, nor DispatchQueue.qos, which Recaulk
+#   cannot read back, left in a source -- and its shims, DispatchOverlayShims.h under its own module map. Skips,
+#   saying so, when the trees are absent.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -36,19 +37,20 @@ cmp -s "$D/shims/DispatchOverlayShims.h" "$WORK/swift-5.4/stdlib/public/SwiftShi
 [ "$(cat "$D/shims/module.modulemap")" = 'module _SwiftDispatchOverlayShims {
   header "DispatchOverlayShims.h"
 }' ] || fail "the shims' module map is not one module _SwiftDispatchOverlayShims over DispatchOverlayShims.h"
-grep -q 'Mavericks: no _swift_dispatch_block_wait' "$D/shims/DispatchOverlayShims.h" || fail "shims: patch 0007 (block wait/notify) not applied"
 grep -q 'Mavericks: no DATA_REPLACE' "$D/shims/DispatchOverlayShims.h" || fail "shims: patch 0010 (DATA_REPLACE) not applied"
-[ "$(grep -v 'Mavericks' "$D/shims/DispatchOverlayShims.h" | grep -Ec 'dispatch_block_wait|dispatch_block_notify|DATA_REPLACE')" = 0 ] \
-  || fail "the shims still call what no header declares"
+[ "$(grep -v 'Mavericks' "$D/shims/DispatchOverlayShims.h" | grep -Ec 'DATA_REPLACE')" = 0 ] \
+  || fail "the shims still name DATA_REPLACE, which no header declares"
+for f in dispatch_block_wait dispatch_block_notify; do
+  grep -q "return $f(block, timeout);\|$f(block, queue, notifier);" "$D/shims/DispatchOverlayShims.h" || fail "the shims do not call $f (Recaulk declares it)"
+done
 
 echo "-- each patch's marker"
 mark() { grep -q "$3" "$D/$2" || fail "patch $1 not applied: $D/$2 lacks '$3'"; }
 mark 0003 Queue.swift "Mavericks: 10.9's dispatch_get_global_queue"
-mark 0004 Queue.swift "Mavericks: no AutoreleaseFrequency"
-mark 0005 Queue.swift "Mavericks: no initially-inactive attribute"
-mark 0006 Queue.swift "Mavericks: no dispatch_queue_create_with_target"
-mark 0007 Block.swift "Mavericks: no wait or notify"
-mark 0008 Dispatch.swift "Mavericks: no DispatchPredicate"
+mark 0004 Queue.swift "Mavericks: Recaulk defines and declares dispatch_queue_attr_make_with_autorelease_frequency"
+mark 0005 Queue.swift "Mavericks: Recaulk defines and declares dispatch_queue_attr_make_initially_inactive"
+mark 0006 Queue.swift "Mavericks: Recaulk defines and declares dispatch_queue_create_with_target"
+mark 0008 Dispatch.swift "Mavericks: Recaulk defines and declares dispatch_assert_queue"
 mark 0009 Queue.swift "Mavericks: no qos"
 mark 0010 Source.swift "Mavericks: no makeUserDataReplaceSource"
 mark 0011 Data.swift "Mavericks: the 10.9 headers carry no nullability"
@@ -69,20 +71,35 @@ done
 mark 0015 Dispatch.swift "Mavericks: 5.4 predates Sendable"
 grep -q '^extension DispatchObject : @unchecked Sendable {}$' "$D/Dispatch.swift" || fail "patch 0015: DispatchObject is not Sendable"
 
-echo "-- patch 0016: activate() is macOS 10.12, as the SDK's, both of them (Recaulk's dispatch_activate is dispatch_resume)"
-mark 0016 Dispatch.swift "Mavericks: activate() keeps 10.12's availability"
+grep -q '^extension DispatchQueue.AutoreleaseFrequency : @unchecked Sendable {}$' "$D/Dispatch.swift" \
+  && grep -q '^extension DispatchPredicate : @unchecked Sendable {}$' "$D/Dispatch.swift" \
+  || fail "patch 0015: AutoreleaseFrequency and DispatchPredicate are not Sendable, as Apple's SDK declares them"
+
+echo "-- what macOS 10.12 added and Recaulk declares and defines is macOS 10.9"
+# activate(), both of them, is the overlay's (0016 for an object's, 0012 for a source's), so a program calls
+# libswiftDispatch, which links Recaulk's dispatch_activate, never the C function, which 10.9's libSystem lacks.
+mark 0016 Dispatch.swift "Mavericks: activate() is the overlay's"
 grep -A1 '^- Name: dispatch_activate$' "$A" | grep -q "^  SwiftName: 'DispatchObject.__activate(self:)'$" \
   || fail "patch 0016 not applied: Dispatch.apinotes still imports dispatch_activate as activate()"
 for f in Dispatch.swift Source.swift; do
-  grep -B1 '^	public func activate() {$' "$D/$f" | grep -q '^	@available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, \*)$' \
-    || fail "$f's activate() is not @available(macOS 10.12, ...): a 10.9 program could call it and over-resume"
+  grep -B1 '^	public func activate() {$' "$D/$f" | grep -q '^	@available(macOS 10.9, iOS 10.0, tvOS 10.0, watchOS 3.0, \*)$' \
+    || fail "$f's activate() is not @available(macOS 10.9, ...)"
 done
 [ "$(grep -c 'public func activate()' "$D"/*.swift | awk -F: '{s+=$2} END{print s}')" = 2 ] || fail "an activate() other than DispatchObject's and DispatchSourceProtocol's"
-
+grep -q '^	public func wait(timeout: DispatchTime) -> DispatchTimeoutResult {$' "$D/Block.swift" \
+  && grep -q '^	public func notify(queue: DispatchQueue, execute: DispatchWorkItem) {$' "$D/Block.swift" \
+  || fail "DispatchWorkItem has no wait(timeout:) or notify(queue:execute:)"
+grep -q 'self.init(__label: label, attr: attr, queue: target)' "$D/Queue.swift" || fail "the target: initializer does not pass the target at creation"
+for f in "$D"/*.swift; do
+  if grep -n 'macOS 10.12' "$f"; then fail "${f##*/} still names macOS 10.12 (above)"; fi
+done
 echo "-- below macOS 10.10, every path that submits a barrier-flagged block routes it through a barrier function"
 # sync(execute:) and the three async forms (execute:, group:execute:, group:qos:flags:), asyncAfter (4), notify (2)
 n="$(grep -c '_blockFlagsAreHonored && .*flags.contains(.barrier)' "$D/Queue.swift" "$D/Dispatch.swift" | awk -F: '{s+=$2} END{print s}')"
 [ "$n" -ge 10 ] || fail "only $n barrier-routing checks in Queue.swift and Dispatch.swift, not the 10 submission paths"
+# and DispatchWorkItem's two notify forms
+n="$(grep -c '_blockFlagsAreHonored && .*flags.contains(.barrier)' "$D/Block.swift")"
+[ "$n" = 2 ] || fail "$n barrier-routing checks in Block.swift, not DispatchWorkItem.notify's 2"
 grep -q '_swift_dispatch_barrier_async(self, { block(); g.leave() })' "$D/Queue.swift" || fail "a grouped barrier does not leave its group after the block"
 grep -q '_syncBarrier(block: { workItem.perform() })' "$D/Queue.swift" || fail "sync(execute: DispatchWorkItem) has no barrier route"
 
@@ -100,13 +117,12 @@ for pair in 'userInteractive, .userInitiated:2' 'default, .unspecified:0' 'utili
 done
 grep -q 'DISPATCH_QUEUE_PRIORITY_HIGH' "$T/else" && grep -q 'DISPATCH_QUEUE_PRIORITY_BACKGROUND' "$T/else" || fail "the priority mapping does not name the 10.9 constants"
 
-echo "-- nothing declared nowhere is left"
-for w in autoreleaseFrequency initiallyInactive __dispatch_autorelease_frequency_t; do
-  if grep -l "$w" "$D"/*.swift > "$T/hit"; then fail "$w is named in $(cat "$T/hit")"; fi
+echo "-- neither DATA_REPLACE, declared nowhere, nor DispatchQueue.qos, which Recaulk cannot read back, is left"
+bad="$(grep -nE '__dispatch_queue_get_qos_class|DATA_REPLACE|public var qos: DispatchQoS' "$D"/*.swift | grep -v 'Mavericks' || true)"
+[ -z "$bad" ] || fail "a source still names what the overlay leaves out: $bad"
+for w in 'public enum AutoreleaseFrequency' 'public static let initiallyInactive' 'public enum DispatchPredicate' 'public func dispatchPrecondition'; do
+  grep -q "$w" "$D"/*.swift || fail "no '$w' in the sources"
 done
-bad="$(grep -nE '__dispatch_assert_queue|__dispatch_queue_get_qos_class|_dispatch_block_wait|_dispatch_block_notify|DATA_REPLACE|dispatch_queue_create_with_target|DispatchPredicate|dispatchPrecondition' "$D"/*.swift \
-  | grep -v 'Mavericks' | grep -v 'Private.swift:.*dispatch_queue_create_with_target' || true)"
-[ -z "$bad" ] || fail "a source still names what no header declares: $bad"
 
 echo "-- unchanged by the patches: Time.swift and Dispatch.mm are 5.4's bytes"
 for f in Time.swift Dispatch.mm; do

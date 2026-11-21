@@ -5,7 +5,7 @@
  	public static let barrier = DispatchWorkItemFlags(rawValue: 0x1)
  
 -	@available(macOS 10.10, iOS 8.0, *)
-+	// Mavericks: Recaulk defines and declares dispatch_block_create, _create_with_qos_class, _cancel, _testcancel and dispatch_queue_attr_make_with_qos_class, so what uses them is 10.9
++	// Mavericks: Recaulk defines and declares dispatch_block_create, _create_with_qos_class, _cancel, _testcancel, _wait and _notify, dispatch_queue_attr_make_with_qos_class and dispatch_activate, so what uses them is 10.9
 +	@available(macOS 10.9, iOS 8.0, *)
  	public static let detached = DispatchWorkItemFlags(rawValue: 0x2)
  
@@ -37,12 +37,12 @@
  	internal var _block: _DispatchBlock
 --- stdlib/public/Darwin/Dispatch/Dispatch.swift
 +++ stdlib/public/Darwin/Dispatch/Dispatch.swift
-@@ -23,42 +23,43 @@
+@@ -50,42 +50,43 @@
  	public let qosClass: QoSClass
  	public let relativePriority: Int
  
 -	@available(macOS 10.10, iOS 8.0, *)
-+	// Mavericks: Recaulk defines and declares dispatch_block_create, _create_with_qos_class, _cancel, _testcancel and dispatch_queue_attr_make_with_qos_class, so what uses them is 10.9
++	// Mavericks: Recaulk defines and declares dispatch_block_create, _create_with_qos_class, _cancel, _testcancel, _wait and _notify, dispatch_queue_attr_make_with_qos_class and dispatch_activate, so what uses them is 10.9
 +	@available(macOS 10.9, iOS 8.0, *)
  	public static let background = DispatchQoS(qosClass: .background, relativePriority: 0)
  
@@ -92,7 +92,7 @@
  		public init?(rawValue: qos_class_t) {
  			switch rawValue {
  			case QOS_CLASS_BACKGROUND: self = .background
-@@ -71,7 +72,7 @@
+@@ -98,7 +99,7 @@
  			}
  		}
  
@@ -101,7 +101,7 @@
  		public var rawValue: qos_class_t {
  			switch self {
  			case .background: return QOS_CLASS_BACKGROUND
-@@ -105,7 +106,7 @@
+@@ -132,7 +133,7 @@
  
  extension DispatchGroup {
  	public func notify(qos: DispatchQoS = .unspecified, flags: DispatchWorkItemFlags = [], queue: DispatchQueue, execute work: @escaping @convention(block) () -> Void) {
@@ -110,7 +110,7 @@
  			let item = DispatchWorkItem(qos: qos, flags: flags, block: work)
  			_swift_dispatch_group_notify(self, queue, item._block)
  		} else {
-@@ -113,7 +114,7 @@
+@@ -140,7 +141,7 @@
  		}
  	}
  
@@ -121,24 +121,24 @@
  	}
 --- stdlib/public/Darwin/Dispatch/Queue.swift
 +++ stdlib/public/Darwin/Dispatch/Queue.swift
-@@ -95,6 +95,7 @@
+@@ -133,6 +133,7 @@
  		return __dispatch_get_global_queue(priority._translatedValue, 0)
  	}
  
-+	// Mavericks: Recaulk defines and declares dispatch_block_create, _create_with_qos_class, _cancel, _testcancel and dispatch_queue_attr_make_with_qos_class, so what uses them is 10.9
++	// Mavericks: Recaulk defines and declares dispatch_block_create, _create_with_qos_class, _cancel, _testcancel, _wait and _notify, dispatch_queue_attr_make_with_qos_class and dispatch_activate, so what uses them is 10.9
  	@available(macOS 10.9, iOS 8.0, *)
  	public class func global(qos: DispatchQoS.QoSClass = .default) -> DispatchQueue {
  		if #available(macOS 10.10, iOS 8.0, *) {
-@@ -127,7 +128,7 @@
- 		target: DispatchQueue? = nil)
- 	{
- 		var attr = attributes._attr()
+@@ -169,7 +170,7 @@
+ 		if autoreleaseFrequency != .inherit {
+ 			attr = autoreleaseFrequency._attr(attr: attr)
+ 		}
 -		if #available(macOS 10.10, iOS 8.0, *), qos != .unspecified {
 +		if #available(macOS 10.9, iOS 8.0, *), qos != .unspecified {
  			attr = __dispatch_queue_attr_make_with_qos_class(attr, qos.qosClass.rawValue, Int32(qos.relativePriority))
  		}
  
-@@ -162,7 +163,7 @@
+@@ -208,7 +209,7 @@
  	/// - parameter execute: The work item to be invoked on the queue.
  	/// - SeeAlso: `async(execute:)`
  	///
@@ -147,7 +147,7 @@
  	public func sync(execute workItem: DispatchWorkItem) {
  		// _swift_dispatch_sync preserves the @convention(block) for
  		// work item blocks.
-@@ -186,7 +187,7 @@
+@@ -232,7 +233,7 @@
  	/// - SeeAlso: `sync(execute:)`
  	///
  	///
@@ -156,7 +156,7 @@
  	public func async(execute workItem: DispatchWorkItem) {
  		// _swift_dispatch_async preserves the @convention(block)
  		// for work item blocks.
-@@ -202,7 +203,7 @@
+@@ -248,7 +249,7 @@
  	/// - parameter execute: The work item to be invoked on the queue.
  	/// - SeeAlso: `sync(execute:)`
  	///
@@ -165,7 +165,7 @@
  	public func async(group: DispatchGroup, execute workItem: DispatchWorkItem) {
  		// _swift_dispatch_group_async preserves the @convention(block)
  		// for work item blocks.
-@@ -244,7 +245,7 @@
+@@ -290,7 +291,7 @@
  		}
  
  		var block: @convention(block) () -> Void = work
@@ -174,7 +174,7 @@
  			let workItem = DispatchWorkItem(qos: qos, flags: flags, block: work)
  			block = workItem._block
  		}
-@@ -283,7 +284,7 @@
+@@ -329,7 +330,7 @@
  		}
  	}
  
@@ -183,7 +183,7 @@
  	private func _syncHelper<T>(
  		fn: (DispatchWorkItem) -> Void,
  		flags: DispatchWorkItemFlags,
-@@ -336,7 +337,7 @@
+@@ -382,7 +383,7 @@
  	public func sync<T>(flags: DispatchWorkItemFlags, execute work: () throws -> T) rethrows -> T {
  		if flags == .barrier {
  			return try self._syncHelper(fn: _syncBarrier, execute: work, rescue: { throw $0 })
@@ -192,7 +192,7 @@
  			return try self._syncHelper(fn: sync, flags: flags, execute: work, rescue: { throw $0 })
  		} else {
  			return try self._syncHelper(fn: sync, execute: work, rescue: { throw $0 })
-@@ -366,7 +367,7 @@
+@@ -412,7 +413,7 @@
  		flags: DispatchWorkItemFlags = [],
  		execute work: @escaping @convention(block) () -> Void)
  	{
@@ -201,7 +201,7 @@
  			let item = DispatchWorkItem(qos: qos, flags: flags, block: work)
  			_swift_dispatch_after(deadline.rawValue, self, item._block)
  		} else {
-@@ -397,7 +398,7 @@
+@@ -443,7 +444,7 @@
  		flags: DispatchWorkItemFlags = [],
  		execute work: @escaping @convention(block) () -> Void)
  	{
@@ -210,7 +210,7 @@
  			let item = DispatchWorkItem(qos: qos, flags: flags, block: work)
  			_swift_dispatch_after(wallDeadline.rawValue, self, item._block)
  		} else {
-@@ -415,7 +416,7 @@
+@@ -461,7 +462,7 @@
  	/// - SeeAlso: `asyncAfter(deadline:qos:flags:execute:)`
  	/// - SeeAlso: `DispatchTime`
  	///
@@ -219,7 +219,7 @@
  	public func asyncAfter(deadline: DispatchTime, execute: DispatchWorkItem) {
  		_swift_dispatch_after(deadline.rawValue, self, execute._block)
  	}
-@@ -430,7 +431,7 @@
+@@ -476,7 +477,7 @@
  	/// - SeeAlso: `asyncAfter(wallDeadline:qos:flags:execute:)`
  	/// - SeeAlso: `DispatchTime`
  	///
@@ -235,7 +235,7 @@
  
  	public func setEventHandler(qos: DispatchQoS = .unspecified, flags: DispatchWorkItemFlags = [], handler: DispatchSourceHandler?) {
 -		if #available(macOS 10.10, iOS 8.0, *),
-+		// Mavericks: Recaulk defines and declares dispatch_block_create, _create_with_qos_class, _cancel, _testcancel and dispatch_queue_attr_make_with_qos_class, so what uses them is 10.9
++		// Mavericks: Recaulk defines and declares dispatch_block_create, _create_with_qos_class, _cancel, _testcancel, _wait and _notify, dispatch_queue_attr_make_with_qos_class and dispatch_activate, so what uses them is 10.9
 +		if #available(macOS 10.9, iOS 8.0, *),
                     let h = handler,
                     qos != .unspecified || !flags.isEmpty {
@@ -272,7 +272,7 @@
                     let h = handler,
                     qos != .unspecified || !flags.isEmpty {
  			let item = DispatchWorkItem(qos: qos, flags: flags, block: h)
-@@ -59,7 +60,7 @@
+@@ -59,12 +60,12 @@
  		}
  	}
  
@@ -280,4 +280,10 @@
 +	@available(macOS 10.9, iOS 8.0, *)
  	public func setRegistrationHandler(handler: DispatchWorkItem) {
  		_swift_dispatch_source_set_registration_handler(self as! DispatchSource, handler._block)
+ 	}
+ 
+-	@available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
++	@available(macOS 10.9, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+ 	public func activate() {
+ 		(self as! DispatchSource).activate()
  	}

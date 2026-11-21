@@ -4,7 +4,7 @@
  @_objcRuntimeName(_TtC8Dispatch17_DispatchWorkItem)
  public class DispatchWorkItem {
  	internal var _block: _DispatchBlock
-+	// Mavericks: 10.9's dispatch_block_create drops its flags, so a barrier work item is submitted as one by the queue
++	// Mavericks: 10.9's dispatch_block_create drops its flags, so a barrier work item is submitted as one by the queue, and a barrier notification by notify
 +	internal var _flags: DispatchWorkItemFlags
  
  	public init(qos: DispatchQoS = .unspecified, flags: DispatchWorkItemFlags = [], block: @escaping @convention(block) () -> Void) {
@@ -20,9 +20,33 @@
  		_block = _swift_dispatch_block_create_noescape(
  			__dispatch_block_flags_t(rawValue: flags.rawValue), noescapeBlock)
  	}
+@@ -81,6 +85,11 @@
+ 	{
+ 		if qos != .unspecified || !flags.isEmpty {
+ 			let item = DispatchWorkItem(qos: qos, flags: flags, block: execute)
++			if !DispatchQueue._blockFlagsAreHonored && flags.contains(.barrier) {
++				let block = item._block
++				_swift_dispatch_block_notify(_block, queue, { queue._barrierAsync(group: nil, block: block) })
++				return
++			}
+ 			_swift_dispatch_block_notify(_block, queue, item._block)
+ 		} else {
+ 			_swift_dispatch_block_notify(_block, queue, execute)
+@@ -88,6 +97,11 @@
+ 	}
+ 
+ 	public func notify(queue: DispatchQueue, execute: DispatchWorkItem) {
++		if !DispatchQueue._blockFlagsAreHonored && execute._flags.contains(.barrier) {
++			let block = execute._block
++			_swift_dispatch_block_notify(_block, queue, { queue._barrierAsync(group: nil, block: block) })
++			return
++		}
+ 		_swift_dispatch_block_notify(_block, queue, execute._block)
+ 	}
+ 
 --- stdlib/public/Darwin/Dispatch/Dispatch.swift
 +++ stdlib/public/Darwin/Dispatch/Dispatch.swift
-@@ -108,6 +108,12 @@
+@@ -135,6 +135,12 @@
  	public func notify(qos: DispatchQoS = .unspecified, flags: DispatchWorkItemFlags = [], queue: DispatchQueue, execute work: @escaping @convention(block) () -> Void) {
  		if #available(macOS 10.9, iOS 8.0, *), qos != .unspecified || !flags.isEmpty {
  			let item = DispatchWorkItem(qos: qos, flags: flags, block: work)
@@ -35,7 +59,7 @@
  			_swift_dispatch_group_notify(self, queue, item._block)
  		} else {
  			_swift_dispatch_group_notify(self, queue, work)
-@@ -116,6 +122,11 @@
+@@ -143,6 +149,11 @@
  
  	@available(macOS 10.9, iOS 8.0, *)
  	public func notify(queue: DispatchQueue, work: DispatchWorkItem) {
@@ -49,7 +73,7 @@
  
 --- stdlib/public/Darwin/Dispatch/Queue.swift
 +++ stdlib/public/Darwin/Dispatch/Queue.swift
-@@ -165,6 +165,10 @@
+@@ -211,6 +211,10 @@
  	///
  	@available(macOS 10.9, iOS 8.0, *)
  	public func sync(execute workItem: DispatchWorkItem) {
@@ -60,7 +84,7 @@
  		// _swift_dispatch_sync preserves the @convention(block) for
  		// work item blocks.
  		_swift_dispatch_sync(self, workItem._block)
-@@ -189,6 +193,10 @@
+@@ -235,6 +239,10 @@
  	///
  	@available(macOS 10.9, iOS 8.0, *)
  	public func async(execute workItem: DispatchWorkItem) {
@@ -71,7 +95,7 @@
  		// _swift_dispatch_async preserves the @convention(block)
  		// for work item blocks.
  		_swift_dispatch_async(self, workItem._block)
-@@ -205,6 +213,10 @@
+@@ -251,6 +259,10 @@
  	///
  	@available(macOS 10.9, iOS 8.0, *)
  	public func async(group: DispatchGroup, execute workItem: DispatchWorkItem) {
@@ -82,7 +106,7 @@
  		// _swift_dispatch_group_async preserves the @convention(block)
  		// for work item blocks.
  		_swift_dispatch_group_async(group, self, workItem._block)
-@@ -250,6 +262,10 @@
+@@ -296,6 +308,10 @@
  			block = workItem._block
  		}
  
@@ -93,7 +117,7 @@
  		if let g = group {
  			_swift_dispatch_group_async(g, self, block)
  		} else {
-@@ -261,6 +277,21 @@
+@@ -307,6 +323,21 @@
  		__dispatch_barrier_sync(self, block)
  	}
  
@@ -115,7 +139,7 @@
  	private func _syncHelper<T>(
  		fn: (() -> Void) -> Void,
  		execute work: () throws -> T,
-@@ -369,6 +400,11 @@
+@@ -415,6 +446,11 @@
  	{
  		if #available(macOS 10.9, iOS 8.0, *), qos != .unspecified || !flags.isEmpty {
  			let item = DispatchWorkItem(qos: qos, flags: flags, block: work)
@@ -127,7 +151,7 @@
  			_swift_dispatch_after(deadline.rawValue, self, item._block)
  		} else {
  			_swift_dispatch_after(deadline.rawValue, self, work)
-@@ -400,6 +436,11 @@
+@@ -446,6 +482,11 @@
  	{
  		if #available(macOS 10.9, iOS 8.0, *), qos != .unspecified || !flags.isEmpty {
  			let item = DispatchWorkItem(qos: qos, flags: flags, block: work)
@@ -139,7 +163,7 @@
  			_swift_dispatch_after(wallDeadline.rawValue, self, item._block)
  		} else {
  			_swift_dispatch_after(wallDeadline.rawValue, self, work)
-@@ -418,6 +459,11 @@
+@@ -464,6 +505,11 @@
  	///
  	@available(macOS 10.9, iOS 8.0, *)
  	public func asyncAfter(deadline: DispatchTime, execute: DispatchWorkItem) {
@@ -151,7 +175,7 @@
  		_swift_dispatch_after(deadline.rawValue, self, execute._block)
  	}
  
-@@ -433,6 +479,11 @@
+@@ -479,6 +525,11 @@
  	///
  	@available(macOS 10.9, iOS 8.0, *)
  	public func asyncAfter(wallDeadline: DispatchWallTime, execute: DispatchWorkItem) {
@@ -171,5 +195,5 @@
  
 +	// Mavericks: a .barrier flag is not routed here as DispatchQueue routes it below 10.10: from 10.10 on, DISPATCH_BLOCK_BARRIER acts only on a block submitted to a concurrent queue (dispatch/block.h), and a source invokes its handlers itself, so the flag is a no-op on a source's handler there too
  	public func setEventHandler(qos: DispatchQoS = .unspecified, flags: DispatchWorkItemFlags = [], handler: DispatchSourceHandler?) {
- 		// Mavericks: Recaulk defines and declares dispatch_block_create, _create_with_qos_class, _cancel, _testcancel and dispatch_queue_attr_make_with_qos_class, so what uses them is 10.9
+ 		// Mavericks: Recaulk defines and declares dispatch_block_create, _create_with_qos_class, _cancel, _testcancel, _wait and _notify, dispatch_queue_attr_make_with_qos_class and dispatch_activate, so what uses them is 10.9
  		if #available(macOS 10.9, iOS 8.0, *),

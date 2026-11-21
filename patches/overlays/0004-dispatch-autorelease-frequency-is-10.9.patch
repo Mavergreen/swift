@@ -1,0 +1,21 @@
+--- stdlib/public/Darwin/Dispatch/Queue.swift
++++ stdlib/public/Darwin/Dispatch/Queue.swift
+@@ -86,14 +86,15 @@
+ 	public enum AutoreleaseFrequency {
+ 		case inherit
+ 
+-		@available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
++		// Mavericks: Recaulk defines and declares dispatch_queue_attr_make_with_autorelease_frequency, so the frequencies are 10.9; below 10.12 it returns the attribute unchanged, and a queue drains autoreleased objects as 10.9's libdispatch always has
++		@available(macOS 10.9, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+ 		case workItem
+ 
+-		@available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
++		@available(macOS 10.9, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+ 		case never
+ 
+ 		internal func _attr(attr: __OS_dispatch_queue_attr?) -> __OS_dispatch_queue_attr? {
+-			if #available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *) {
++			if #available(macOS 10.9, iOS 10.0, tvOS 10.0, watchOS 3.0, *) {
+ 				return __dispatch_queue_attr_make_with_autorelease_frequency(attr, self._rawValue)
+ 			} else {
+ 				return attr

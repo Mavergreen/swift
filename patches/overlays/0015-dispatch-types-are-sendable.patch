@@ -1,6 +1,6 @@
 --- stdlib/public/Darwin/Dispatch/Dispatch.swift
 +++ stdlib/public/Darwin/Dispatch/Dispatch.swift
-@@ -164,3 +164,23 @@
+@@ -191,3 +191,25 @@
  	}
  }
  
@@ -21,6 +21,8 @@
 +extension DispatchQoS.QoSClass : @unchecked Sendable {}
 +extension DispatchWorkItemFlags : @unchecked Sendable {}
 +extension DispatchQueue.Attributes : @unchecked Sendable {}
++extension DispatchQueue.AutoreleaseFrequency : @unchecked Sendable {}
++extension DispatchPredicate : @unchecked Sendable {}
 +extension DispatchIO.StreamType : @unchecked Sendable {}
 +extension DispatchIO.CloseFlags : @unchecked Sendable {}
 +extension DispatchIO.IntervalFlags : @unchecked Sendable {}

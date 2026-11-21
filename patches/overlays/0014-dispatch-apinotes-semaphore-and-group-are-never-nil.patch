@@ -1,6 +1,6 @@
 --- apinotes/Dispatch.apinotes
 +++ apinotes/Dispatch.apinotes
-@@ -217,6 +217,7 @@
+@@ -224,6 +224,7 @@
  - Name: dispatch_group_create
    SwiftName: 'DispatchGroup.init()'
    Availability: available
@@ -8,7 +8,7 @@
  - Name: dispatch_group_async
    SwiftPrivate: true
  - Name: dispatch_group_async_f
-@@ -264,6 +265,7 @@
+@@ -271,6 +272,7 @@
  # dispatch_semaphore
  - Name: dispatch_semaphore_create
    SwiftName: 'DispatchSemaphore.init(value:)'
