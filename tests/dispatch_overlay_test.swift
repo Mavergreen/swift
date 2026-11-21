@@ -56,6 +56,12 @@ func ms(_ n: Int) { usleep(UInt32(n * 1000)) }
 // --- the child process of the trapping dispatchPrecondition case: it must not return
 let preconditionChildFlag = "--dispatch-precondition-child"
 if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == preconditionChildFlag {
+  // platform: with no EXC_CRASH port of its own (EXC_MASK_CRASH, 1 << EXC_CRASH 10), the expected trap is no
+  //           crash report for ReportCrash to write, nor one to hold the child's exit back while it does. Set
+  //           here, by the child itself, not by the parent's posix_spawnattr_setexceptionports_np, with which
+  //           OS X 10.9's posix_spawn fails (EINVAL). Should it fail, a report is written and the case still holds.
+  _ = task_set_exception_ports(task_self_trap(), exception_mask_t(1 << 10), mach_port_t(0),
+                               exception_behavior_t(EXCEPTION_DEFAULT), thread_state_flavor_t(THREAD_STATE_NONE))
   let q = DispatchQueue(label: "dispatch-overlay-test.precondition-trap")
   q.sync { dispatchPrecondition(condition: .notOnQueue(q)) }
   print("dispatchPrecondition(.notOnQueue(q)) returned inside q.sync")
@@ -69,9 +75,6 @@ func preconditionTrapsInAChild() -> String? {
   var attr: posix_spawnattr_t? = nil
   guard posix_spawnattr_init(&attr) == 0 else { return "posix_spawnattr_init failed" }
   defer { posix_spawnattr_destroy(&attr) }
-  // platform: with no EXC_CRASH port (EXC_MASK_CRASH, 1 << EXC_CRASH 10), the expected trap is no crash report
-  //           for ReportCrash to write, which would also hold the child's exit back while it did.
-  _ = posix_spawnattr_setexceptionports_np(&attr, exception_mask_t(1 << 10), mach_port_t(0), exception_behavior_t(1), thread_state_flavor_t(0))
   let argv: [UnsafeMutablePointer<CChar>?] = [strdup(selfPath), strdup(preconditionChildFlag), nil]
   defer { for p in argv { free(p) } }
   var pid = pid_t()
