@@ -639,7 +639,7 @@ jobs:
   vm-test:
     needs: [version, build-cross, build]
     runs-on: ubuntu-latest
-    timeout-minutes: 355   # sized in INGREDIENTS ("Every Swift bump merges on green"): 334 binaries to compile and gate, about 185 min at worst
+    timeout-minutes: 335   # sized in INGREDIENTS ("Every Swift bump merges on green"): 334 binaries to compile and gate, about 168 min at worst
     permissions:
       contents: read
       packages: write
