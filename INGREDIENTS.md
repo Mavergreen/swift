@@ -199,8 +199,11 @@ What macOS 10.10 and 10.12 added past `DispatchWorkItem` itself, which the overl
 Recaulk (patches `0004`, `0005`, `0006`, `0008`, `0012` and `0016`), and how each behaves there:
 - `dispatchPrecondition`, all three conditions: Recaulk's `dispatch_assert_queue` and `_not` tell the queue a
   block runs on through a queue-specific value they set on it, its targets included, and trap with
-  libdispatch's message when it is the wrong one. `.onQueueAsBarrier` checks only that the block is on the
-  queue, not that it runs as a barrier.
+  libdispatch's message when it is the wrong one. They are lenient: where 10.9 cannot tell which queue is
+  current (the main queue once the main thread has exited, say, or code on no queue at all), they return, so a
+  precondition traps only where Recaulk can prove the thread is on the wrong queue. `.onQueueAsBarrier` checks
+  only that the block is on the queue, not that it runs as a barrier. The upstream Concurrency tests that use
+  `dispatchPrecondition` therefore check less on 10.9 than on later macOS.
 - `DispatchWorkItem.wait` and `notify`: Recaulk's `dispatch_block_wait` and `dispatch_block_notify` wait for,
   and notify after, the work item's block. A barrier-flagged notification is submitted as a barrier below
   macOS 10.10 (`0013`), as work is.
@@ -209,7 +212,14 @@ Recaulk (patches `0004`, `0005`, `0006`, `0008`, `0012` and `0016`), and how eac
   `.never` run as `.inherit` does, and a queue drains autoreleased objects as 10.9's libdispatch always has.
 - `DispatchQueue.Attributes.initiallyInactive` and `activate()`, on a queue or a source (the overlay's, so
   a program never imports `dispatch_activate`, which 10.9 lacks): Recaulk's queue made inactive runs nothing until `activate()`, which starts it, or a
-  source, once; a first `resume()` counts as the activation, so an `activate()` after it does not over-resume.
+  source, once; a source's first `resume()` counts as its activation, so an `activate()` after it does not
+over-resume (as from 10.12 on, where a `resume()` of a queue made inactive traps; Recaulk lets a queue's pass),
+  for programs built with a toolchain at this Recaulk (an older `librecaulk.a`'s `resume()` does not mark the
+  activation). A known limit until Recaulk composes the two: on macOS 10.10 and 10.11, where the OS has QoS
+  attributes but no inactive one, a queue asked for both is made inactive without its QoS (`0005`), as the OS's
+  `dispatch_queue_attr_make_with_qos_class` cannot take Recaulk's inactive attribute and Recaulk's
+  `dispatch_queue_attr_make_initially_inactive` would make an OS QoS attribute's queue serial; 10.9 and 10.12
+  and later keep the QoS.
 - `DispatchQueue(label:qos:attributes:target:)` passes `target:` at creation, as upstream does on 10.12, through
   Recaulk's `dispatch_queue_create_with_target$V2`, which creates the queue and sets its target before
   returning it (before suspending it, for an inactive one).
