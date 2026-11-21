@@ -73,7 +73,7 @@
  
 --- stdlib/public/Darwin/Dispatch/Queue.swift
 +++ stdlib/public/Darwin/Dispatch/Queue.swift
-@@ -211,6 +211,10 @@
+@@ -216,6 +216,10 @@
  	///
  	@available(macOS 10.9, iOS 8.0, *)
  	public func sync(execute workItem: DispatchWorkItem) {
@@ -84,7 +84,7 @@
  		// _swift_dispatch_sync preserves the @convention(block) for
  		// work item blocks.
  		_swift_dispatch_sync(self, workItem._block)
-@@ -235,6 +239,10 @@
+@@ -240,6 +244,10 @@
  	///
  	@available(macOS 10.9, iOS 8.0, *)
  	public func async(execute workItem: DispatchWorkItem) {
@@ -95,7 +95,7 @@
  		// _swift_dispatch_async preserves the @convention(block)
  		// for work item blocks.
  		_swift_dispatch_async(self, workItem._block)
-@@ -251,6 +259,10 @@
+@@ -256,6 +264,10 @@
  	///
  	@available(macOS 10.9, iOS 8.0, *)
  	public func async(group: DispatchGroup, execute workItem: DispatchWorkItem) {
@@ -106,7 +106,7 @@
  		// _swift_dispatch_group_async preserves the @convention(block)
  		// for work item blocks.
  		_swift_dispatch_group_async(group, self, workItem._block)
-@@ -296,6 +308,10 @@
+@@ -301,6 +313,10 @@
  			block = workItem._block
  		}
  
@@ -117,7 +117,7 @@
  		if let g = group {
  			_swift_dispatch_group_async(g, self, block)
  		} else {
-@@ -307,6 +323,21 @@
+@@ -312,6 +328,21 @@
  		__dispatch_barrier_sync(self, block)
  	}
  
@@ -139,7 +139,7 @@
  	private func _syncHelper<T>(
  		fn: (() -> Void) -> Void,
  		execute work: () throws -> T,
-@@ -415,6 +446,11 @@
+@@ -420,6 +451,11 @@
  	{
  		if #available(macOS 10.9, iOS 8.0, *), qos != .unspecified || !flags.isEmpty {
  			let item = DispatchWorkItem(qos: qos, flags: flags, block: work)
@@ -151,7 +151,7 @@
  			_swift_dispatch_after(deadline.rawValue, self, item._block)
  		} else {
  			_swift_dispatch_after(deadline.rawValue, self, work)
-@@ -446,6 +482,11 @@
+@@ -451,6 +487,11 @@
  	{
  		if #available(macOS 10.9, iOS 8.0, *), qos != .unspecified || !flags.isEmpty {
  			let item = DispatchWorkItem(qos: qos, flags: flags, block: work)
@@ -163,7 +163,7 @@
  			_swift_dispatch_after(wallDeadline.rawValue, self, item._block)
  		} else {
  			_swift_dispatch_after(wallDeadline.rawValue, self, work)
-@@ -464,6 +505,11 @@
+@@ -469,6 +510,11 @@
  	///
  	@available(macOS 10.9, iOS 8.0, *)
  	public func asyncAfter(deadline: DispatchTime, execute: DispatchWorkItem) {
@@ -175,7 +175,7 @@
  		_swift_dispatch_after(deadline.rawValue, self, execute._block)
  	}
  
-@@ -479,6 +525,11 @@
+@@ -484,6 +530,11 @@
  	///
  	@available(macOS 10.9, iOS 8.0, *)
  	public func asyncAfter(wallDeadline: DispatchWallTime, execute: DispatchWorkItem) {

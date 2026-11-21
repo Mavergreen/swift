@@ -1,6 +1,6 @@
 --- stdlib/public/Darwin/Dispatch/Queue.swift
 +++ stdlib/public/Darwin/Dispatch/Queue.swift
-@@ -173,7 +173,8 @@
+@@ -178,7 +178,8 @@
  			attr = __dispatch_queue_attr_make_with_qos_class(attr, qos.qosClass.rawValue, Int32(qos.relativePriority))
  		}
  

@@ -129,7 +129,7 @@
  	@available(macOS 10.9, iOS 8.0, *)
  	public class func global(qos: DispatchQoS.QoSClass = .default) -> DispatchQueue {
  		if #available(macOS 10.10, iOS 8.0, *) {
-@@ -169,7 +170,7 @@
+@@ -174,7 +175,7 @@
  		if autoreleaseFrequency != .inherit {
  			attr = autoreleaseFrequency._attr(attr: attr)
  		}
@@ -138,7 +138,7 @@
  			attr = __dispatch_queue_attr_make_with_qos_class(attr, qos.qosClass.rawValue, Int32(qos.relativePriority))
  		}
  
-@@ -208,7 +209,7 @@
+@@ -213,7 +214,7 @@
  	/// - parameter execute: The work item to be invoked on the queue.
  	/// - SeeAlso: `async(execute:)`
  	///
@@ -147,7 +147,7 @@
  	public func sync(execute workItem: DispatchWorkItem) {
  		// _swift_dispatch_sync preserves the @convention(block) for
  		// work item blocks.
-@@ -232,7 +233,7 @@
+@@ -237,7 +238,7 @@
  	/// - SeeAlso: `sync(execute:)`
  	///
  	///
@@ -156,7 +156,7 @@
  	public func async(execute workItem: DispatchWorkItem) {
  		// _swift_dispatch_async preserves the @convention(block)
  		// for work item blocks.
-@@ -248,7 +249,7 @@
+@@ -253,7 +254,7 @@
  	/// - parameter execute: The work item to be invoked on the queue.
  	/// - SeeAlso: `sync(execute:)`
  	///
@@ -165,7 +165,7 @@
  	public func async(group: DispatchGroup, execute workItem: DispatchWorkItem) {
  		// _swift_dispatch_group_async preserves the @convention(block)
  		// for work item blocks.
-@@ -290,7 +291,7 @@
+@@ -295,7 +296,7 @@
  		}
  
  		var block: @convention(block) () -> Void = work
@@ -174,7 +174,7 @@
  			let workItem = DispatchWorkItem(qos: qos, flags: flags, block: work)
  			block = workItem._block
  		}
-@@ -329,7 +330,7 @@
+@@ -334,7 +335,7 @@
  		}
  	}
  
@@ -183,7 +183,7 @@
  	private func _syncHelper<T>(
  		fn: (DispatchWorkItem) -> Void,
  		flags: DispatchWorkItemFlags,
-@@ -382,7 +383,7 @@
+@@ -387,7 +388,7 @@
  	public func sync<T>(flags: DispatchWorkItemFlags, execute work: () throws -> T) rethrows -> T {
  		if flags == .barrier {
  			return try self._syncHelper(fn: _syncBarrier, execute: work, rescue: { throw $0 })
@@ -192,7 +192,7 @@
  			return try self._syncHelper(fn: sync, flags: flags, execute: work, rescue: { throw $0 })
  		} else {
  			return try self._syncHelper(fn: sync, execute: work, rescue: { throw $0 })
-@@ -412,7 +413,7 @@
+@@ -417,7 +418,7 @@
  		flags: DispatchWorkItemFlags = [],
  		execute work: @escaping @convention(block) () -> Void)
  	{
@@ -201,7 +201,7 @@
  			let item = DispatchWorkItem(qos: qos, flags: flags, block: work)
  			_swift_dispatch_after(deadline.rawValue, self, item._block)
  		} else {
-@@ -443,7 +444,7 @@
+@@ -448,7 +449,7 @@
  		flags: DispatchWorkItemFlags = [],
  		execute work: @escaping @convention(block) () -> Void)
  	{
@@ -210,7 +210,7 @@
  			let item = DispatchWorkItem(qos: qos, flags: flags, block: work)
  			_swift_dispatch_after(wallDeadline.rawValue, self, item._block)
  		} else {
-@@ -461,7 +462,7 @@
+@@ -466,7 +467,7 @@
  	/// - SeeAlso: `asyncAfter(deadline:qos:flags:execute:)`
  	/// - SeeAlso: `DispatchTime`
  	///
@@ -219,7 +219,7 @@
  	public func asyncAfter(deadline: DispatchTime, execute: DispatchWorkItem) {
  		_swift_dispatch_after(deadline.rawValue, self, execute._block)
  	}
-@@ -476,7 +477,7 @@
+@@ -481,7 +482,7 @@
  	/// - SeeAlso: `asyncAfter(wallDeadline:qos:flags:execute:)`
  	/// - SeeAlso: `DispatchTime`
  	///

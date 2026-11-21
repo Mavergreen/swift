@@ -15,7 +15,7 @@
  public func dispatch_after(_ when: dispatch_time_t, _ queue: DispatchQueue, _ block: () -> Void)
 --- stdlib/public/Darwin/Dispatch/Queue.swift
 +++ stdlib/public/Darwin/Dispatch/Queue.swift
-@@ -481,12 +481,7 @@
+@@ -486,12 +486,7 @@
  		_swift_dispatch_after(wallDeadline.rawValue, self, execute._block)
  	}
  

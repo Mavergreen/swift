@@ -91,8 +91,17 @@ grep -q '^	public func wait(timeout: DispatchTime) -> DispatchTimeoutResult {$' 
   || fail "DispatchWorkItem has no wait(timeout:) or notify(queue:execute:)"
 grep -q 'self.init(__label: label, attr: attr, queue: target)' "$D/Queue.swift" || fail "the target: initializer does not pass the target at creation"
 for f in "$D"/*.swift; do
-  if grep -n 'macOS 10.12' "$f"; then fail "${f##*/} still names macOS 10.12 (above)"; fi
+  if grep -n 'macOS 10.12' "$f" | grep -v '#unavailable(macOS 10.12, '; then fail "${f##*/} still names macOS 10.12 (above)"; fi
 done
+# On 10.10 and 10.11 the OS's QoS attributes and Recaulk's inactive one do not compose, so there an initially
+# inactive queue drops its QoS (0005); 10.9 and 10.12 and later keep it. Not run-testable on the 10.9 box.
+awk '/public convenience init\(/{on=1} on{print} on&&/^\t}$/{exit}' "$D/Queue.swift" > "$T/init"
+grep -q 'Mavericks: on macOS 10.10 and 10.11 an initially inactive queue keeps no QoS' "$T/init" \
+  && grep -q '^		if #unavailable(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0), attributes.contains(.initiallyInactive) {$' "$T/init" \
+  && grep -q '^			if #available(macOS 10.10, iOS 8.0, \*) { qos = .unspecified }$' "$T/init" \
+  || fail "the queue initializer does not drop the QoS of an initially inactive queue on 10.10 and 10.11"
+[ "$(grep -n 'qos = .unspecified' "$T/init" | cut -d: -f1)" -lt "$(grep -n '__dispatch_queue_attr_make_with_qos_class' "$T/init" | cut -d: -f1)" ] \
+  || fail "the initializer drops the QoS after it has made the attribute"
 echo "-- below macOS 10.10, every path that submits a barrier-flagged block routes it through a barrier function"
 # sync(execute:) and the three async forms (execute:, group:execute:, group:qos:flags:), asyncAfter (4), notify (2)
 n="$(grep -c '_blockFlagsAreHonored && .*flags.contains(.barrier)' "$D/Queue.swift" "$D/Dispatch.swift" | awk -F: '{s+=$2} END{print s}')"

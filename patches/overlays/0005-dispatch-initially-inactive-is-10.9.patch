@@ -19,3 +19,15 @@
  				if self.contains(.initiallyInactive) {
  					attr = __dispatch_queue_attr_make_initially_inactive(attr)
  				}
+@@ -164,6 +165,11 @@
+ 		autoreleaseFrequency: AutoreleaseFrequency = .inherit,
+ 		target: DispatchQueue? = nil)
+ 	{
++		// Mavericks: on macOS 10.10 and 10.11 an initially inactive queue keeps no QoS, as the OS's attributes and Recaulk's do not compose there: the OS's dispatch_queue_attr_make_with_qos_class cannot take Recaulk's inactive attribute, and Recaulk's dispatch_queue_attr_make_initially_inactive makes an OS QoS attribute's queue serial. 10.9, which has no QoS, and 10.12 and later are unchanged.
++		var qos = qos
++		if #unavailable(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0), attributes.contains(.initiallyInactive) {
++			if #available(macOS 10.10, iOS 8.0, *) { qos = .unspecified }
++		}
+ 		var attr = attributes._attr()
+ 		if autoreleaseFrequency != .inherit {
+ 			attr = autoreleaseFrequency._attr(attr: attr)

@@ -72,7 +72,9 @@ done
 #       0003 global(qos:) maps the QoS to a 10.9 priority below macOS 10.10;
 #       0004, 0005, 0006, 0008 lower to 10.9 what macOS 10.12 added and Recaulk declares and defines: the autorelease
 #         frequencies, initiallyInactive, the target: initializer's dispatch_queue_create_with_target ($V2), and
-#         DispatchPredicate and dispatchPrecondition (dispatch_assert_queue and _not as $V2, and _barrier);
+#         DispatchPredicate and dispatchPrecondition (dispatch_assert_queue and _not as $V2, and _barrier); 0005 also
+#         drops an initially inactive queue's QoS on macOS 10.10 and 10.11, where the OS's QoS attributes and
+#         Recaulk's inactive one do not compose;
 #       0009, 0010 remove DispatchQueue.qos (Recaulk's dispatch_queue_get_qos_class answers QOS_CLASS_UNSPECIFIED,
 #         whatever the queue was made with) and the DATA_REPLACE source (declared by no 10.9 or Recaulk header);
 #       0011 the 10.9 headers carry no nullability, so Data and IO unwrap what C never returns NULL for;
