@@ -183,10 +183,11 @@ echo "    Recaulk $RECAULK_VERSION for Concurrency: $RECAULK_CONCURRENCY_SYMBOLS
 clang_resource_shim "$CLANG_INC" "$BUILTINS" "$ROOT/clang-resource" || { echo "FAIL: could not lay out $ROOT/clang-resource"; exit 1; }
 echo "    host compiler $TC; SDK $SDK_RUNTIME; linker $LLD; builtins $BUILTINS"
 
-echo "==> 2. pinned swift sources (GitHub's tarballs of SWIFT_SHA, and of SWIFT62_SHA and SWIFT54_SHA for the overlays, each verified by its TARBALL_SHA256, extracted afresh)"
+echo "==> 2. pinned swift sources (GitHub's tarballs of SWIFT_SHA, and of SWIFT62_SHA, SWIFT54_SHA and SWIFT40_SHA for the overlays and their API notes, each verified by its TARBALL_SHA256, extracted afresh)"
 fetch_source swift "$SWIFT_REPO_URL" "$SWIFT_SHA" "$SWIFT_TARBALL_SHA256" SWIFT_TARBALL_SHA256 || exit 1
 fetch_source swift-6.2 "$SWIFT_REPO_URL" "$SWIFT62_SHA" "$SWIFT62_TARBALL_SHA256" SWIFT62_TARBALL_SHA256 || exit 1
 fetch_source swift-5.4 "$SWIFT_REPO_URL" "$SWIFT54_SHA" "$SWIFT54_TARBALL_SHA256" SWIFT54_TARBALL_SHA256 || exit 1
+fetch_source swift-4.0 "$SWIFT_REPO_URL" "$SWIFT40_SHA" "$SWIFT40_TARBALL_SHA256" SWIFT40_TARBALL_SHA256 || exit 1
 
 echo "==> 3. runtime patches (patches/runtime, applied in RUNTIME_PATCHES' order)"
 #  0004 realization-aware getROData — objc4-532 realizes classes eagerly at image

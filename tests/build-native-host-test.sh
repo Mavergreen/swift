@@ -230,6 +230,8 @@ unset FAKE_RECAULK_NO_SHADOWS; rm -rf "$T/recaulk-cache"
 build_native
 grep -qxF "fetch_pinned_source https://github.com/swiftlang/swift.git $SWIFT_SHA $SWIFT_TARBALL_SHA256 swift" "$T/log" \
   || fail "did not fetch the swift tarball by its pin: $(cat "$T/out")"
+grep -qxF "fetch_pinned_source https://github.com/swiftlang/swift.git $SWIFT40_SHA $SWIFT40_TARBALL_SHA256 swift-4.0" "$T/log" \
+  || fail "did not fetch swift-4.0's tarball by its pin: $(grep fetch_pinned_source "$T/log")"
 [ "$(sed -n 's/^patch \([0-9]*\)-.*/\1/p' "$T/log" | tr '\n' ' ')" = "0004 0005 0007 0008 0009 0010 0011 0012 0013 0014 0015 0016 0017 " ] \
   || fail "patched in another order: $(grep '^patch' "$T/log" | tr '\n' ' ')"
 for a in "-DCMAKE_AR=$C22/bin/llvm-ar" "-DCMAKE_RANLIB=$C22/bin/llvm-ranlib" "-DSWIFT_LIPO=$C22/bin/llvm-lipo" -DSWIFT_ENABLE_LIBXML2=OFF \

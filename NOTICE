@@ -79,6 +79,11 @@ authors):
     (pins.env's SWIFT54_SHA), with the local patches to the Dispatch overlay's
     sources listed below.
 
+The API notes for the Foundation, CoreGraphics and AppKit overlays (Foundation.apinotes,
+CoreGraphics.apinotes, AppKit.apinotes) are from swift-4.0-RELEASE's apinotes (pins.env's
+SWIFT40_SHA), under the same license (Apache License v2.0 with Runtime Library Exception);
+10.9's SDK predates Swift and has none.
+
 Both toolchain packages also contain Dispatch.apinotes (lib/swift/apinotes), from
 the Swift open source project at pins.env's SWIFT_SHA (apinotes/Dispatch.apinotes),
 under the same license (Apache License v2.0 with Runtime Library Exception;
