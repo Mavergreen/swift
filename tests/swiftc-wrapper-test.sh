@@ -10,8 +10,8 @@
 #   back-fills it uses; leave a line without -lSystem as it was; and refuse to link without the archive,
 #   or a line with a response file (@file), which could hide the -lSystem.
 #   The driver is also given the importer's view of Recaulk's dispatch declarations: -Xcc -ivfsoverlay
-#   with a YAML that names the SDK it was given and the toolchain's lib/swift/recaulk-importer, byte for
-#   byte the YAML lib.sh's recaulk_vfs_yaml writes. The YAML is kept in a per-user, per-SDK, per-toolchain
+#   with a YAML that names the SDK it was given, each of that SDK's usr/include/dispatch/*.h, and the
+#   toolchain's lib/swift/recaulk-importer, byte for byte the YAML lib.sh's recaulk_vfs_yaml writes. The YAML is kept in a per-user, per-SDK, per-toolchain
 #   cache, written whole (atomically) before the driver replaces the shell, so no temporary file is left
 #   behind, whether the exec succeeds or fails; a toolchain without the importer's directory, or an SDK
 #   path the YAML could not quote, is refused before the driver runs. With HOME unset, not a directory or
@@ -27,7 +27,9 @@ T="$(cd "$T" && pwd -P)"
 P="$T/mg/swift-toolchain"; mkdir -p "$P/bin" "$P/libexec/mavergreen-swift" "$T/mg/bin" "$T/links/deeper" \
   "$T/fake-sdk" "$T/other-sdk"
 cp "$REPO/toolchain/swiftc" "$P/bin/swiftc"
-mkdir -p "$P/lib/swift/recaulk-importer"
+mkdir -p "$P/lib/swift/recaulk-importer" "$T/fake-sdk/usr/include/dispatch"
+# The SDK's own dispatch headers, each of which the YAML names (lib.sh's recaulk_vfs_yaml), beside files it does not.
+for f in base.h dispatch.h queue.h introspection.d module.map; do : > "$T/fake-sdk/usr/include/dispatch/$f"; done
 HOME="$T/home"; export HOME; CACHE="$HOME/Library/Caches/mavergreen-swift"
 cat > "$P/bin/swift-frontend" <<EOF
 #!/bin/sh
@@ -84,6 +86,10 @@ case "$VFS" in "$CACHE"/*) ;; *) fail "the YAML is at $VFS, not in $CACHE" ;; es
 [ -f "$VFS" ] || fail "the YAML $VFS is not there afterwards"
 grep -qF "'$T/fake-sdk/usr/include/dispatch'" "$VFS" || fail "the YAML does not name the SDK's usr/include/dispatch: $(cat "$VFS")"
 grep -qF "'$P/lib/swift/recaulk-importer/dispatch/dispatch.h'" "$VFS" || fail "the YAML does not name the toolchain's importer: $(cat "$VFS")"
+for f in base.h dispatch.h queue.h; do
+  grep -qF "{ 'name': '$f', 'type': 'file', 'external-contents': '$T/fake-sdk/usr/include/dispatch/$f' }" "$VFS" \
+    || fail "the YAML does not name the SDK's dispatch/$f, which a case-sensitive filesystem would not find as Dispatch/$f: $(cat "$VFS")"
+done
 . "$REPO/lib.sh"
 recaulk_vfs_yaml "$T/fake-sdk" "$P/lib/swift/recaulk-importer" "$T/lib.yaml" || fail "recaulk_vfs_yaml failed"
 cmp -s "$T/lib.yaml" "$VFS" || fail "the wrapper's YAML is not recaulk_vfs_yaml's:

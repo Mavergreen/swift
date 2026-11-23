@@ -1,6 +1,7 @@
 #!/bin/sh
-# platform: macOS-only -- reads Mach-O with the readers OTOOL, NM and DYLDINFO name (otool and nm when unset),
-#           so it runs on a modern Mac and on OS X 10.9 alike
+# platform: host-agnostic -- reads Mach-O with the readers OTOOL, NM and DYLDINFO name (otool and nm when unset,
+#           on a Mac), so it runs on a modern Mac, on OS X 10.9 and on Linux alike; Linux has no Mach-O otool
+#           or nm, so there OTOOL and NM must name clang22's llvm-otool and llvm-nm (build.sh's do)
 # usage: sh scripts/imports-on-10.9.sh <sdk109-root> <allowlist> <dylib>...
 #   <sdk109-root> is lib.sh's sdk109_stubs (the 10.9 SDK exactly as its tarball holds it); <allowlist>
 #   is scripts/resources/weak-absent-on-10.9.txt.
@@ -27,6 +28,12 @@ HERE="$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)"
 SDK="$1"; ALLOW="$2"; shift 2
 [ -d "$SDK/usr/lib" ] || { echo "FAIL: $SDK has no usr/lib -- not a 10.9 SDK root" >&2; exit 1; }
 [ -f "$ALLOW" ] || { echo "FAIL: no allowlist $ALLOW" >&2; exit 1; }
+if [ "$(uname -s)" = Linux ]; then
+  [ -n "${OTOOL:-}" ] && command -v "$OTOOL" >/dev/null 2>&1 \
+    || { echo "FAIL: no llvm-otool (OTOOL='${OTOOL:-}'): on Linux OTOOL names clang22's, since there is no Mach-O otool" >&2; exit 1; }
+  [ -n "${NM:-}" ] && command -v "$NM" >/dev/null 2>&1 \
+    || { echo "FAIL: no llvm-nm (NM='${NM:-}'): on Linux NM names clang22's, since the host's nm reads no Mach-O" >&2; exit 1; }
+fi
 
 W="$(mktemp -d "${TMPDIR:-/tmp}/imports-on-109.XXXXXX")"
 trap 'rm -rf "$W"' EXIT

@@ -1,10 +1,10 @@
 #!/bin/sh
-# platform: macOS-only -- runs build.sh (macOS-only), in both modes, with a fake pkgutil and toolchain
+# platform: macOS-only -- runs build.sh's Mac modes, native and cross, which a Linux host refuses or runs otherwise
 # usage: sh tests/build-native-host-test.sh
 #   build.sh must build with a host toolchain of this checkout's Swift only: step 1 prints the release the
-#   toolchain's receipt names, and refuses one of another Swift version, or one no pkg installed unless
-#   SWIFT_HOST_TOOLCHAIN_VERSION declares it. Native mode cannot run here (it needs OS X 10.9 and the
-#   installed toolchain), so a fake toolchain prefix and a fake pkgutil stand in; NM names no program, so a
+#   toolchain's pkg names in its mavergreen.plist, and refuses one of another Swift version, or one no pkg
+#   installed unless SWIFT_HOST_TOOLCHAIN_VERSION declares it; it never asks pkgutil. Native mode cannot run
+#   here (it needs OS X 10.9 and the installed toolchain), so a fake toolchain prefix stands in; NM names no program, so a
 #   toolchain step 1 accepts stops there, at the next check, before any SDK fetch. Cross mode (CI) takes
 #   the toolchain SWIFT_HOST_TOOLCHAIN names the same way, never the swift.org pkg, and stops at the SDK
 #   fetch (this test's shipyard has none), and passes CMAKE_OSX_ARCHITECTURES=x86_64 to the stdlib configure
@@ -34,11 +34,12 @@ R="$T/root"; mkdir -p "$R/swift/out/llvm/lib/cmake/llvm" "$R/swift/work/llvm-bui
 : > "$R/swift/work/llvm-build/bin/ld64.lld"; chmod +x "$R/swift/work/llvm-build/bin/ld64.lld"
 H="$T/tc"; mkdir -p "$H/bin" "$H/lib/swift/macosx" "$H/lib/clang/21/include" "$H/lib/clang/21/lib/darwin"
 : > "$H/bin/swift-frontend"; : > "$H/bin/clang"; : > "$H/bin/ld64.lld"; : > "$H/lib/clang/21/lib/darwin/libclang_rt.osx.a"
-printf '#!/bin/sh\n[ "$1" = --file-info ] || exit 2\necho "$2" >> "%s/pkgutil-args"\ncat "%s/receipt"\n' "$T" "$T" > "$T/fakebin/pkgutil"
+printf '#!/bin/sh\necho "pkgutil $*" >> "%s/pkgutil-args"\nexit 1\n' "$T" > "$T/fakebin/pkgutil"
 chmod +x "$T/fakebin/pkgutil"
-receipt() {  # $1 = pkg-version, or nothing for no receipt
-  { echo "volume: /"; echo "path: $H/bin/swift-frontend"
-    [ -z "${1:-}" ] || printf '\npkgid: dev.mavergreen.swift-toolchain\npkg-version: %s\ninstall-time: 1790384965\n' "$1"; } > "$T/receipt"
+receipt() {  # $1 = the version the prefix's mavergreen.plist names, or nothing for no pkg (no manifest)
+  rm -f "$H/mavergreen.plist"
+  [ -z "${1:-}" ] || printf '%s\n' '<plist version="1.0">' '<dict>' '  <key>identifier</key>' '  <string>dev.mavergreen.swift-toolchain</string>' \
+    '  <key>version</key>' "  <string>$1</string>" '</dict>' '</plist>' > "$H/mavergreen.plist"
 }
 build() {  # runs build.sh's native mode; its output in $T/out
   ( export PATH="$T/fakebin:$PATH" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=native \
@@ -55,7 +56,7 @@ grep -qxF "    host toolchain $H: release $SWIFT_VERSION-mavericks.7 (pkg dev.ma
   || fail "did not print the release: $(cat "$T/out")"
 went_past_step_1 || fail "stopped before the check after the release's: $(cat "$T/out")"
 if grep -q 'CMAKE_OSX_ARCHITECTURES' "$T/out"; then fail "native mode passes CMAKE_OSX_ARCHITECTURES: $(cat "$T/out")"; fi
-grep -qxF "$H/bin/swift-frontend" "$T/pkgutil-args" || fail "looked up another file's receipt: $(cat "$T/pkgutil-args")"
+[ ! -e "$T/pkgutil-args" ] || fail "asked pkgutil: $(cat "$T/pkgutil-args")"
 
 echo "-- a receipt of another Swift: refused in step 1"
 receipt "0.0.1-mavericks.1"
@@ -95,9 +96,10 @@ grep -q "FAIL: no swift.org toolchain at $R/swift/cache/" "$T/out" || fail "cros
 
 echo "-- the stdlib configure takes step 1's architecture arguments (the call is run here with a fake shipyard-cmake)"
 # Reaching step 4 for real needs the pinned swift source, patched; so the configure call itself is cut out of
-# build.sh (from `shipyard-cmake` to the first line with no trailing backslash) and run with CMAKE_ARCH_ARGS set.
-awk '/^shipyard-cmake /{on=1} on{print} on&&!/\\$/{exit}' "$REPO/build.sh" > "$T/configure.sh"
-[ -s "$T/configure.sh" ] || fail "found no shipyard-cmake call in build.sh"
+# build.sh (from `shipyard_cmake` to the first line with no trailing backslash) and run with CMAKE_ARCH_ARGS set,
+# lib.sh's shipyard_cmake running shipyard-cmake on a Mac.
+{ echo ". \"$REPO/lib.sh\""; awk '/^shipyard_cmake /{on=1} on{print} on&&!/\\$/{exit}' "$REPO/build.sh"; } > "$T/configure.sh"
+grep -q '^shipyard_cmake ' "$T/configure.sh" || fail "found no shipyard_cmake call in build.sh"
 printf '#!/bin/sh\nprintf "%%s\\n" "$@"\n' > "$T/fakebin/shipyard-cmake"; chmod +x "$T/fakebin/shipyard-cmake"
 configure_args() {  # $1 = CMAKE_ARCH_ARGS; the arguments the call passes, one a line
   ( set +eu; CMAKE_ARCH_ARGS="$1"
@@ -261,6 +263,8 @@ grep -qxF -e "  -DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$R/swift/work/recaulk-concur
 if awk '/^build_overlay\(\) \{/,/^}/' "$REPO/build.sh" | grep -q -e '--runtime-floor'; then fail "build_overlay passes --runtime-floor: a shipped module's availability would be 10.9"; fi
 awk '/^build_overlay\(\) \{/,/^}/' "$REPO/build.sh" | grep -q 'build-module.sh' || fail "no build_overlay calling build-module.sh in build.sh"
 if grep -q '^git \|^xcrun ' "$T/log"; then fail "ran $(grep '^git \|^xcrun ' "$T/log" | head -1)"; fi
+# A Mac configures for its own platform: the Linux host's CMake platform and install_name_tool are not passed.
+if grep -q 'CMAKE_SYSTEM_NAME\|CMAKE_SYSTEM_PROCESSOR\|CMAKE_INSTALL_NAME_TOOL' "$T/log"; then fail "a Mac configure passes the Linux host's CMake platform: $(cat "$T/log")"; fi
 
 echo "-- step 5b's test support: with Concurrency when the host compiler declares a 10.9 async function; without"
 echo "   it, and without upstream's concurrency tests, saying so, when it refuses one (the swift.org seed); else FAIL"

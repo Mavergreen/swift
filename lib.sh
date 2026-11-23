@@ -1,6 +1,6 @@
 #!/bin/sh
-# platform: macOS-only -- host_toolchain_release reads a pkg receipt with pkgutil; the swift.org installer's
-#           check and expansion run pkgutil on a Mac alone; every other helper runs on a Mac and on Linux
+# platform: host-agnostic -- the swift.org installer's check and expansion, guarded below, run pkgutil and
+#           ditto on a Mac alone (build.sh refuses that branch on Linux); every other helper runs on a Mac and on Linux
 # lib.sh — the build root and the swift.org installer check, shared by every build script (sourced
 # after pins.env, which supplies TOOLCHAIN_SIGNER), and the helpers build.sh builds the runtime with on
 # either host (the dirs it hands the compilers, the prefix maps, the preflight's Mach-O readers). One
@@ -147,20 +147,33 @@ source_stamp() {
 # <importer>/Dispatch.modulemap (a toolchain's lib/swift/recaulk-importer), whose Dispatch lists, in this
 # order, recaulk-dispatch.h (the virtual name here of <importer>/dispatch/dispatch.h, which the module map
 # cannot name by an absolute path) and the SDK's dispatch.h; and <sdk>'s usr/include/pthread/qos.h, which the
-# 10.9 SDK lacks, is <importer>/pthread/qos.h. The roots are the SDK's absolute path, so this is written for
+# 10.9 SDK lacks, is <importer>/pthread/qos.h. Every other <sdk>/usr/include/dispatch/*.h is named too, as
+# itself, so the whole module resolves inside the overlay (below). The roots are the SDK's absolute path, so this is written for
 # each SDK. toolchain/swiftc carries a copy of these lines, which it cannot source this file to share
 # (tests/swiftc-wrapper-test.sh keeps them the same). Fails for a path holding a quote, which would end a YAML
 # string early.
 recaulk_vfs_yaml() {
   case "$1$2" in *\'*|*'
 '*) echo "recaulk_vfs_yaml: a quote or newline in '$1' or '$2' cannot be written to a YAML string" >&2; return 1 ;; esac
-  printf '%s\n' '{' "  'version': 0," "  'case-sensitive': 'false'," "  'use-external-names': false," "  'roots': [" \
-    "    { 'name': '$1/usr/include/dispatch', 'type': 'directory'," \
-    "      'contents': [ { 'name': 'module.map', 'type': 'file', 'external-contents': '$2/Dispatch.modulemap' }," \
-    "                    { 'name': 'recaulk-dispatch.h', 'type': 'file', 'external-contents': '$2/dispatch/dispatch.h' } ] }," \
-    "    { 'name': '$1/usr/include/pthread', 'type': 'directory'," \
-    "      'contents': [ { 'name': 'qos.h', 'type': 'file', 'external-contents': '$2/pthread/qos.h' } ] }" \
-    '  ]' '}' > "$3"
+  # platform: the overlay is case-insensitive, so clang, looking up module Dispatch, takes the overlay's
+  #           dispatch dir for usr/include/Dispatch and records that spelling; a header the overlay does not
+  #           name then falls through to the real filesystem as .../Dispatch/base.h, which only a
+  #           case-insensitive one (macOS's) finds. Named here, each resolves in the overlay on any host.
+  for _rv_h in "$1"/usr/include/dispatch/*.h; do
+    case "${_rv_h##*/}" in *\'*|*'
+'*) echo "recaulk_vfs_yaml: a quote or newline in the header name '${_rv_h##*/}' cannot be written to a YAML string" >&2; return 1 ;; esac
+  done
+  { printf '%s\n' '{' "  'version': 0," "  'case-sensitive': 'false'," "  'use-external-names': false," "  'roots': [" \
+      "    { 'name': '$1/usr/include/dispatch', 'type': 'directory'," \
+      "      'contents': [ { 'name': 'module.map', 'type': 'file', 'external-contents': '$2/Dispatch.modulemap' },"
+    for _rv_h in "$1"/usr/include/dispatch/*.h; do
+      [ ! -f "$_rv_h" ] || printf '%s\n' "                    { 'name': '${_rv_h##*/}', 'type': 'file', 'external-contents': '$_rv_h' },"
+    done
+    printf '%s\n' "                    { 'name': 'recaulk-dispatch.h', 'type': 'file', 'external-contents': '$2/dispatch/dispatch.h' } ] }," \
+      "    { 'name': '$1/usr/include/pthread', 'type': 'directory'," \
+      "      'contents': [ { 'name': 'qos.h', 'type': 'file', 'external-contents': '$2/pthread/qos.h' } ] }" \
+      '  ]' '}'
+  } > "$3"
 }
 
 # recaulk_importer_layout <recaulk-prefix> <Dispatch.modulemap> <version> <dir> -- lays out <dir> as
@@ -295,30 +308,29 @@ native_host_shim() {
 # toolchain at <prefix>, and fails, saying why, unless <release> is one of SWIFT_VERSION's
 # (<SWIFT_VERSION>-mavericks.N). The stdlib is coupled to its compiler: this checkout's sources compiled
 # by another release's compiler fail far from the cause, or build a runtime CI never builds. The release
-# is the receipt of the pkg that installed <prefix>/bin/swift-frontend (pkgutil --file-info), whichever
-# pkg id that is, so the cross toolchain's is read as the native one's is. A copy that no pkg installed
-# has no receipt: SWIFT_HOST_TOOLCHAIN_VERSION then declares its release, held to the same rule, and
-# where there is a receipt it must agree with it.
+# is the one the manifest of the pkg that installed <prefix> names, <prefix>/mavergreen.plist (its version
+# and identifier, which are that pkg's version and id), so the cross toolchain's is read as the native
+# one's is. A copy that no pkg installed has no manifest: SWIFT_HOST_TOOLCHAIN_VERSION then declares its
+# release, held to the same rule, and where there is a manifest it must agree with it.
+# platform: the manifest reads the same on every host; a pkg receipt (pkgutil) exists only on a Mac.
 host_toolchain_release() {
-  _hr_info="$(pkgutil --file-info "$1/bin/swift-frontend")" || {
-    echo "FAIL: pkgutil could not look up the receipt of $1/bin/swift-frontend" >&2; return 1; }
-  _hr_v="$(printf '%s\n' "$_hr_info" | sed -n 's/^pkg-version: *//p' | LC_ALL=C sort -u)"
-  _hr_id="$(printf '%s\n' "$_hr_info" | sed -n 's/^pkgid: *//p' | LC_ALL=C sort -u | tr '\n' ' ')"
-  case "$_hr_v" in *'
-'*) echo "FAIL: $1/bin/swift-frontend belongs to more than one release: $(printf '%s' "$_hr_v" | tr '\n' ' ')(pkgs ${_hr_id% })" >&2
-    return 1 ;;
-  esac
-  _hr_how="pkg ${_hr_id% }"
+  _hr_v=""; _hr_id=""; _hr_m="$1/mavergreen.plist"
+  if [ -f "$_hr_m" ]; then
+    _hr_v="$(sed -n '/<key>version<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' "$_hr_m")"
+    _hr_id="$(sed -n '/<key>identifier<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' "$_hr_m")"
+    [ -n "$_hr_v" ] || { echo "FAIL: $_hr_m names no version" >&2; return 1; }
+  fi
+  _hr_how="pkg $_hr_id"
   if [ -n "${SWIFT_HOST_TOOLCHAIN_VERSION:-}" ]; then
     if [ -z "$_hr_v" ]; then
       _hr_v="$SWIFT_HOST_TOOLCHAIN_VERSION"; _hr_how="declared by SWIFT_HOST_TOOLCHAIN_VERSION"
     elif [ "$_hr_v" != "$SWIFT_HOST_TOOLCHAIN_VERSION" ]; then
-      echo "FAIL: SWIFT_HOST_TOOLCHAIN_VERSION says $SWIFT_HOST_TOOLCHAIN_VERSION, but the receipt of $1 ($_hr_how) says $_hr_v" >&2
+      echo "FAIL: SWIFT_HOST_TOOLCHAIN_VERSION says $SWIFT_HOST_TOOLCHAIN_VERSION, but the manifest of $1 ($_hr_how) says $_hr_v" >&2
       return 1
     fi
   fi
   [ -n "$_hr_v" ] || {
-    echo "FAIL: no pkg installed $1/bin/swift-frontend, so its release is unknown -- install swift-toolchain's newest $SWIFT_VERSION release, or declare a copy's release with SWIFT_HOST_TOOLCHAIN_VERSION" >&2
+    echo "FAIL: no pkg installed $1 (it has no mavergreen.plist), so its release is unknown -- install swift-toolchain's newest $SWIFT_VERSION release, or declare a copy's release with SWIFT_HOST_TOOLCHAIN_VERSION" >&2
     return 1; }
   case "$_hr_v" in
     "$SWIFT_VERSION"-?*) ;;

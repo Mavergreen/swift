@@ -32,13 +32,25 @@ fi
 recaulk_vfs_yaml() {
   case "$1$2" in *\'*|*'
 '*) echo "swiftc: a quote or newline in '$1' or '$2' cannot be written to a YAML string" >&2; return 1 ;; esac
-  printf '%s\n' '{' "  'version': 0," "  'case-sensitive': 'false'," "  'use-external-names': false," "  'roots': [" \
-    "    { 'name': '$1/usr/include/dispatch', 'type': 'directory'," \
-    "      'contents': [ { 'name': 'module.map', 'type': 'file', 'external-contents': '$2/Dispatch.modulemap' }," \
-    "                    { 'name': 'recaulk-dispatch.h', 'type': 'file', 'external-contents': '$2/dispatch/dispatch.h' } ] }," \
-    "    { 'name': '$1/usr/include/pthread', 'type': 'directory'," \
-    "      'contents': [ { 'name': 'qos.h', 'type': 'file', 'external-contents': '$2/pthread/qos.h' } ] }" \
-    '  ]' '}' > "$3"
+  # platform: the overlay is case-insensitive, so clang, looking up module Dispatch, takes the overlay's
+  #           dispatch dir for usr/include/Dispatch and records that spelling; a header the overlay does not
+  #           name then falls through to the real filesystem as .../Dispatch/base.h, which only a
+  #           case-insensitive one (macOS's) finds. Named here, each resolves in the overlay on any host.
+  for _rv_h in "$1"/usr/include/dispatch/*.h; do
+    case "${_rv_h##*/}" in *\'*|*'
+'*) echo "swiftc: a quote or newline in the header name '${_rv_h##*/}' cannot be written to a YAML string" >&2; return 1 ;; esac
+  done
+  { printf '%s\n' '{' "  'version': 0," "  'case-sensitive': 'false'," "  'use-external-names': false," "  'roots': [" \
+      "    { 'name': '$1/usr/include/dispatch', 'type': 'directory'," \
+      "      'contents': [ { 'name': 'module.map', 'type': 'file', 'external-contents': '$2/Dispatch.modulemap' },"
+    for _rv_h in "$1"/usr/include/dispatch/*.h; do
+      [ ! -f "$_rv_h" ] || printf '%s\n' "                    { 'name': '${_rv_h##*/}', 'type': 'file', 'external-contents': '$_rv_h' },"
+    done
+    printf '%s\n' "                    { 'name': 'recaulk-dispatch.h', 'type': 'file', 'external-contents': '$2/dispatch/dispatch.h' } ] }," \
+      "    { 'name': '$1/usr/include/pthread', 'type': 'directory'," \
+      "      'contents': [ { 'name': 'qos.h', 'type': 'file', 'external-contents': '$2/pthread/qos.h' } ] }" \
+      '  ]' '}'
+  } > "$3"
 }
 IMPORTER="$PREFIX/lib/swift/recaulk-importer"
 recaulk_vfs_yaml "$SDK" "$IMPORTER" /dev/null || exit 1

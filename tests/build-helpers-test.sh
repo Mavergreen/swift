@@ -10,7 +10,10 @@
 #   another commit's tarball is extracted, and is kept when the same one is. clang22_prefix must require
 #   llvm-libtool-darwin on a Mac and not on Linux (a faked uname), whose clang22 archive has none, and
 #   fetch-clang22.sh on Linux must hand shipyard's fetch_clang22.sh the repo's components/clang22, refusing
-#   one whose version is not pins.env's CLANG22_VERSION, and run no pkgutil.
+#   one whose version is not pins.env's CLANG22_VERSION, and run no pkgutil. host_toolchain_release must read
+#   a prefix's release from the mavergreen.plist its pkg installed, never a pkgutil receipt, so it reads the
+#   same on either host; recaulk_vfs_yaml must name every usr/include/dispatch/*.h of the SDK, so a
+#   case-sensitive filesystem resolves the Dispatch module inside the overlay.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -236,43 +239,77 @@ grep -q '(false)' "$T/out" || fail "did not name OTOOL's reader: $(cat "$T/out")
 ( export PATH="$T/fakebin:$PATH" FAKE_OTOOL_OUT="$LIBS"; OTOOL="$T/llvm-otool" macho_links_none_under "$T/lld" /opt/pkg/ ) > /dev/null \
   || fail "refused a clean lld read by OTOOL"
 
-echo "-- host_toolchain_release: the receipt's release, of SWIFT_VERSION, whatever the pkg id"
+echo "-- host_toolchain_release: the release its pkg's mavergreen.plist names, of SWIFT_VERSION, whatever the pkg id; no pkgutil"
 SWIFT_VERSION=6.4.0; mkdir -p "$T/fakebin"
-printf '#!/bin/sh\n[ "$1" = --file-info ] || exit 2\necho "$2" > "%s/pkgutil-arg"\ncat "%s/receipt"\nexit "${FAKE_PKGUTIL_RC:-0}"\n' "$T" "$T" > "$T/fakebin/pkgutil"
+# platform: a pkg receipt exists only on a Mac; the manifest every Mavergreen pkg installs beside its prefix
+#           reads the same on any host, so pkgutil must never run.
+printf '#!/bin/sh\necho "pkgutil $*" >> "%s/pkgutil-log"\nexit 1\n' "$T" > "$T/fakebin/pkgutil"
 chmod +x "$T/fakebin/pkgutil"
-receipt() {  # $1 = pkgid, $2... = pkg-versions (none: no receipt)
-  _id="$1"; shift
-  { echo "volume: /"; echo "path: $T/tc/bin/swift-frontend"
-    for _v in "$@"; do printf '\npkgid: %s\npkg-version: %s\ninstall-time: 1790384965\n' "$_id" "$_v"; done; } > "$T/receipt"
+manifest() {  # $1 = identifier, $2 = version (no $1: no mavergreen.plist; an empty $2: a manifest without one)
+  rm -f "$T/tc/mavergreen.plist"
+  [ -n "${1:-}" ] || return 0
+  { printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0">' '<dict>' \
+      '  <key>identifier</key>' "  <string>$1</string>" '  <key>name</key>' '  <string>Mavericks Swift Toolchain</string>'
+    [ -z "$2" ] || printf '%s\n' '  <key>version</key>' "  <string>$2</string>"
+    printf '%s\n' '  <key>requires</key>' '  <array>' '    <string>libcxx22&gt;=22.1.8-mavericks.22</string>' '  </array>' '</dict>' '</plist>'
+  } > "$T/tc/mavergreen.plist"
 }
 release() { ( PATH="$T/fakebin:$PATH"; host_toolchain_release "$T/tc" ) > "$T/out" 2> "$T/err"; }
-receipt dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
+manifest dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
 release || fail "refused 6.4.0-mavericks.7: $(cat "$T/err")"
 [ "$(cat "$T/out")" = "6.4.0-mavericks.7 (pkg dev.mavergreen.swift-toolchain)" ] || fail "printed: $(cat "$T/out")"
-[ "$(cat "$T/pkgutil-arg")" = "$T/tc/bin/swift-frontend" ] || fail "looked up $(cat "$T/pkgutil-arg"), not the frontend"
-receipt dev.mavergreen.swift-toolchain-cross 6.4.0-mavericks.8
-release || fail "refused the cross toolchain's receipt: $(cat "$T/err")"
+manifest dev.mavergreen.swift-toolchain-cross 6.4.0-mavericks.8
+release || fail "refused the cross toolchain's manifest: $(cat "$T/err")"
 [ "$(cat "$T/out")" = "6.4.0-mavericks.8 (pkg dev.mavergreen.swift-toolchain-cross)" ] || fail "printed: $(cat "$T/out")"
 for v in 6.4.1-mavericks.1 6.3.3-mavericks.6 6.4.0 6.4.0- 6.4.01-mavericks.1; do
-  receipt dev.mavergreen.swift-toolchain "$v"
+  manifest dev.mavergreen.swift-toolchain "$v"
   if release; then fail "accepted release $v for Swift 6.4.0"; fi
   grep -q "$v" "$T/err" && grep -q 'Swift 6.4.0' "$T/err" || fail "did not name $v and 6.4.0: $(cat "$T/err")"
 done
-receipt dev.mavergreen.swift-toolchain 6.4.0-mavericks.7 6.4.0-mavericks.8
-if release; then fail "accepted a frontend two releases claim"; fi
-receipt dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
-if ( export FAKE_PKGUTIL_RC=1; release ); then fail "passed although pkgutil failed"; fi
+manifest dev.mavergreen.swift-toolchain ""
+if release; then fail "accepted a manifest that names no version"; fi
+grep -q 'mavergreen.plist' "$T/err" || fail "did not name the manifest: $(cat "$T/err")"
+[ ! -e "$T/pkgutil-log" ] || fail "ran pkgutil: $(cat "$T/pkgutil-log")"
 
 echo "-- host_toolchain_release: a copy no pkg installed needs its release declared, under the same rule"
-receipt none
-if release; then fail "accepted a toolchain with no receipt"; fi
+manifest
+if release; then fail "accepted a toolchain with no mavergreen.plist"; fi
 grep -q 'SWIFT_HOST_TOOLCHAIN_VERSION' "$T/err" || fail "did not name the override: $(cat "$T/err")"
 ( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.7; release ) || fail "refused a declared 6.4.0-mavericks.7: $(cat "$T/err")"
 grep -q '^6.4.0-mavericks.7 (declared' "$T/out" || fail "printed: $(cat "$T/out")"
 if ( SWIFT_HOST_TOOLCHAIN_VERSION=6.3.3-mavericks.6; release ); then fail "accepted a declared 6.3.3 release"; fi
-receipt dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
-if ( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.8; release ); then fail "accepted a declaration the receipt contradicts"; fi
-( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.7; release ) || fail "refused a declaration the receipt agrees with"
+manifest dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
+if ( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.8; release ); then fail "accepted a declaration the manifest contradicts"; fi
+( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.7; release ) || fail "refused a declaration the manifest agrees with"
+rm -f "$T/tc/mavergreen.plist"
+[ ! -e "$T/pkgutil-log" ] || fail "ran pkgutil: $(cat "$T/pkgutil-log")"
+
+echo "-- recaulk_vfs_yaml: every header of the SDK's dispatch dir named, so a case-sensitive filesystem resolves the module"
+S="$T/vfs-sdk"; mkdir -p "$S/usr/include/dispatch"
+for f in base.h dispatch.h introspection.d introspection.h module.map queue.h; do : > "$S/usr/include/dispatch/$f"; done
+recaulk_vfs_yaml "$S" "$T/imp" "$T/vfs.yaml" || fail "recaulk_vfs_yaml failed"
+cat > "$T/vfs.want" <<W
+{
+  'version': 0,
+  'case-sensitive': 'false',
+  'use-external-names': false,
+  'roots': [
+    { 'name': '$S/usr/include/dispatch', 'type': 'directory',
+      'contents': [ { 'name': 'module.map', 'type': 'file', 'external-contents': '$T/imp/Dispatch.modulemap' },
+                    { 'name': 'base.h', 'type': 'file', 'external-contents': '$S/usr/include/dispatch/base.h' },
+                    { 'name': 'dispatch.h', 'type': 'file', 'external-contents': '$S/usr/include/dispatch/dispatch.h' },
+                    { 'name': 'introspection.h', 'type': 'file', 'external-contents': '$S/usr/include/dispatch/introspection.h' },
+                    { 'name': 'queue.h', 'type': 'file', 'external-contents': '$S/usr/include/dispatch/queue.h' },
+                    { 'name': 'recaulk-dispatch.h', 'type': 'file', 'external-contents': '$T/imp/dispatch/dispatch.h' } ] },
+    { 'name': '$S/usr/include/pthread', 'type': 'directory',
+      'contents': [ { 'name': 'qos.h', 'type': 'file', 'external-contents': '$T/imp/pthread/qos.h' } ] }
+  ]
+}
+W
+cmp -s "$T/vfs.want" "$T/vfs.yaml" || fail "recaulk_vfs_yaml: $(diff "$T/vfs.want" "$T/vfs.yaml")"
+: > "$S/usr/include/dispatch/it's.h"
+if recaulk_vfs_yaml "$S" "$T/imp" "$T/vfs.yaml" 2> "$T/err"; then fail "wrote a header name holding a quote"; fi
+grep -q "it's.h" "$T/err" || fail "did not name the header it could not quote: $(cat "$T/err")"
 echo "-- clang22_prefix: llvm-libtool-darwin required on a Mac, not on Linux (clang22's Linux archive has none)"
 mkdir -p "$T/unamebin"
 printf '#!/bin/sh\nif [ -n "${FAKE_UNAME:-}" ] && [ "$1" = -s ]; then echo "$FAKE_UNAME"; else exec /usr/bin/uname "$@"; fi\n' > "$T/unamebin/uname"

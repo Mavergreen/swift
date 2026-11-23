@@ -1,5 +1,6 @@
 #!/bin/sh
-# platform: macOS-only -- a modern Mac (cross: pkgutil and ditto expand the swift.org compiler) or OS X 10.9 (native)
+# platform: host-agnostic -- a modern Mac (cross; without a named host toolchain, pkgutil and ditto expand the
+#           swift.org compiler), OS X 10.9 (native), or Linux (cross, with a named host toolchain alone)
 # build.sh — from-source build of the Swift runtime (libswiftCore + libswiftSwiftOnoneSupport) for
 # OS X 10.9 / x86_64, staged as the runtime .pkg's payload, and beside it, in the stdlib build's tree,
 # libswift_Concurrency (the runtime pkg's third dylib, with its _Builtin_float module) and the
@@ -16,6 +17,11 @@
 #     build-builtins.sh's archive: CI's one seed, whose stdlib only makes that cross toolchain runnable.
 #   native (OS X 10.9): the INSTALLED swift-toolchain (SWIFT_HOST_TOOLCHAIN, default
 #     /usr/local/mavergreen/swift-toolchain), or a stage of self-host.sh.
+#   Linux is a cross host whose host compiler is always named: SWIFT_HOST_TOOLCHAIN is the prefix
+#     build-toolchain.sh --host linux stages (a Linux swift-frontend, clang and ld64.lld, the builtins), its
+#     release declared by SWIFT_HOST_TOOLCHAIN_VERSION. Every check reads Mach-O with clang22's llvm-otool,
+#     llvm-nm and llvm-strings, as on 10.9, and the stdlib is configured, with the host's cmake, for a
+#     Darwin target. The swift.org seed and native mode are refused there.
 #   Both: LLVM build support and ld64.lld from build-llvm.sh; the pinned modern SDK (shipyard's
 #   fetch_sdk.sh --arch arm64, MacOSX11.3.sdk); the runtime linked by that lld with the builtins archive
 #   where the driver puts its own; the build root prefix-mapped to /mavergreen-build; the swift source as
@@ -34,9 +40,10 @@
 #   pkg installed, a copy; see lib.sh's host_toolchain_release), SWIFT_BUILTINS (a libclang_rt.osx.a to
 #   link instead of the mode's own), NM (native mode's nm), CLANG22_PREFIX, MAVERICKS_SDK_CACHE
 #   (fetch_sdk.sh's cache), MAVERICKS_SOURCE_CACHE (fetch_pinned_source.sh's).
-# Host: cmake through shipyard-cmake, ninja, python3 (gyb), curl, patch, tar. No git and, on OS X 10.9,
-# none of Xcode's Command Line Tools: natively the checks read with clang22's llvm-otool, llvm-nm and
-# llvm-strings. On 10.9 ninja and python3 are Mavergreen's packages, not pkgsrc's; see DEVELOPING.md.
+# Host: cmake (shipyard-cmake on a Mac, lib.sh's shipyard_cmake), ninja, python3 (gyb), curl, patch, tar. No git
+# and, on OS X 10.9 and Linux, none of Xcode's Command Line Tools: there the checks read with clang22's
+# llvm-otool, llvm-nm and llvm-strings. On 10.9 ninja and python3 are Mavergreen's packages, not pkgsrc's;
+# see DEVELOPING.md.
 # Output: $SWIFT_RUNTIME_OUT, in scripts/stage-runtime.sh's layout, for package.sh; and
 #   $SWIFT_SELFTEST_SUPPORT_OUT, in scripts/stage-selftest-support.sh's, for make-selftest.sh (never a pkg).
 set -eu
@@ -52,10 +59,14 @@ LLD="$ROOT/llvm-build/bin/ld64.lld"
 # sources, the same from run to run (a two-root build once differed by 48 bytes of reordered strings).
 PYTHONHASHSEED=0; export PYTHONHASHSEED
 MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
-# platform: OS X 10.9 has no dyld_info (nor, without the Command Line Tools, any xcrun to find a tool);
-#           step 7 then reads the runtime with otool, nm and strings (lib.sh), clang22's below.
+# platform: a Linux host builds the same runtime as a Mac's cross mode, from a named host toolchain, with
+#           clang22's readers and CMake told the target is Darwin (step 1, step 4)
+HOST=mac; [ "$(uname -s)" != Linux ] || HOST=linux
+# platform: OS X 10.9 has no dyld_info (nor, without the Command Line Tools, any xcrun to find a tool), and
+#           Linux neither; step 7 then reads the runtime with otool, nm and strings (lib.sh), clang22's below.
 DYLDINFO=""
-if [ "$MODE" = cross ]; then DYLDINFO="$(xcrun -f dyld_info 2>/dev/null || :)"; fi
+# platform: guarded macOS-only call -- a Mac's cross mode alone: the HOST test on this line keeps xcrun off Linux
+if [ "$MODE" = cross ] && [ "$HOST" = mac ]; then DYLDINFO="$(xcrun -f dyld_info 2>/dev/null || :)"; fi
 
 echo "==> 1. host build environment ($MODE: LLVM build support and lld built here, the pinned SDK fetched, a host compiler)"
 # Reported, not required: CMake finds gyb's python itself (step 4 names the one it found), and 3.14
@@ -67,6 +78,11 @@ echo "    python3 on PATH: $(if command -v python3 >/dev/null 2>&1; then python3
 [ -z "${SWIFT_BUILTINS:-}" ] || [ -f "$SWIFT_BUILTINS" ] || {
   echo "FAIL: SWIFT_BUILTINS names no file: $SWIFT_BUILTINS"; exit 1; }
 case "$MODE" in cross|native) ;; *) echo "FAIL: mode '$MODE' is neither cross nor native"; exit 1 ;; esac
+if [ "$HOST" = linux ]; then
+  [ "$MODE" = cross ] || { echo "FAIL: native mode is OS X 10.9's; on Linux build.sh runs in cross mode"; exit 1; }
+  [ -n "${SWIFT_HOST_TOOLCHAIN:-}" ] || {
+    echo "FAIL: on Linux the host compiler is the toolchain prefix SWIFT_HOST_TOOLCHAIN names (build-toolchain.sh --host linux stages one) -- the swift.org seed's installer check and expansion need pkgutil and ditto, which Linux lacks"; exit 1; }
+fi
 HTC="${SWIFT_HOST_TOOLCHAIN:-}"
 if [ -z "$HTC" ] && [ "$MODE" = native ]; then HTC=/usr/local/mavergreen/swift-toolchain; fi
 CMAKE_ARCH_ARGS=""   # extra stdlib-configure arguments (word-split on use, step 4): the architecture a named host's clang needs
@@ -108,7 +124,19 @@ SDK_RUNTIME="$(sh "$SHIPYARD/fetch_sdk.sh" --arch arm64)" || { echo "FAIL: could
 # lipo lookup, which would otherwise ask xcrun. Natively, step 7 reads with clang22's llvm-otool and
 # llvm-strings.
 X="$(clang22_prefix "$MODE" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
-if [ "$MODE" = native ]; then OTOOL="$X/llvm-otool"; STRINGS="$X/llvm-strings"; export OTOOL; else STRINGS=strings; fi
+CMAKE_HOST_ARGS=""   # extra stdlib-configure arguments (word-split on use, step 4): a Linux host's CMake platform
+if [ "$MODE" = native ]; then OTOOL="$X/llvm-otool"; STRINGS="$X/llvm-strings"; export OTOOL
+elif [ "$HOST" = linux ]; then
+  # platform: Linux has no otool, and its nm and strings read no Mach-O: every check reads with clang22's
+  #           (clang22_prefix has checked they are there), as natively. CMake on a Linux host takes the
+  #           project for Linux (the probe link hands ld64.lld GNU flags) and ignores CMAKE_OSX_*, unless
+  #           told the target is Darwin; its Darwin platform then wants an install_name_tool, which no step runs.
+  OTOOL="$X/llvm-otool"; NM="$X/llvm-nm"; STRINGS="$X/llvm-strings"; export OTOOL NM
+  echo "    readers: $OTOOL, $NM and $STRINGS (clang22's: Linux has no Mach-O otool, nm or strings)"
+  [ -x "$X/llvm-install-name-tool" ] || {
+    echo "FAIL: no llvm-install-name-tool ($X/llvm-install-name-tool: clang22's, which CMake's Darwin platform asks for)"; exit 1; }
+  CMAKE_HOST_ARGS="-DCMAKE_SYSTEM_NAME=Darwin -DCMAKE_SYSTEM_PROCESSOR=$ARCH -DCMAKE_INSTALL_NAME_TOOL=$X/llvm-install-name-tool"
+else STRINGS=strings; fi
 # spec: INGREDIENTS.md "One C++ runtime" -- one shared libc++ per process,
 #       the family's, never the OS's: libcxx22's headers from the clang22 above, its dylib by path
 #       (-L would be searched inside the SDK first, -isysroot's doing), and the headers' directory mapped,
@@ -309,12 +337,12 @@ reuse_build_dir "$ROOT/stdlib-build" "$STAMP" || exit 1
 # every client, and a client built for 10.15 could use Duration, which 10.15's own runtime lacks. Below
 # 10.14.4 compiler patch 0003 opens them all the same (INGREDIENTS.md "The compiler's runtime table").
 # shellcheck disable=SC2046  # space-free words
-shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
+shipyard_cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
   $(apple_probe_answers "$X") -DCMAKE_Swift_COMPILER=NOTFOUND \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER="$TC/bin/clang" -DCMAKE_CXX_COMPILER="$TC/bin/clang++" \
   -DCMAKE_OSX_SYSROOT="$SDK_RUNTIME" -DSWIFT_SDK_OSX_PATH="$SDK_RUNTIME" \
-  $CMAKE_ARCH_ARGS \
+  $CMAKE_ARCH_ARGS $CMAKE_HOST_ARGS \
   -DCMAKE_IGNORE_PREFIX_PATH=/opt/pkg \
   -DCMAKE_AR="$X/llvm-ar" -DCMAKE_RANLIB="$X/llvm-ranlib" -DSWIFT_LIPO="$X/llvm-lipo" \
   -DSWIFT_ENABLE_LIBXML2=OFF -DCMAKE_DISABLE_FIND_PACKAGE_LibXml2=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibEdit=ON \
