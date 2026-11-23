@@ -1015,7 +1015,7 @@ pkg_extract_product() {
       || { echo "pkg_extract_product: could not extract $_pe_p" >&2; return 1; }
     # platform: pkgbuild on a macOS 27 host writes AppleDouble ._* members for files carrying
     #           com.apple.provenance; ditto folded them into xattrs, cpio writes them as files.
-    _pe_ad="$(find "$_pe_t" -name '._*' | head -1)"; [ -z "$_pe_ad" ] || { echo "pkg_extract_product: $1 carries AppleDouble member ${_pe_ad#$_pe_t/} (a pkgbuild on a macOS 27 host); build it with stevedore" >&2; return 1; }
+    _pe_ad="$(find "$_pe_t" -name '._*' | head -1)"; [ -z "$_pe_ad" ] || { echo "pkg_extract_product: $1 carries AppleDouble member ${_pe_ad#$_pe_t/} (Apple's packager on a macOS 27 host wrote it); build it with stevedore" >&2; return 1; }
     if [ -d "$_pe_t/usr/local/mavergreen/$2" ]; then
       [ -z "$_pe_hit" ] || { echo "pkg_extract_product: more than one component of $1 installs /usr/local/mavergreen/$2" >&2; return 1; }
       _pe_hit="$_pe_t"
