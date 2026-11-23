@@ -100,6 +100,8 @@ echo "==> $pin: $LINUX_SEED_URL"
 linux_seed_download "$LINUX_SEED_URL" "$T/seed.tar.gz" || fail "could not fetch $LINUX_SEED_URL"
 linux_seed_verify_signature "$T/seed.tar.gz" || fail "$LINUX_SEED_URL is not signed by the pinned key: writing nothing"
 sha="$(linux_seed_sha256 "$T/seed.tar.gz")" || fail "could not hash $LINUX_SEED_URL"
+case "$sha" in *[!0-9a-f]*|'') fail "the Linux seed's hash '$sha' is not 64 lowercase hex digits: writing nothing" ;; esac
+[ "${#sha}" -eq 64 ] || fail "the Linux seed's hash '$sha' is not 64 lowercase hex digits: writing nothing"
 echo "    $sha (signed by $LINUX_SEED_KEY_FPR)"
 if [ "$CHECK" = 1 ]; then
   [ "$LINUX_SEED_SHA256" = "$sha" ] || { echo "FAIL: pins.env's $pin is $LINUX_SEED_SHA256, but $LINUX_SEED_URL is $sha -- run sh scripts/pin-source-tarballs.sh and commit pins.env" >&2; rc=3; }

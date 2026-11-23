@@ -38,8 +38,9 @@ fi
 
 # linux_seed_sha256 <file> -- prints its SHA-256
 linux_seed_sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
-  else shasum -a 256 "$1" | awk '{print $1}'; fi
+  if command -v sha256sum >/dev/null 2>&1; then _lss="$(sha256sum "$1")" || return 1
+  else _lss="$(shasum -a 256 "$1")" || return 1; fi
+  printf '%s\n' "${_lss%% *}"
 }
 
 # linux_seed_download <url> <dest> -- through a .part, so an interrupted download is never a cached tarball
@@ -52,7 +53,10 @@ linux_seed_download() {
 linux_seed_verify_signature() (
   tarball="$1"; gh=""
   trap '[ -z "$gh" ] || { GNUPGHOME="$gh" gpgconf --kill all >/dev/null 2>&1 || :; rm -rf "$gh"; }' EXIT
-  gh="$(mktemp -d "${TMPDIR:-/tmp}/linux-seed-gnupg.XXXXXX")" && chmod 700 "$gh"     || { echo "FAIL: no private GNUPGHOME for the signature check" >&2; exit 1; }
+  # platform: gpg talks to gpg-agent over a unix socket under GNUPGHOME, and a unix socket path is limited to
+  #           104 bytes on macOS: a longer one makes every gpg call stall before it gives up on the agent, and a
+  #           macOS $TMPDIR is long. So the private home is under a short /tmp path, never $TMPDIR.
+  gh="$(mktemp -d /tmp/linux-seed-gnupg.XXXXXX)" && chmod 700 "$gh"     || { echo "FAIL: no private GNUPGHOME for the signature check" >&2; exit 1; }
   shipyard_curl "$LINUX_SEED_SIG_URL" "$gh/seed.sig" >&2     || { echo "FAIL: could not fetch the signature $LINUX_SEED_SIG_URL" >&2; exit 1; }
   shipyard_curl "$LINUX_SEED_KEYRING_URL" "$gh/keys.asc" >&2     || { echo "FAIL: could not fetch the keyring $LINUX_SEED_KEYRING_URL" >&2; exit 1; }
   # platform: swift.org serves all-keys.asc gzip-encoded (Content-Encoding: gzip) even to a client that sent
@@ -76,6 +80,7 @@ linux_seed_verify_signature() (
 # fetch_linux_seed <dest> -- prints <dest>'s extracted toolchain usr; any failure leaves no <dest>
 fetch_linux_seed() (
   dest="${1:?usage: fetch_linux_seed <dest>}"
+  rm -rf "$dest"   # first of all: a failed verification must never leave an earlier tree to be used
   cache="$SWIFT_BUILD/cache"; mkdir -p "$cache" || exit 1
   tarball="$cache/${LINUX_SEED_URL##*/}"
   if [ ! -f "$tarball" ]; then
@@ -88,7 +93,7 @@ fetch_linux_seed() (
     rm -f "$tarball"; exit 1
   fi
   linux_seed_verify_signature "$tarball" || { rm -f "$tarball"; exit 1; }
-  rm -rf "$dest"; mkdir -p "$dest" || exit 1
+  mkdir -p "$dest" || exit 1
   tar -xzf "$tarball" -C "$dest" || { echo "FAIL: could not extract $tarball" >&2; rm -rf "$dest"; exit 1; }
   usr="$(find "$dest" -maxdepth 2 -type d -name usr | head -n 1)"
   [ -n "$usr" ] || { echo "FAIL: no usr/ in $tarball" >&2; rm -rf "$dest"; exit 1; }

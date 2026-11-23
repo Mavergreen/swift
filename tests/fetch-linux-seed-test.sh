@@ -20,6 +20,7 @@ fake_seed_setup "$T0"; FST="$T0"
 KEYRING="$SRV/keys.asc"
 run() { # <sigfile-path> <sha256> -> sets OUT and RC
   MAVERICKS_BUILD_ROOT="$FST/build"; export MAVERICKS_BUILD_ROOT; rm -rf "$FST/dest" "$FST/build"
+  if [ "${run_pre:-}" = 1 ]; then mkdir -p "$FST/dest/stale"; echo old > "$FST/dest/stale/f"; fi
   set +e
   OUT="$( HERE="$REPO"; TEST_ONLY_LINUX_SEED_URL="$SRV/seed.tar.gz"; TEST_ONLY_LINUX_SEED_SIG_URL="$1"; TEST_ONLY_LINUX_SEED_SHA256="$2"
           TEST_ONLY_LINUX_SEED_KEYRING_URL="$KEYRING"; TEST_ONLY_LINUX_SEED_KEY_FPR="$GOOD_FPR"
@@ -60,10 +61,14 @@ case "$OUT" in *"could not fetch the keyring"*) ;; *) fail "a missing keyring na
 KEYRING="$SRV/keys.asc"
 
 echo "-- a hash that is not the pin is a FAIL ...sha256, and the download is removed"
+# a tree left by an earlier fetch must not survive a failed verification
+run_pre=1
 run "$SRV/good.sig" "0000000000000000000000000000000000000000000000000000000000000000"
 [ "$RC" -ne 0 ] || fail "a wrong hash was accepted"
 case "$OUT" in *"FAIL:"*sha256*) ;; *) fail "no 'FAIL: ...sha256' in: $OUT" ;; esac
 [ -z "$(find "$FST/build" -name '*.tar.gz*' 2>/dev/null)" ] || fail "the bad download was kept"
+[ ! -e "$FST/dest" ] || fail "a failed verification left the earlier $FST/dest"
+run_pre=""
 
 echo "-- a good pair prints the extracted usr; the test-only overrides are announced"
 run "$SRV/good.sig" "$HASH"
