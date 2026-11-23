@@ -724,12 +724,20 @@ jobs:
     permissions: { contents: read }
     outputs:
       hit: ${{ steps.probe.outputs.cache-hit }}
+      shipyard: ${{ steps.shipyard.outputs.version }}
       hash: ${{ steps.inputs.outputs.hash }}
     steps:
       - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - name: Install mavericks-shipyard
         uses: Mavergreen/shipyard/.github/actions/install@v1
+      # The only install@v1 of the Linux jobs: the version it resolves is every later Linux stage's.
+      - name: The shipyard version this run builds with
+        id: shipyard
+        run: |
+          [ -n "${SHIPYARD_VERSION:-}" ] || { echo "::error::install@v1 named no shipyard version, so the later stages could not pin it"; exit 1; }
+          echo "version=$SHIPYARD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "shipyard $SHIPYARD_VERSION, for every Linux stage of this run"
       - name: Hash what the compiler's build reads
         id: inputs
         run: |
@@ -765,10 +773,24 @@ jobs:
         run: |
           clang22="$(cat components/clang22/version)"
           echo "clang22=$clang22" >> "$GITHUB_OUTPUT"
-      - name: Install mavericks-shipyard and clang22
-        uses: Mavergreen/shipyard/.github/actions/install@v1
+      # One shipyard for the whole run: linux-compiler-probe's. install@v1 would give a later stage whatever shipyard
+      # published since, and the cold chain spans hours.
+      - name: Check out shipyard at linux-compiler-probe's version
+        uses: actions/checkout@v7
+        with:
+          repository: Mavergreen/shipyard
+          ref: v${{ needs.linux-compiler-probe.outputs.shipyard }}
+          path: .shipyard
+          persist-credentials: false
+      - name: Install mavericks-shipyard and clang22 (linux-compiler-probe's version)
+        uses: ./.shipyard/.github/actions/install
         with:
           products: clang22@${{ steps.pins.outputs.clang22 }}
+      # platform: an action from a checkout has no ref to name its version by, so the probe's is said here.
+      - name: Say which shipyard this is
+        env:
+          PINNED: ${{ needs.linux-compiler-probe.outputs.shipyard }}
+        run: echo "SHIPYARD_VERSION=$PINNED" >> "$GITHUB_ENV"
       # The probe's hash is the run's: a job whose shipyard hashes otherwise would build, or restore, a compiler the
       # key it was looked up under does not describe.
       - name: Hash what the compiler's build reads (linux-compiler-probe's hash, or stop)
@@ -818,8 +840,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - name: Install mavericks-shipyard
-        uses: Mavergreen/shipyard/.github/actions/install@v1
+      # One shipyard for the whole run: linux-compiler-probe's. install@v1 would give a later stage whatever shipyard
+      # published since, and the cold chain spans hours.
+      - name: Check out shipyard at linux-compiler-probe's version
+        uses: actions/checkout@v7
+        with:
+          repository: Mavergreen/shipyard
+          ref: v${{ needs.linux-compiler-probe.outputs.shipyard }}
+          path: .shipyard
+          persist-credentials: false
+      - name: Install mavericks-shipyard (linux-compiler-probe's version)
+        uses: ./.shipyard/.github/actions/install
+      # platform: an action from a checkout has no ref to name its version by, so the probe's is said here.
+      - name: Say which shipyard this is
+        env:
+          PINNED: ${{ needs.linux-compiler-probe.outputs.shipyard }}
+        run: echo "SHIPYARD_VERSION=$PINNED" >> "$GITHUB_ENV"
       # The probe's hash is the run's: a job whose shipyard hashes otherwise would build, or restore, a compiler the
       # key it was looked up under does not describe.
       - name: Hash what the compiler's build reads (linux-compiler-probe's hash, or stop)
@@ -890,8 +926,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - name: Install mavericks-shipyard
-        uses: Mavergreen/shipyard/.github/actions/install@v1
+      # One shipyard for the whole run: linux-compiler-probe's. install@v1 would give a later stage whatever shipyard
+      # published since, and the cold chain spans hours.
+      - name: Check out shipyard at linux-compiler-probe's version
+        uses: actions/checkout@v7
+        with:
+          repository: Mavergreen/shipyard
+          ref: v${{ needs.linux-compiler-probe.outputs.shipyard }}
+          path: .shipyard
+          persist-credentials: false
+      - name: Install mavericks-shipyard (linux-compiler-probe's version)
+        uses: ./.shipyard/.github/actions/install
+      # platform: an action from a checkout has no ref to name its version by, so the probe's is said here.
+      - name: Say which shipyard this is
+        env:
+          PINNED: ${{ needs.linux-compiler-probe.outputs.shipyard }}
+        run: echo "SHIPYARD_VERSION=$PINNED" >> "$GITHUB_ENV"
       - name: The Linux host's packages
         run: sudo apt-get update -qq && sudo apt-get install -y -qq uuid-dev pkg-config ninja-build ccache
       - name: Room for the build
@@ -979,10 +1029,24 @@ jobs:
         run: |
           clang22="$(cat components/clang22/version)"
           echo "clang22=$clang22" >> "$GITHUB_OUTPUT"
-      - name: Install mavericks-shipyard and clang22
-        uses: Mavergreen/shipyard/.github/actions/install@v1
+      # One shipyard for the whole run: linux-compiler-probe's. install@v1 would give a later stage whatever shipyard
+      # published since, and the cold chain spans hours.
+      - name: Check out shipyard at linux-compiler-probe's version
+        uses: actions/checkout@v7
+        with:
+          repository: Mavergreen/shipyard
+          ref: v${{ needs.linux-compiler-probe.outputs.shipyard }}
+          path: .shipyard
+          persist-credentials: false
+      - name: Install mavericks-shipyard and clang22 (linux-compiler-probe's version)
+        uses: ./.shipyard/.github/actions/install
         with:
           products: clang22@${{ steps.pins.outputs.clang22 }}
+      # platform: an action from a checkout has no ref to name its version by, so the probe's is said here.
+      - name: Say which shipyard this is
+        env:
+          PINNED: ${{ needs.linux-compiler-probe.outputs.shipyard }}
+        run: echo "SHIPYARD_VERSION=$PINNED" >> "$GITHUB_ENV"
       - name: The Linux host's packages
         run: sudo apt-get update -qq && sudo apt-get install -y -qq uuid-dev pkg-config ninja-build ccache
       - name: Build out of tree
@@ -1125,7 +1189,7 @@ jobs:
   # never stops a release, and publish does not wait for this job. When it becomes blocking
   # (build-equivalence.sh in place of scripts/equivalence-warnings.sh), publish gains it in its needs.
   equivalence:
-    needs: [version, build-cross, linux-runtime]
+    needs: [version, build-cross, linux-compiler-probe, linux-runtime]
     if: ${{ !cancelled() && needs.build-cross.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
@@ -1137,10 +1201,24 @@ jobs:
         run: |
           clang22="$(cat components/clang22/version)"
           echo "clang22=$clang22" >> "$GITHUB_OUTPUT"
-      - name: Install mavericks-shipyard and clang22
-        uses: Mavergreen/shipyard/.github/actions/install@v1
+      # One shipyard for the whole run: linux-compiler-probe's. install@v1 would give a later stage whatever shipyard
+      # published since, and the cold chain spans hours.
+      - name: Check out shipyard at linux-compiler-probe's version
+        uses: actions/checkout@v7
+        with:
+          repository: Mavergreen/shipyard
+          ref: v${{ needs.linux-compiler-probe.outputs.shipyard }}
+          path: .shipyard
+          persist-credentials: false
+      - name: Install mavericks-shipyard and clang22 (linux-compiler-probe's version)
+        uses: ./.shipyard/.github/actions/install
         with:
           products: clang22@${{ steps.pins.outputs.clang22 }}
+      # platform: an action from a checkout has no ref to name its version by, so the probe's is said here.
+      - name: Say which shipyard this is
+        env:
+          PINNED: ${{ needs.linux-compiler-probe.outputs.shipyard }}
+        run: echo "SHIPYARD_VERSION=$PINNED" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v8
         with: { name: swift-cross, path: dist }
       - name: Download the Linux runtime pkg

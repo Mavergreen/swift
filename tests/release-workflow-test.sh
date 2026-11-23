@@ -159,7 +159,7 @@ linux() {
   if grep -q 'vm-test-prebuilt' "$T/pn"; then echo "publish waits for the Linux-built bundle's gate"; return 1; fi
   awk '/^  equivalence:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" > "$T/ej"
   [ -s "$T/ej" ] || { echo "release.yml has no equivalence job"; return 1; }
-  grep -qx '    needs: \[version, build-cross, linux-runtime\]' "$T/ej" || { echo "equivalence does not need version, build-cross and linux-runtime"; return 1; }
+  grep -qx '    needs: \[version, build-cross, linux-compiler-probe, linux-runtime\]' "$T/ej" || { echo "equivalence does not need version, build-cross, linux-compiler-probe and linux-runtime"; return 1; }
   grep -qxF "    if: \${{ !cancelled() && needs.build-cross.result == 'success' }}" "$T/ej" \
     || { echo "equivalence does not run whatever linux-runtime did, once build-cross succeeded"; return 1; }
   grep -qx '    runs-on: ubuntu-latest' "$T/ej" || { echo "equivalence does not run on Linux (build-equivalence.sh is host-agnostic)"; return 1; }
@@ -283,7 +283,7 @@ check_lb() {
   for j in jp j1 j2 j3 jr; do
     grep -qF 'h="$(sh scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD)"' "$T/$j" \
       || { echo "a job ($j) does not hash COMPILER_BUILD's inputs itself"; return 1; }
-    awk '/uses: Mavergreen\/shipyard\/\.github\/actions\/install@/ { i = NR } /--hash \$COMPILER_BUILD/ && !h { h = NR } END { exit !(i && i < h) }' "$T/$j" \
+    awk '/uses: (Mavergreen\/shipyard|\.\/\.shipyard)\/\.github\/actions\/install(@|$)/ { i = NR } /--hash \$COMPILER_BUILD/ && !h { h = NR } END { exit !(i && i < h) }' "$T/$j" \
       || { echo "a job ($j) hashes before it installs shipyard"; return 1; }
   done
   for j in j1 j2 j3 jr; do
@@ -313,7 +313,25 @@ check_lb() {
   grep -q 'uses: actions/cache/save@' "$T/j3" || { echo "linux-compiler-swift does not save the compiler"; return 1; }
   grep -q 'uses: actions/cache/restore@' "$T/jr" && grep -qx '          fail-on-cache-miss: true' "$T/jr" || { echo "the runtime job does not fail on a missing compiler"; return 1; }
   if grep -n 'hashFiles\|github\.action_ref\|SHIPYARD_VERSION\|ImageOS\|ImageVersion' "$T/jp" "$T/j3" "$T/jr" | grep -i key; then echo "a key hashes the runner image or shipyard's version"; return 1; fi
-  # clang22 at the pinned release, through install@v1.
+  # One shipyard per run: the probe alone resolves install@v1 and outputs the version it got; every later Linux
+  # job, and equivalence, checks shipyard out at that version's tag and installs from that checkout, and says so in
+  # SHIPYARD_VERSION, so a shipyard published mid-run never reaches a later stage.
+  grep -qx '        uses: Mavergreen/shipyard/.github/actions/install@v1' "$T/jp" || { echo "the probe does not resolve shipyard through install@v1"; return 1; }
+  grep -qxF '      shipyard: ${{ steps.shipyard.outputs.version }}' "$T/jp" && grep -q 'echo "version=\$SHIPYARD_VERSION" >> "\$GITHUB_OUTPUT"' "$T/jp" \
+    || { echo "the probe does not output the shipyard version install@v1 gave it"; return 1; }
+  grep -q '\[ -n "\${SHIPYARD_VERSION:-}" \] || {.*::error::.*exit 1; }' "$T/jp" || { echo "the probe goes on without knowing its shipyard version"; return 1; }
+  awk '/^  equivalence:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" > "$T/je"
+  for j in j1 j2 j3 jr je; do
+    if grep -q 'Mavergreen/shipyard/.github/actions/install@' "$T/$j"; then echo "a stage after the probe ($j) resolves install@ itself"; return 1; fi
+    grep -qxF '          ref: v${{ needs.linux-compiler-probe.outputs.shipyard }}' "$T/$j" && grep -qx '          repository: Mavergreen/shipyard' "$T/$j" \
+      && grep -qx '          path: .shipyard' "$T/$j" || { echo "a stage after the probe ($j) does not check shipyard out at the probe's version"; return 1; }
+    awk '/repository: Mavergreen\/shipyard/ { c = NR } /^        uses: \.\/\.shipyard\/\.github\/actions\/install$/ { u = NR } END { exit !(c && c < u) }' "$T/$j" \
+      || { echo "a stage after the probe ($j) does not install from that checkout"; return 1; }
+    grep -qxF '          PINNED: ${{ needs.linux-compiler-probe.outputs.shipyard }}' "$T/$j" && grep -q 'echo "SHIPYARD_VERSION=\$PINNED" >> "\$GITHUB_ENV"' "$T/$j" \
+      || { echo "a stage after the probe ($j) does not set SHIPYARD_VERSION to the probe's"; return 1; }
+    grep -q '^    needs: \[.*linux-compiler-probe.*\]$' "$T/$j" || { echo "a stage after the probe ($j) does not need it"; return 1; }
+  done
+  # clang22 at the pinned release, through the install action.
   for j in j1 jr; do
     grep -qF 'clang22="$(cat components/clang22/version)"' "$T/$j" && grep -qxF '          products: clang22@${{ steps.pins.outputs.clang22 }}' "$T/$j" \
       || { echo "a job ($j) does not install clang22 at components/clang22/version through install@v1"; return 1; }
@@ -366,6 +384,12 @@ lb_mutant "build.sh runs on another compiler" 's|echo "SWIFT_HOST_TOOLCHAIN=$SWI
 lb_mutant "the bundle is built only when asked" 's|^      - name: Build the self-test bundle with the Linux-hosted compiler$|&\
         if: inputs.selftest|'
 lb_first "a compiler job may outrun GitHub's limit" '    timeout-minutes: 355' '    timeout-minutes: 400'
+lb_mutant "the probe outputs no shipyard version" '/^      shipyard: \${{ steps.shipyard.outputs.version }}$/d'
+lb_mutant "the probe goes on with no shipyard version" 's/\[ -n "\${SHIPYARD_VERSION:-}" \] || {/true || {/'
+lb_mutant "a later stage resolves @v1 itself" '/^  linux-compiler-llvm:$/,/^  linux-compiler-swift:$/ s|^        uses: ./.shipyard/.github/actions/install$|        uses: Mavergreen/shipyard/.github/actions/install@v1|'
+lb_mutant "a later stage checks out shipyard's moving tag" '/^  linux-compiler-swift:$/,/^  linux-runtime:$/ s|^          ref: v\${{ needs.linux-compiler-probe.outputs.shipyard }}$|          ref: v1|'
+lb_mutant "linux-runtime does not say which shipyard it has" '/^  linux-runtime:$/,/^  vm-test-prebuilt:$/ { /echo "SHIPYARD_VERSION=\$PINNED" >> "\$GITHUB_ENV"/d; }'
+lb_mutant "equivalence resolves @v1 itself" '/^  equivalence:$/,$ s|^        uses: ./.shipyard/.github/actions/install$|        uses: Mavergreen/shipyard/.github/actions/install@v1|'
 lb_first "a Linux job may write the repo" '    permissions: { contents: read }' '    permissions: { contents: write }'
 lb_mutant "a Linux job inherits the workflow's permissions" '/^  linux-compiler-llvm:$/,/^  linux-compiler-swift:$/ { /^    permissions: { contents: read }$/d; }'
 lb_mutant "a Linux checkout keeps the token" '/^  linux-runtime:$/,/^  vm-test-prebuilt:$/ s/persist-credentials: false/persist-credentials: true/'
