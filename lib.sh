@@ -174,6 +174,55 @@ recaulk_importer_layout() {
     && cp "$2" "$4/Dispatch.modulemap" && echo "$3" > "$4/VERSION"
 }
 
+# recaulk_sdk_metadata_profile <profiles.json> <name> -- prints, one per line and in the file's order, the
+# recipe ids of profile <name> in <profiles.json> (Recaulk's share/sdk-metadata/profiles.json, schema 1:
+# {"schema":1,"profiles":{"<name>":{"description":...,"recipes":[<id>...]}}}), as read by
+# ${CMAKE:-shipyard-cmake} -P's string(JSON). It fails closed, printing nothing: when the file is missing or
+# is not JSON, its schema is not the number 1, <name> is not a profile in it, or the profile's recipes are
+# missing, empty, or hold anything but a plain id ([A-Za-z0-9._-]), which a caller may word-split.
+# spec: shipyard's mavericks_materialize_sdk_metadata takes IDS, so a caller passes these to
+#       recaulk_sdk_metadata_vfs; when it takes PROFILE <name>, the name goes to it instead and this goes.
+recaulk_sdk_metadata_profile() {
+  [ $# -eq 2 ] || { echo "recaulk_sdk_metadata_profile: usage: <profiles.json> <name>" >&2; return 1; }
+  [ -f "$1" ] || { echo "recaulk_sdk_metadata_profile: no $1" >&2; return 1; }
+  case "$2" in ''|*[!A-Za-z0-9._-]*) echo "recaulk_sdk_metadata_profile: '$2' is not a profile name" >&2; return 1 ;; esac
+  _rsp_t="$(mktemp -d "${TMPDIR:-/tmp}/sdk-metadata-profile.XXXXXX")" || return 1
+  cat > "$_rsp_t/p.cmake" <<'CMAKE'
+file(READ "${JSON}" j)
+string(JSON t ERROR_VARIABLE e TYPE "${j}" schema)
+if(e OR NOT t STREQUAL "NUMBER")
+  message(FATAL_ERROR "${JSON} has no numeric schema")
+endif()
+string(JSON s GET "${j}" schema)
+if(NOT s STREQUAL "1")
+  message(FATAL_ERROR "${JSON} is schema ${s}, not 1")
+endif()
+string(JSON t ERROR_VARIABLE e TYPE "${j}" profiles "${NAME}" recipes)
+if(e OR NOT t STREQUAL "ARRAY")
+  message(FATAL_ERROR "${JSON} has no profile ${NAME} with a recipes list")
+endif()
+string(JSON n LENGTH "${j}" profiles "${NAME}" recipes)
+if(n EQUAL 0)
+  message(FATAL_ERROR "${JSON}'s profile ${NAME} lists no recipes")
+endif()
+math(EXPR last "${n} - 1")
+set(ids "")
+foreach(i RANGE ${last})
+  string(JSON t TYPE "${j}" profiles "${NAME}" recipes ${i})
+  string(JSON id GET "${j}" profiles "${NAME}" recipes ${i})
+  if(NOT t STREQUAL "STRING" OR NOT id MATCHES "^[A-Za-z0-9._-]+$")
+    message(FATAL_ERROR "${JSON}'s profile ${NAME} lists '${id}', not a recipe id")
+  endif()
+  string(APPEND ids "${id}\n")
+endforeach()
+file(WRITE "${OUT}" "${ids}")
+CMAKE
+  if "${CMAKE:-shipyard-cmake}" -DJSON="$1" -DNAME="$2" -DOUT="$_rsp_t/ids" -P "$_rsp_t/p.cmake" >&2 && [ -s "$_rsp_t/ids" ]; then
+    cat "$_rsp_t/ids"; rm -rf "$_rsp_t"; return 0
+  fi
+  rm -rf "$_rsp_t"; echo "recaulk_sdk_metadata_profile: could not read profile $2 of $1" >&2; return 1
+}
+
 # recaulk_sdk_metadata_vfs <sdk> <recipes.json> <out-dir> <id>... -- materializes the Recaulk sdk-metadata
 # recipes <id>... of <recipes.json> (Recaulk's share/sdk-metadata) with shipyard's
 # mavericks_materialize_sdk_metadata (MavericksSDKMetadata.cmake, beside $SHIPYARD; run by ${CMAKE:-shipyard-cmake}

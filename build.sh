@@ -377,14 +377,17 @@ PYTHON="${PY:-python3}" sh "$HERE/scripts/overlay-sources.sh" "$ROOT/swift-6.2" 
 #       headers lack (NS_ASSUME_NONNULL, the collections' lightweight generics, ...), which Recaulk's
 #       sdk-metadata recipes declare over 10.9's own headers: materialized here, by lib.sh's
 #       recaulk_sdk_metadata_vfs, as a clang VFS overlay of the SDK the overlays are compiled against.
-FOUNDATION_SDK_METADATA="foundation-array-generics-v2 foundation-dictionary-generics-v1 foundation-set-generics-v1
-  foundation-orderedset-generics-v1 foundation-maptable-generics-v1 foundation-enumerator-generics-v1
-  foundation-directoryenumerator-generics-v1 foundation-objcruntime-macros-v1 foundation-rectedge-v1
-  foundation-locale-codes-v1 foundation-processinfo-version-v1"
-# shellcheck disable=SC2086  # space-free recipe ids
+#       Which recipes is Recaulk's to say: its profile of this name, in share/sdk-metadata/profiles.json.
+# spec: shipyard's materializer takes recipe ids, so lib.sh's recaulk_sdk_metadata_profile reads the profile's;
+#       when it takes PROFILE <name>, this name is what it is passed and that read goes.
+FOUNDATION_SDK_METADATA_PROFILE="swift-foundation"
+FSM="$FOUNDATION_SDK_METADATA_PROFILE"
+FOUNDATION_SDK_METADATA="$(recaulk_sdk_metadata_profile "$RECAULK_PREFIX/share/sdk-metadata/profiles.json" "$FSM")" \
+  || { echo "FAIL: Recaulk $RECAULK_VERSION has no sdk-metadata profile $FSM"; exit 1; }
+# shellcheck disable=SC2086  # space-free recipe ids, which recaulk_sdk_metadata_profile holds them to
 recaulk_sdk_metadata_vfs "$SDK_OVERLAYS" "$RECAULK_PREFIX/share/sdk-metadata/recipes.json" "$ROOT/overlays/sdk-metadata" \
-  $FOUNDATION_SDK_METADATA || { echo "FAIL: could not materialize Recaulk's sdk-metadata recipes"; exit 1; }
-echo "    Recaulk $RECAULK_VERSION sdk-metadata: $ROOT/overlays/sdk-metadata/overlay.json"
+  $FOUNDATION_SDK_METADATA || { echo "FAIL: could not materialize Recaulk's sdk-metadata profile $FSM"; exit 1; }
+echo "    Recaulk $RECAULK_VERSION sdk-metadata profile $FSM: $ROOT/overlays/sdk-metadata/overlay.json"
 # host_object <object> clang|clang++ <source> [<flag>...] -- <source> compiled by the host clang against the
 # 10.9 SDK, with the stdlib's threading package and the runtime's headers, the build root prefix-mapped.
 host_object() {

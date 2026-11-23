@@ -165,7 +165,7 @@
 -    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
 -    public var ubiquitousSharedItemCurrentUserPermissions: URLUbiquitousSharedItemPermissions? { return _get(.ubiquitousSharedItemCurrentUserPermissionsKey) }
 +    // Mavericks: no ubiquitousItemIsShared, ubiquitousSharedItemCurrentUserRole or
-+    // ubiquitousSharedItemCurrentUserPermissions: their keys are 10.13, which neither the 10.9 SDK nor Recaulk
++    // ubiquitousSharedItemCurrentUserPermissions: their keys are 10.12, which neither the 10.9 SDK nor Recaulk
 +    // declares, and the role and permission types are Recaulk's typedefs without the Swift names
 +    // URLUbiquitousSharedItemRole and URLUbiquitousSharedItemPermissions; Recaulk declaring the keys, and naming the
 +    // types, would restore them

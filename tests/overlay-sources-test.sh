@@ -203,7 +203,6 @@ omark 0038 Foundation/URLCache.swift "Mavericks: no init(memoryCapacity:diskCapa
 omark 0039 Foundation/NSError.swift "Mavericks: no user info value provider: NSError's"
 omark 0040 Foundation/IndexPath.swift "Mavericks: getIndexes(_:), every index, which count is: the"
 omark 0041 Foundation/Data.swift "Mavericks: 1299 is NSFoundationVersionNumber10_11_Max, which"
-omark 0042 Foundation/AffineTransform.swift "Mavericks: typed, as 10.9's unannotated -"
 omark 0043 Foundation/NSObject.swift "Mavericks: 10.9 declares NSKeyValueChange NS_OPTIONS, not"
 omark 0044 apinotes/CoreGraphics.apinotes "Mavericks: 10.9 declares CGRectEdge a plain C enum"
 omark 0045 Foundation/URL.swift "Mavericks: no isApplication or applicationIsScriptable"
@@ -219,6 +218,12 @@ for sel in "'enumerateDatesStartingAfterDate:matchingComponents:options:usingBlo
 done
 [ "$(grep -c 'NSCalendar.Identifier(rawValue: "islamic-\(tbla\|umalqura\)")' "$O/Foundation/Calendar.swift")" = 4 ] \
   || fail "Calendar.swift does not name the two 10.10 Islamic calendars by value, both ways"
+for f in AffineTransform.swift Date.swift JSONEncoder.swift NSDate.swift PlistEncoder.swift; do
+  # Recaulk declares -[NSObject init] nonnull, so these keep 5.4's untyped lets of an init's result.
+  cmp -s "$O/Foundation/$f" "$WORK/swift-5.4/stdlib/public/Darwin/Foundation/$f" || grep -q 'Mavericks: no ' "$O/Foundation/$f" \
+    || fail "$f differs from 5.4's, and no patch removes anything from it"
+  grep -q 'Mavericks: typed, as 10.9' "$O/Foundation/$f" && fail "$f still types an init's result"
+done
 
 echo "-- no laid-out source names what neither the 10.9 SDK nor Recaulk declares, outside a comment"
 bad="$(grep -nE 'ISO8601DateFormatter|NSDateInterval|URLQueryItem|PersonNameComponents|URLSessionWebSocketTask|URLSessionTaskTransactionMetrics|import Combine|NSMeasurement|NSItemProvider|NSOrderedCollectionDifference|_CFURLComponentsGet|NSCoderValueNotFoundError|registerUndoWithTarget|decodeTopLevel' \
@@ -236,12 +241,12 @@ gone="$gone"'|rangeOf(Fragment|Host|Password|Path|Port|Query|Scheme|User)|unarch
 gone="$gone"'|decodeTopLevelDecodable|getIndexes\([^)]*range:|registerUndo\(withTarget|TopLevelEncoder|TopLevelDecoder'
 gone="$gone"'|__NSCoderDecodeObject(ForKey)?\(|__NSKeyedUnarchiver|__NSUndoManagerRegisterWithTargetHandler'
 gone="$gone"'|NSURLErrorBackgroundTaskCancelledReasonKey|NSURLErrorNetworkUnavailableReasonKey'
-# URL resource keys of 10.10 to 10.13 (0045), and 10.10's Islamic calendar identifier constants (0046)
+# URL resource keys of 10.10 to 10.13 (0045), and the 10.10 Islamic calendars named by constant (0046)
 gone="$gone"'|isApplicationKey|applicationIsScriptableKey|canonicalPathKey|generationIdentifierKey|documentIdentifierKey'
 gone="$gone"'|addedToDirectoryDateKey|quarantinePropertiesKey|volumeAvailableCapacityFor(Important|Opportunistic)UsageKey'
 gone="$gone"'|volumeIsEncryptedKey|volumeIsRootFileSystemKey|volumeSupports(Compression|FileCloning|SwapRenaming|ExclusiveRenaming)Key'
 gone="$gone"'|volumeSupports(ImmutableFiles|AccessPermissions)Key|ubiquitousItemDownloadRequestedKey|ubiquitousItemContainerDisplayNameKey'
-gone="$gone"'|ubiquitousItemIsSharedKey|ubiquitousSharedItemCurrentUser(Role|Permissions)|NSCalendarIdentifierIslamic'
+gone="$gone"'|ubiquitousItemIsSharedKey|ubiquitousSharedItemCurrentUser(Role|Permissions)'
 gone="$gone"'|\.islamic(Tabular|UmmAlQura) : \.islamic(Tabular|UmmAlQura)'
 for f in "$O"/Foundation/*.swift "$O"/Foundation/shims/*.h "$O"/CoreFoundation/shims/*.h; do
   bad="$(sed -e 's|^[[:space:]]*//.*||' -e 's|[[:space:]]//.*||' "$f" | grep -nE "$gone" || true)"

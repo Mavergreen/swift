@@ -103,8 +103,8 @@ BundleLookup.mm, DataThunks.m) and shims headers are from swift-5.4-RELEASE's
 stdlib/public/Darwin and stdlib/public/SwiftShims (pins.env's SWIFT54_SHA), under the same
 license (Apache License v2.0 with Runtime Library Exception; Copyright (c) 2014 - present
 Apple Inc. and the Swift project authors), with the local patches in ./patches/overlays,
-each renaming what 5.4 spells as a later SDK does or removing what neither the 10.9 SDK nor
-Recaulk declares:
+each renaming what 5.4 spells as a later SDK does, naming by value a constant neither
+declares, or removing what neither the 10.9 SDK nor Recaulk declares:
   0022  The shims use the 10.9 SDK's spellings.
   0023  No NSCoder top-level decoding (10.11).
   0024  No UndoManager registration with a handler (10.11).
@@ -125,7 +125,6 @@ Recaulk declares:
   0039  No NSError user-info provider (10.11) or 10.15 keys.
   0040  NSValue and IndexPath use 10.9's getValue: and getIndexes:.
   0041  Data names macOS 10.11's NSFoundationVersionNumber by its value.
-  0042  An NSObject -init result is typed, as 10.9's imports as init!().
   0043  NSKeyValueChange is 10.9's NS_OPTIONS, whose init(rawValue:) is not failable.
   0045  No URL resource values whose keys are 10.10 to 10.13.
   0046  The two Islamic calendars of 10.10 are named by their identifiers' values.
