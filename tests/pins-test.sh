@@ -12,10 +12,11 @@ out="$(cd "$REPO" && env -i PATH=/usr/bin:/bin HOME="$HOME" /bin/sh -c 'set -eu;
     "$TOOLCHAIN_URL" "$TOOLCHAIN_ASSET" "$DEPLOYMENT" "$ARCH" "${VERSION-unset}" "${BUILDSUPPORT_ASSET-unset}" \
     "$CMARK_SWIFT_RELEASE" "$CMARK_TAG" "$CMARK_SHA" "$CLANG22_VERSION" \
     "$SWIFT_TARBALL_SHA256" "$LLVM_TARBALL_SHA256" "$CMARK_TARBALL_SHA256" "$RECAULK_VERSION" \
-    "$SWIFT62_SHA" "$SWIFT62_TARBALL_SHA256" "$SWIFT54_SHA" "$SWIFT54_TARBALL_SHA256"
+    "$SWIFT62_SHA" "$SWIFT62_TARBALL_SHA256" "$SWIFT54_SHA" "$SWIFT54_TARBALL_SHA256" \
+    "$LINUX_SEED_URL" "$LINUX_SEED_SIG_URL" "$LINUX_SEED_SHA256" "$LINUX_SEED_KEYRING_URL" "$LINUX_SEED_KEY_FPR"
   [ -n "$TOOLCHAIN_SIGNER" ]')" || fail "sourcing pins.env with only /usr/bin:/bin on PATH failed"
 set -- $out
-[ $# -eq 24 ] || fail "expected 24 values from pins.env, got $#: $out"
+[ $# -eq 29 ] || fail "expected 29 values from pins.env, got $#: $out"
 v="$1"
 case "$v" in [0-9]*.[0-9]*.[0-9]*) ;; *) fail "SWIFT_VERSION '$v' is not X.Y.Z" ;; esac
 [ "$2" = "swift-$v-RELEASE" ] || fail "SWIFT_TAG '$2' is not derived from SWIFT_VERSION"
@@ -58,6 +59,15 @@ done
 ! grep -E '^SWIFT(62|54)_' "$REPO/pins.env" | grep -q 'renovate:' || fail "a frozen overlay pin carries a renovate: marker"
 ! grep -Eq 'SWIFT(62|54)' "$REPO/.github/renovate.json" "$REPO/scripts/pins-bot.sh" "$REPO/scripts/pin-source-tarballs.sh" \
   || fail "an automatic updater names a frozen overlay pin"
+
+# spec: the Linux seed is swift.org's ubuntu24.04 tarball: its URL moves with SWIFT_VERSION, the tarball
+#       is pinned by hash, and the signature must come from one pinned primary key
+base="https://download.swift.org/swift-$v-release/ubuntu2404/swift-$v-RELEASE/swift-$v-RELEASE-ubuntu24.04.tar.gz"
+[ "${25}" = "$base" ] || fail "LINUX_SEED_URL '${25}' is not derived from SWIFT_VERSION"
+[ "${26}" = "$base.sig" ] || fail "LINUX_SEED_SIG_URL '${26}' is not LINUX_SEED_URL plus .sig"
+printf '%s' "${27}" | grep -Eq '^[0-9a-f]{64}$' || fail "LINUX_SEED_SHA256 '${27}' is not a SHA-256"
+[ "${28}" = "https://swift.org/keys/all-keys.asc" ] || fail "LINUX_SEED_KEYRING_URL is '${28}'"
+printf '%s' "${29}" | grep -Eq '^[0-9A-F]{40}$' || fail "LINUX_SEED_KEY_FPR '${29}' is not a 40-hex fingerprint"
 
 up="$(cd "$REPO" && sh scripts/derive-upstream-version.sh)"
 [ "$up" = "$v" ] || fail "derive-upstream-version.sh says '$up', pins.env says '$v'"
