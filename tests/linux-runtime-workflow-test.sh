@@ -2,19 +2,24 @@
 # platform: host-agnostic
 # usage: sh tests/linux-runtime-workflow-test.sh
 #   .github/workflows/linux-runtime.yml builds the runtime and gates it on Mac OS X 10.9 with no macOS runner: on
-#   every push and pull request it calls linux-build.yml (the Linux-hosted compiler, cached; build.sh; the runtime
-#   pkg; the self-test bundle) and then vm-test.yml in prebuilt mode, never publishing, on that same run's
-#   swift-linux artifact. Neither it nor a workflow it calls runs on a macos-* runner.
+#   every push (a branch of this repo; a pull request's head is one) it calls linux-build.yml (the Linux-hosted
+#   compiler, cached; build.sh; the runtime pkg; the self-test bundle) with only contents: read, and then its
+#   vm-test-prebuilt job fetches that same run's swift-linux artifact with .github/actions/vm-test in bundle_mode
+#   prebuilt and boots the 10.9 guest, never publishing. Neither it nor a workflow it calls runs on a macos-* runner.
 #   linux-build.yml names the compiler build's scripts once (COMPILER_BUILD): its compiler jobs run exactly those,
 #   and the cache key, swift-linux-compiler-<runner.os>-x86_64-<hash>, hashes what they read
-#   (scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD), computed in each job that probes, saves or restores
-#   it from that job's own shipyard. The probe, the save and the restore name the same paths. A hit skips every
-#   compiler job and the runtime job restores the compiler, failing on a miss; a miss builds it in three jobs
-#   (build-llvm.sh and build-builtins.sh; build-toolchain.sh --stop-after llvm; build-toolchain.sh), each within
-#   GitHub's six hours, each handing its work on as a same-run artifact. The runner gets uuid-dev and pkg-config
-#   from apt, cmake is its own, and clang22 comes from install@v1's products at components/clang22/version's pin.
-#   The runtime job runs build.sh with the cached compiler, then the coroutine frame reproducer against it,
-#   required, then the pkg with its updater, and the bundle when asked.
+#   (scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD). compiler-probe computes the hash and outputs it;
+#   every compiler job computes it again from its own shipyard, after install@v1, and stops with an ::error::
+#   naming both hashes when they differ, and compiler-swift saves under the probe's. The runtime job computes it
+#   too, says so in an ::error:: naming both when it differs from the probe's, and restores under its own. The
+#   probe, the save and the restore name the same paths. A hit skips every compiler job and the runtime job
+#   restores the compiler, failing on a miss; a miss builds it in three jobs (build-llvm.sh and
+#   build-builtins.sh; build-toolchain.sh --stop-after llvm; build-toolchain.sh, which first logs whether LLVM's
+#   ninja has anything left to do), each within GitHub's six hours, each handing its work on as a same-run
+#   artifact. The runner gets uuid-dev and pkg-config from apt, cmake is its own, and clang22 comes from
+#   install@v1's products at components/clang22/version's pin. The runtime job runs build.sh with the cached
+#   compiler, then the coroutine frame reproducer against it, required, then the pkg with its updater, and the
+#   bundle when asked.
 #   A bundle crossing from another run must be checked for this commit and linux-runtime.yml before it is
 #   trusted: today every download-artifact is the same run's, and a cross-run one (run-id:) without that check is
 #   refused. Each check is run against a workflow mutated to break it, and must refuse it.
@@ -24,7 +29,7 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/linux-runtime-workflow-test.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 WF="$REPO/.github/workflows"
-LR="$WF/linux-runtime.yml"; LB="$WF/linux-build.yml"; VM="$WF/vm-test.yml"
+LR="$WF/linux-runtime.yml"; LB="$WF/linux-build.yml"; VM="$REPO/.github/actions/vm-test/action.yml"
 for f in "$LR" "$LB" "$VM"; do [ -f "$f" ] || fail "no ${f#"$REPO"/}"; done
 
 # job <workflow> <id> -- the job's lines, without its id line
@@ -34,20 +39,26 @@ step() { awk -v p="      - name: $2" 'index($0, p) == 1 { on = 1; print; next } 
 # jobs <workflow> -- its job ids
 jobs_of() { awk '/^jobs:$/ { in_ = 1; next } in_ && /^  [A-Za-z][A-Za-z0-9_-]*:$/ { sub(/^  /, ""); sub(/:$/, ""); print }' "$1"; }
 
-# The iteration workflow: triggers, the two calls, nothing on macOS.
+# The iteration workflow: triggers, the build, the prebuilt gate, nothing on macOS.
 check_lr() {
   awk '/^on:$/ { o = 1; next } o && /^[a-z]/ { o = 0 } o' "$1" > "$T/on"
-  grep -qx '  push:' "$T/on" && grep -qx '  pull_request:' "$T/on" || { echo "linux-runtime.yml does not run on push and pull_request"; return 1; }
-  job "$1" build > "$T/b"; job "$1" vm-test > "$T/v"
+  grep -qx '  push:' "$T/on" || { echo "linux-runtime.yml does not run on push"; return 1; }
+  if grep -q 'pull_request' "$T/on"; then echo "linux-runtime.yml runs on pull_request too: a push already built that commit"; return 1; fi
+  job "$1" build > "$T/b"; job "$1" vm-test-prebuilt > "$T/v"
   grep -qx '    uses: ./.github/workflows/linux-build.yml' "$T/b" || { echo "linux-runtime.yml's build does not call linux-build.yml"; return 1; }
   grep -qx '      selftest: true' "$T/b" || { echo "linux-runtime.yml's build does not ask for the self-test bundle"; return 1; }
-  grep -qx '    uses: ./.github/workflows/vm-test.yml' "$T/v" || { echo "linux-runtime.yml's vm-test does not call vm-test.yml"; return 1; }
-  grep -qx '    needs: \[build\]' "$T/v" || { echo "linux-runtime.yml's vm-test does not need build alone"; return 1; }
-  grep -qx '      bundle_mode: prebuilt' "$T/v" || { echo "linux-runtime.yml's vm-test is not in prebuilt mode"; return 1; }
-  grep -qx "      publish: 'false'" "$T/v" || { echo "linux-runtime.yml's vm-test may publish"; return 1; }
-  grep -qx '      version: ${{ needs.build.outputs.version }}' "$T/v" || { echo "linux-runtime.yml's vm-test does not hold the receipt to the build's version"; return 1; }
-  grep -qx '      prebuilt_artifact: swift-linux' "$T/v" || { echo "linux-runtime.yml's vm-test does not gate the swift-linux artifact"; return 1; }
-  grep -qx '      MAVERICKS_VM_KEY: ${{ secrets.MAVERICKS_VM_KEY }}' "$T/v" || { echo "linux-runtime.yml's vm-test is not handed the VM's key"; return 1; }
+  awk '/^    permissions:$/ { p = 1; next } p && /^      / { print; next } p { exit }' "$T/b" > "$T/bp"
+  [ "$(cat "$T/bp")" = '      contents: read' ] || { echo "linux-runtime.yml's build is not given contents: read alone"; return 1; }
+  [ -s "$T/v" ] || { echo "linux-runtime.yml has no vm-test-prebuilt job"; return 1; }
+  if job "$1" vm-test | grep -q .; then echo "linux-runtime.yml has a job named vm-test, the release gate's required check"; return 1; fi
+  grep -qx '    needs: \[build\]' "$T/v" || { echo "vm-test-prebuilt does not need build alone"; return 1; }
+  grep -qx '    runs-on: ubuntu-latest' "$T/v" || { echo "vm-test-prebuilt does not run on ubuntu-latest"; return 1; }
+  grep -qx '        uses: ./.github/actions/vm-test' "$T/v" || { echo "vm-test-prebuilt does not fetch with .github/actions/vm-test"; return 1; }
+  grep -qx '          bundle_mode: prebuilt' "$T/v" || { echo "vm-test-prebuilt is not in prebuilt mode"; return 1; }
+  grep -qx "          publish: 'false'" "$T/v" || { echo "vm-test-prebuilt may publish"; return 1; }
+  grep -qx '          prebuilt_artifact: swift-linux' "$T/v" || { echo "vm-test-prebuilt does not gate the swift-linux artifact"; return 1; }
+  grep -qx '          SWIFT_FULL_VERSION: ${{ needs.build.outputs.version }}' "$T/v" || { echo "vm-test-prebuilt does not hold the receipt to the build's version"; return 1; }
+  grep -qx '          image-key: ${{ secrets.MAVERICKS_VM_KEY }}' "$T/v" || { echo "vm-test-prebuilt does not boot the VM with its key"; return 1; }
   if grep -q 'publish-release\|sign_and_appcast' "$1"; then echo "linux-runtime.yml publishes or signs"; return 1; fi
   # Nothing on macOS, here or in a workflow it calls.
   for w in "$1" $(sed -n 's|^    uses: \./\.github/workflows/\(.*\.yml\)$|\1|p' "$1" | sed "s|^|$(dirname "$1")/|"); do
@@ -55,15 +66,19 @@ check_lr() {
   done
 }
 check_lr "$LR" > "$T/why" || fail "linux-runtime.yml: $(cat "$T/why")"
-lr_mutant() { sed "$2" "$LR" > "$T/m.yml"; cp "$LB" "$VM" "$T/" 2>/dev/null; if check_lr "$T/m.yml" > "$T/why"; then fail "the check passed a linux-runtime.yml where $1"; fi; }
-lr_mutant "pull requests do not run it" '/^  pull_request:$/d'
-lr_mutant "vm-test publishes" "s/^      publish: 'false'\$/      publish: 'true'/"
-lr_mutant "vm-test compiles in the guest" 's/^      bundle_mode: prebuilt$/      bundle_mode: compile/'
-lr_mutant "vm-test gates another artifact" 's/^      prebuilt_artifact: swift-linux$/      prebuilt_artifact: swift-cross/'
+lr_mutant() { sed "$2" "$LR" > "$T/m.yml"; cp "$LB" "$T/" 2>/dev/null; cmp -s "$LR" "$T/m.yml" && fail "the mutant where $1 changed nothing"
+  if check_lr "$T/m.yml" > "$T/why"; then fail "the check passed a linux-runtime.yml where $1"; fi; }
+lr_mutant "pull requests run it too" 's/^  push:$/  pull_request:\
+  push:/'
+lr_mutant "the gate publishes" "s/^          publish: 'false'\$/          publish: 'true'/"
+lr_mutant "the gate compiles in the guest" 's/^          bundle_mode: prebuilt$/          bundle_mode: compile/'
+lr_mutant "the gate takes another artifact" 's/^          prebuilt_artifact: swift-linux$/          prebuilt_artifact: swift-cross/'
 lr_mutant "the build skips the bundle" 's/^      selftest: true$/      selftest: false/'
-lr_mutant "vm-test does not wait for the build" 's/^    needs: \[build\]$/    needs: []/'
+lr_mutant "the gate does not wait for the build" 's/^    needs: \[build\]$/    needs: []/'
+lr_mutant "the gate takes the release gate's check name" 's/^  vm-test-prebuilt:$/  vm-test:/'
+lr_mutant "the build may write" 's/^      contents: read$/      contents: write/'
 # A called workflow that grows a macOS job.
-mkdir -p "$T/sub" && cp "$LR" "$VM" "$T/sub/" && sed 's/^    runs-on: ubuntu-latest$/    runs-on: macos-26/' "$LB" > "$T/sub/linux-build.yml"
+mkdir -p "$T/sub" && cp "$LR" "$T/sub/" && sed 's/^    runs-on: ubuntu-latest$/    runs-on: macos-26/' "$LB" > "$T/sub/linux-build.yml"
 if check_lr "$T/sub/linux-runtime.yml" > "$T/why"; then fail "the check passed a linux-runtime.yml whose linux-build.yml runs on macOS"; fi
 
 # The compiler build: one named list, one key, three jobs on a miss, none on a hit.
@@ -99,15 +114,37 @@ check_lb() {
   grep -q 'name: linux-compiler-tools' "$T/j1" && grep -q 'name: linux-compiler-tools' "$T/j2" && grep -q 'name: linux-compiler-tools' "$T/j3" \
     && grep -q 'name: linux-compiler-llvm' "$T/j2" && grep -q 'name: linux-compiler-llvm' "$T/j3" \
     || { echo "the compiler jobs do not hand their work on as artifacts"; return 1; }
-  # The key: the inputs script over COMPILER_BUILD, in every job that probes, saves or restores it.
-  for j in jp j3 jr; do
+  # The key: the inputs script over COMPILER_BUILD. The probe's hash is the run's; every later job hashes again from
+  # its own shipyard, after installing it, and a compiler job stops on a difference.
+  grep -qxF '      hash: ${{ steps.inputs.outputs.hash }}' "$T/jp" || { echo "compiler-probe does not output its hash"; return 1; }
+  for j in jp j1 j2 j3 jr; do
     grep -qF 'h="$(sh scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD)"' "$T/$j" \
       || { echo "a job ($j) does not hash COMPILER_BUILD's inputs itself"; return 1; }
-    grep -qxF '          key: swift-linux-compiler-${{ runner.os }}-x86_64-${{ steps.inputs.outputs.hash }}' "$T/$j" \
-      || { echo "a job ($j) does not key the compiler as swift-linux-compiler-<os>-x86_64-<inputs hash>"; return 1; }
+    awk '/uses: Mavergreen\/shipyard\/\.github\/actions\/install@/ { i = NR } /--hash \$COMPILER_BUILD/ && !h { h = NR } END { exit !(i && i < h) }' "$T/$j" \
+      || { echo "a job ($j) hashes before it installs shipyard"; return 1; }
+  done
+  for j in j1 j2 j3 jr; do
+    grep -qxF '          PROBE_HASH: ${{ needs.compiler-probe.outputs.hash }}' "$T/$j" && grep -q '\[ "\$h" = "\$PROBE_HASH" \] ||' "$T/$j" \
+      && grep '\[ "\$h" = "\$PROBE_HASH" \] ||' "$T/$j" | grep -q '::error::.*\$h.*\$PROBE_HASH' \
+      || { echo "a job ($j) does not compare its hash with compiler-probe's, naming both in an ::error::"; return 1; }
+  done
+  for j in j1 j2 j3; do
+    grep '\[ "\$h" = "\$PROBE_HASH" \] ||' "$T/$j" | grep -q 'exit 1; }$' || { echo "a compiler job ($j) goes on with a hash compiler-probe did not look up"; return 1; }
+  done
+  awk '/\[ "\$h" = "\$PROBE_HASH" \] \|\|/ { e = NR } /fail-on-cache-miss: true/ { r = NR } END { exit !(e && e < r) }' "$T/jr" \
+    || { echo "the runtime job does not compare the hashes before its restore"; return 1; }
+  grep -qxF '          key: swift-linux-compiler-${{ runner.os }}-x86_64-${{ steps.inputs.outputs.hash }}' "$T/jp" \
+    && grep -qxF '          key: swift-linux-compiler-${{ runner.os }}-x86_64-${{ steps.inputs.outputs.hash }}' "$T/jr" \
+    || { echo "the probe and the restore do not key the compiler as swift-linux-compiler-<os>-x86_64-<their inputs hash>"; return 1; }
+  grep -qxF '          key: swift-linux-compiler-${{ runner.os }}-x86_64-${{ needs.compiler-probe.outputs.hash }}' "$T/j3" \
+    || { echo "compiler-swift does not save under the probe's hash"; return 1; }
+  for j in jp j3 jr; do
     awk '/^          path: \|$/ { p = 1; next } p && /^            / { print; next } p { exit }' "$T/$j" > "$T/paths.$j"
     [ -s "$T/paths.$j" ] || { echo "a job ($j) names no cache paths"; return 1; }
   done
+  # compiler-swift says whether LLVM's ninja has anything left to do, before build-toolchain.sh.
+  awk '/ninja -C "\$SWIFT_BUILD\/work\/llvm-linux" -n / { n = NR } /^        run: \.\/build-toolchain\.sh --host linux$/ { b = NR } END { exit !(n && n < b) }' "$T/j3" \
+    || { echo "compiler-swift does not log LLVM's ninja -n before it builds"; return 1; }
   cmp -s "$T/paths.jp" "$T/paths.j3" && cmp -s "$T/paths.j3" "$T/paths.jr" || { echo "the probe, the save and the restore name different paths"; return 1; }
   grep -q 'uses: actions/cache/restore@' "$T/jp" && grep -qx '          lookup-only: true' "$T/jp" || { echo "the probe is not a lookup-only restore"; return 1; }
   grep -q 'uses: actions/cache/save@' "$T/j3" || { echo "compiler-swift does not save the compiler"; return 1; }
@@ -147,6 +184,13 @@ lb_first "a compiler job runs on a hit" "    if: needs.compiler-probe.outputs.hi
 lb_mutant "the key forgets the inputs" 's/-x86_64-\${{ steps.inputs.outputs.hash }}$/-x86_64-v1/'
 lb_mutant "the key hashes the runner image" 's/-x86_64-\${{ steps.inputs.outputs.hash }}$/-x86_64-${{ steps.inputs.outputs.hash }}-${{ env.ImageVersion }}/'
 lb_first "a job takes the hash from another job's shipyard" '          h="$(sh scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD)"' '          h="${{ needs.compiler-probe.outputs.hash }}"'
+lb_mutant "the probe does not output its hash" '/^      hash: \${{ steps.inputs.outputs.hash }}$/d'
+lb_mutant "compiler-swift saves under its own hash" 's/^          key: swift-linux-compiler-\${{ runner.os }}-x86_64-\${{ needs.compiler-probe.outputs.hash }}$/          key: swift-linux-compiler-${{ runner.os }}-x86_64-${{ steps.inputs.outputs.hash }}/'
+lb_mutant "a compiler job only warns of a hash that moved" '/^  compiler-llvm:$/,/^  compiler-swift:$/ s/; exit 1; }$/; }/'
+lb_mutant "no job compares the hashes" '/\[ "\$h" = "\$PROBE_HASH" \] ||/d'
+lb_mutant "the runtime job says nothing of a hash that moved" '/^  runtime:$/,$ { /\[ "\$h" = "\$PROBE_HASH" \] ||/d; }'
+lb_mutant "compiler-swift does not log LLVM's ninja -n" '/ninja -C "\$SWIFT_BUILD\/work\/llvm-linux" -n /d'
+
 lb_mutant "the save names other paths" '/^  compiler-swift:$/,/^  runtime:$/ s|/mm-build/swift/out/llvm$|/mm-build/swift/out|'
 lb_mutant "the runtime job builds on a miss with no compiler" '/^          fail-on-cache-miss: true$/d'
 lb_mutant "the probe restores the whole compiler" '/^          lookup-only: true$/d'
@@ -172,9 +216,10 @@ crossrun() {
   done
   rm -f "$T"/cs.*
 }
-job "$VM" vm-test > "$T/vmjob"
-crossrun "$T/vmjob" > "$T/why" || fail "vm-test.yml: $(cat "$T/why")"
-grep -q 'name: ${{ inputs.prebuilt_artifact }}' "$T/vmjob" || fail "vm-test.yml does not download the prebuilt artifact by name"
+# The action's steps, at a job's indentation.
+awk '/^  steps:$/ { s = 1; next } s' "$VM" | sed 's/^/  /' > "$T/vmjob"
+crossrun "$T/vmjob" > "$T/why" || fail "the vm-test action: $(cat "$T/why")"
+grep -q 'name: ${{ inputs.prebuilt_artifact }}' "$T/vmjob" || fail "the vm-test action does not download the prebuilt artifact by name"
 awk '{ print } $0 == "          name: ${{ inputs.prebuilt_artifact }}" {
        print "          run-id: ${{ inputs.run_id }}"; print "          github-token: ${{ github.token }}" }' "$T/vmjob" > "$T/xrun"
 grep -q '^ *run-id:' "$T/xrun" || fail "the test could not make a cross-run download"

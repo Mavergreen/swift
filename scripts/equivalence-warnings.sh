@@ -17,10 +17,14 @@ trap 'rm -f "$OUT"' EXIT
 rc=0; sh "$BE" --repo "$REPO" "$1" "$2" > "$OUT" || rc=$?
 cat "$OUT"
 TAB="$(printf '\t')"
-awk -F "$TAB" 'NF >= 3 && $1 == "unused" { print "::warning::build-equivalence: unused entry " $3; next }
-               NF >= 3 && $3 == "-" { print "::warning::build-equivalence: " $1 " " $2 }' "$OUT"
+# build-equivalence.sh's stdout: "<level>TAB<path>TAB<excusing glob or ->" per difference (level bytes, interface,
+# meta, only-a or only-b), indented detail lines under an interface one, and "unused TAB - TAB <glob>".
+W="$(awk -F "$TAB" 'NF == 3 && $1 == "unused" && $2 == "-" { print "::warning::build-equivalence: unused entry " $3; next }
+               NF == 3 && $3 == "-" && $1 ~ /^(bytes|interface|meta|only-a|only-b)$/ { print "::warning::build-equivalence: " $1 " " $2 }' "$OUT")"
+[ -z "$W" ] || printf '%s\n' "$W"
 case "$rc" in
-  0|1) ;;
+  0) ;;
+  1) [ -n "$W" ] || echo "::warning::build-equivalence exited 1 (a difference or an unused entry) but printed none this script reads" ;;
   *) echo "::warning::build-equivalence could not compare $1 and $2 (exit $rc)" ;;
 esac
 exit 0

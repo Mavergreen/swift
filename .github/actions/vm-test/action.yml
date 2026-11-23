@@ -1,0 +1,94 @@
+name: vm-test
+description: >-
+  What a Mac OS X 10.9 acceptance job's guest installs, fetched onto the Linux runner that boots it
+  (Mavergreen/mavericks-vm): the pinned libcxx22 and mavericks-clang-22 pkgs, Longboat's latest release, and the
+  bundle mode's own pkgs. The job checks out the repo first, and runs its guest step after this.
+
+# compile (release.yml's vm-test, the release gate): build-cross's swift-cross (the runtime pkg and selftest-support)
+# and build's swift-native, and the previous release's runtime and native toolchain pkgs, to upgrade from.
+# prebuilt (linux-runtime.yml's vm-test-prebuilt, for iteration and never a release): only the caller's run's
+# artifact that prebuilt_artifact names, a runtime pkg and the self-test bundle built beside it. No macOS job's
+# artifact and no previous release. The mode is checked first: compile or prebuilt, and never prebuilt when the
+# run publishes.
+
+inputs:
+  bundle_mode:
+    description: "compile (the run's swift-cross and swift-native, and the previous release) or prebuilt (prebuilt_artifact alone)"
+    required: true
+  publish:
+    description: "'true' when the run publishes: then only compile is accepted"
+    required: false
+    default: 'false'
+  prebuilt_artifact:
+    description: "prebuilt: the run's artifact holding a swift-runtime-*.pkg and swift-runtime-selftest.tar.gz"
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Check the bundle mode
+      env:
+        BUNDLE_MODE: ${{ inputs.bundle_mode }}
+        PUBLISH: ${{ inputs.publish }}
+      shell: bash
+      run: |
+        set -eu
+        case "$BUNDLE_MODE" in compile|prebuilt) ;; *) echo "::error::bundle_mode is compile or prebuilt, not '$BUNDLE_MODE'"; exit 1 ;; esac
+        [ "$BUNDLE_MODE" = compile ] || [ "$PUBLISH" != true ] || { echo "::error::a release is gated by the bundle compiled on 10.9 (bundle_mode compile), never a prebuilt one"; exit 1; }
+    - name: Download build-cross's runtime pkg and selftest-support
+      if: inputs.bundle_mode == 'compile'
+      uses: actions/download-artifact@v8
+      with: { name: swift-cross, path: dist }
+    - name: Download build's native toolchain pkg
+      if: inputs.bundle_mode == 'compile'
+      uses: actions/download-artifact@v8
+      with: { name: swift-native, path: dist }
+    # The runtime links libcxx22's libc++ and its pkg requires libcxx22 at pins.env's CLANG22_VERSION or later:
+    # that release's pkg, checked against its own SHA256SUMS, installs first. Its native clang22 pkg, from the
+    # same release, supplies the smoke's Mach-O readers.
+    - name: Fetch libcxx22 and mavericks-clang-22 at the pinned clang22 release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      shell: bash
+      run: |
+        set -eu
+        v="$(sed -n 's/^CLANG22_VERSION="\([^"]*\)".*/\1/p' pins.env)"
+        [ -n "$v" ] || { echo "::error::no CLANG22_VERSION in pins.env"; exit 1; }
+        mkdir -p libcxx clang22
+        ( cd libcxx && gh release download "$v" -R Mavergreen/clang-22 -p "libcxx22-$v.pkg" -p SHA256SUMS &&
+          grep " libcxx22-$v.pkg\$" SHA256SUMS | sha256sum -c - )
+        ( cd clang22 && gh release download "$v" -R Mavergreen/clang-22 -p "mavericks-clang-22-native-$v.pkg" -p SHA256SUMS &&
+          grep " mavericks-clang-22-native-$v.pkg\$" SHA256SUMS | sha256sum -c - )
+    # mavericks-clang-22's pkg refuses to install without Longboat, and points the user at its latest release.
+    - name: Fetch Longboat's latest release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      shell: bash
+      run: |
+        set -eu
+        lb="$(gh release view -R Mavergreen/longboat --json tagName --jq .tagName)"
+        [ -n "$lb" ] || { echo "::error::no Longboat release"; exit 1; }
+        mkdir -p longboat && cd longboat
+        gh release download "$lb" -R Mavergreen/longboat -p "longboat-$lb.pkg" -p SHA256SUMS
+        grep " longboat-$lb.pkg\$" SHA256SUMS | sha256sum -c -
+    # A user upgrades: the latest release's pkgs install first, this run's over them.
+    - name: Fetch the previous release's runtime and native toolchain pkgs
+      if: inputs.bundle_mode == 'compile'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      shell: bash
+      run: |
+        set -eu
+        prev="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+        [ -n "$prev" ] || { echo "::error::no previous release to upgrade from"; exit 1; }
+        mkdir -p prev && cd prev
+        gh release download "$prev" -R "$GITHUB_REPOSITORY" -p "swift-runtime-$prev.pkg" -p "swift-toolchain-$prev.pkg" -p SHA256SUMS
+        grep -E " swift-(runtime|toolchain)-$prev\.pkg\$" SHA256SUMS | sha256sum -c -
+    # The caller's own run's artifact: the bundle and the pkg were built from this commit, beside each other.
+    - name: Fetch the prebuilt runtime pkg and self-test bundle
+      if: inputs.bundle_mode == 'prebuilt'
+      uses: actions/download-artifact@v8
+      with:
+        name: ${{ inputs.prebuilt_artifact }}
+        path: dist

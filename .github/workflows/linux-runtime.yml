@@ -1,40 +1,89 @@
 name: linux-runtime
 
-# Every push and pull request: the runtime built on Linux, with no macOS runner (linux-build.yml: the Linux-hosted
-# compiler, cached by what its build reads, then build.sh, the pkg and the self-test bundle), and gated on
-# Mac OS X 10.9 (vm-test.yml, prebuilt: that pkg and that bundle, from this run, installed and run in
-# Mavergreen/mavericks-vm's guest). It never publishes: its pkg carries <SWIFT_VERSION>-dev.<run id>.
+# Every push: the runtime built on Linux, with no macOS runner (linux-build.yml: the Linux-hosted compiler, cached
+# by what its build reads, then build.sh, the pkg and the self-test bundle), and gated on Mac OS X 10.9 (the pkg
+# and the bundle from this run, installed and run in Mavergreen/mavericks-vm's guest; .github/actions/vm-test
+# fetches them in bundle_mode prebuilt). It never publishes: its pkg carries <SWIFT_VERSION>-dev.<run id>.
 # Cold (a compiler-input change), about 7 to 8 h of three compiler jobs before the runtime; warm, the runtime alone.
 
 on:
   push:
     branches: ['**']
-  pull_request:
 
 permissions:
   contents: read
 
-# Never cancelled: a cold compiler build lost to a newer push would only start again; keyed per ref.
+# Keyed per ref: a running build is never cancelled; a newer push replaces a queued one.
 concurrency:
   group: linux-runtime-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
+    permissions:
+      contents: read
     uses: ./.github/workflows/linux-build.yml
     with:
       selftest: true
 
-  vm-test:
+  # The bundle built elsewhere must load every libswift* from this runtime (tests/run-selftest.sh's --loads), or not
+  # be gated; the runtime's updater launches once, so dyld shows any symbol 10.9 lacks. No compile in the guest, no
+  # toolchain, no smoke, no previous release.
+  vm-test-prebuilt:
     needs: [build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 335
     permissions:
       contents: read
       packages: write
-    uses: ./.github/workflows/vm-test.yml
-    with:
-      bundle_mode: prebuilt
-      version: ${{ needs.build.outputs.version }}
-      publish: 'false'
-      prebuilt_artifact: swift-linux
-    secrets:
-      MAVERICKS_VM_KEY: ${{ secrets.MAVERICKS_VM_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - name: Fetch what the 10.9 guest installs (bundle_mode prebuilt)
+        uses: ./.github/actions/vm-test
+        with:
+          bundle_mode: prebuilt
+          publish: 'false'
+          prebuilt_artifact: swift-linux
+      - name: Install the runtime pkg and gate the prebuilt self-test bundle, on Mac OS X 10.9
+        uses: Mavergreen/mavericks-vm@v1
+        env:
+          SWIFT_FULL_VERSION: ${{ needs.build.outputs.version }}
+        with:
+          image-key: ${{ secrets.MAVERICKS_VM_KEY }}
+          envs: SWIFT_FULL_VERSION
+          copyback: false
+          run: |
+            set -eu
+            sw_vers
+            if [ -e /Library/Developer/CommandLineTools ]; then echo "this guest has the Command Line Tools"; else echo "this guest has no Command Line Tools"; fi
+            sudo -n true || { echo "the guest's user cannot sudo without a password, and installer needs root"; exit 1; }
+            # installer says only "an error"; the reason (a preinstall's refusal, say) is in install.log.
+            install() { for p in "$@"; do [ -f "$p" ] || { echo "no $p"; exit 1; }
+              sudo installer -pkg "$p" -target / || { tail -40 /var/log/install.log; exit 1; }; done; }
+            [ -f dist/swift-runtime-selftest.tar.gz ] || { echo "no prebuilt bundle at dist/swift-runtime-selftest.tar.gz"; exit 1; }
+            install libcxx/libcxx22-*.pkg dist/swift-runtime-*.pkg
+            got="$(pkgutil --pkg-info dev.mavergreen.swift-runtime | sed -n 's/^version: //p')"
+            [ "$got" = "$SWIFT_FULL_VERSION" ] || { echo "dev.mavergreen.swift-runtime is $got, not $SWIFT_FULL_VERSION"; exit 1; }
+            /usr/local/bin/mavergreen check
+            # platform: dyld binds every import of the runtime's updater at launch (DYLD_BIND_AT_LAUNCH), so one
+            #           launch shows a symbol 10.9 lacks: dyld prints "dyld: ..." and stops the process (SIGTRAP, 133).
+            loc="$(pkgutil --pkg-info dev.mavergreen.swift-runtime | sed -n 's/^location: //p')"
+            rel="$(pkgutil --files dev.mavergreen.swift-runtime | grep 'swift-runtime-updater\.app/Contents/MacOS/swift-runtime-updater$' | head -1)"
+            u="/${loc:+${loc#/}/}$rel"; u="$(printf '%s\n' "$u" | sed 's|//*|/|g')"
+            [ -n "$rel" ] && [ -x "$u" ] || { echo "no swift-runtime-updater in the runtime's receipt ($u)"; exit 1; }
+            DYLD_BIND_AT_LAUNCH=1 "$u" --background > updater.log 2>&1 &
+            pid=$!; sleep 10; kill "$pid" 2>/dev/null || :; rc=0; wait "$pid" || rc=$?
+            cat updater.log
+            ! grep -q '^dyld: ' updater.log && [ "$rc" -ne 133 ] || { echo "the runtime's updater does not load on 10.9 (exit $rc)"; exit 1; }
+            echo "the runtime's updater launched (exit $rc after 10 s)"
+            # spec: INGREDIENTS.md "Every Swift bump merges on green, the real-10.9 gate included" -- FileCheck (clang22's) checks the gate's output.
+            install longboat/longboat-[0-9]*.pkg
+            # platform: mavericks-clang-22's preinstall refuses without Longboat's 10.9 SDK (dev.mavergreen.longboat.sdk109) installed.
+            sudo /usr/local/mavergreen/bin/longboat sdk install 10.9
+            install clang22/mavericks-clang-22-native-*.pkg
+            # spec: tests/run-selftest.sh's --loads -- a bundle built elsewhere must load every libswift* from this runtime, or not be gated.
+            mkdir gate
+            ( cd gate && tar -xzf ../dist/swift-runtime-selftest.tar.gz &&
+              sh swift-runtime-selftest/run-selftest.sh --loads &&
+              sh swift-runtime-selftest/run-selftest.sh --gate )

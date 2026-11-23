@@ -11,11 +11,12 @@
 #   (fetch-clang22.sh's), never Apple's /usr/bin/clang, and a failure when that updater links a Swift runtime
 #   library. build runs tests/coro-frame-order-test.sh, with CORO_FRAME_ORDER_REQUIRED=1, after the step that
 #   unpacks the same run's cross toolchain and sets SWIFT_HOST_TOOLCHAIN.
-#   A linux-runtime job calls linux-build.yml with the run's version and no bundle, needing only version; collect
-#   needs it but runs whatever it did, and compares its runtime pkg with build-cross's (scripts/equivalence-warnings.sh:
-#   a ::warning:: per difference, never a failure, for now), or warns that there was none to compare. Every job on
-#   a macos-* runner, in any workflow, is declared in INGREDIENTS.md as `- macos-runner:<file>:<job>: <reason, exit>`,
-#   and linux-runtime.yml and the workflows it calls run on none.
+#   A linux-runtime job calls linux-build.yml with the run's version and no bundle, needing only version; an
+#   equivalence job, on Linux with the pinned clang22, needs it but runs whatever it did once build-cross succeeded,
+#   and compares its runtime pkg with build-cross's (scripts/equivalence-warnings.sh: a ::warning:: per difference,
+#   never a failure, for now), or warns that there was none to compare; neither collect nor publish waits for either.
+#   Every job on a macos-* runner, in any workflow, is declared in INGREDIENTS.md as
+#   `- macos-runner:<file>:<job>: <reason, exit>`, and linux-runtime.yml and the workflows it calls run on none.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d "${TMPDIR:-/tmp}/release-workflow-test.XXXXXX")"
@@ -118,7 +119,8 @@ mutant() {
 mutant "a build skipped on a failed need" '/^    if: \${{ !cancelled() }}$/d'
 mutant "a guard that only warns" '/build, the required check, must not pass/{n;s/exit 1/true/;}'
 mutant "a guard after the checkout" '/^      - name: Fail unless version and build-cross succeeded$/,/^          exit 1$/d'
-# The Linux runtime beside build-cross, and collect's comparison of the two runtime pkgs: warnings, never a failure.
+# The Linux runtime beside build-cross, and the equivalence job's comparison of the two runtime pkgs: warnings, never
+# a failure, and off the release's path (neither collect nor publish waits for it).
 linux() {
   awk '/^  linux-runtime:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" > "$T/lj"
   [ -s "$T/lj" ] || { echo "release.yml has no linux-runtime job"; return 1; }
@@ -127,25 +129,40 @@ linux() {
   grep -qx '      version: ${{ needs.version.outputs.version }}' "$T/lj" || { echo "linux-runtime does not build the run's version"; return 1; }
   grep -qx '      selftest: false' "$T/lj" || { echo "linux-runtime builds a bundle no release.yml job reads"; return 1; }
   awk '/^  collect:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" > "$T/cj"
-  grep -qx '    needs: \[version, build, build-cross, linux-runtime\]' "$T/cj" || { echo "collect does not need linux-runtime"; return 1; }
-  grep -qxF "    if: \${{ !cancelled() && needs.version.result == 'success' && needs.build.result == 'success' && needs.build-cross.result == 'success' }}" "$T/cj" \
-    || { echo "collect does not run whatever linux-runtime did, and only after version, build and build-cross succeeded"; return 1; }
-  awk '/^      - name: The Linux runtime pkg against build-cross/ { s = 1; print; next } s && /^      - / { exit } s' "$T/cj" > "$T/eq"
-  [ -s "$T/eq" ] || { echo "collect does not compare the Linux runtime pkg with build-cross's"; return 1; }
+  grep -qx '    needs: \[version, build, build-cross\]' "$T/cj" || { echo "collect does not need version, build and build-cross alone"; return 1; }
+  if grep -q 'linux-runtime\|swift-linux\|equivalence' "$T/cj"; then echo "collect waits for, or reads, the Linux runtime: the release's path does not"; return 1; fi
+  awk '/^  publish:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" | grep '^    needs:' > "$T/pn"
+  if grep -q 'equivalence\|linux-runtime' "$T/pn"; then echo "publish waits for the warn-only comparison"; return 1; fi
+  awk '/^  equivalence:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" > "$T/ej"
+  [ -s "$T/ej" ] || { echo "release.yml has no equivalence job"; return 1; }
+  grep -qx '    needs: \[version, build-cross, linux-runtime\]' "$T/ej" || { echo "equivalence does not need version, build-cross and linux-runtime"; return 1; }
+  grep -qxF "    if: \${{ !cancelled() && needs.build-cross.result == 'success' }}" "$T/ej" \
+    || { echo "equivalence does not run whatever linux-runtime did, once build-cross succeeded"; return 1; }
+  grep -qx '    runs-on: ubuntu-latest' "$T/ej" || { echo "equivalence does not run on Linux (build-equivalence.sh is host-agnostic)"; return 1; }
+  grep -qxF '          products: clang22@${{ steps.pins.outputs.clang22 }}' "$T/ej" && grep -qF 'clang22="$(cat components/clang22/version)"' "$T/ej" \
+    || { echo "equivalence does not install the pinned clang22 (its Mach-O readers)"; return 1; }
+  grep -q 'name: swift-cross, path: dist' "$T/ej" && grep -q 'name: swift-linux, path: linux-dist' "$T/ej" \
+    || { echo "equivalence does not download swift-cross and swift-linux"; return 1; }
+  awk '/^      - name: The Linux runtime pkg against build-cross/ { s = 1; print; next } s && /^      - / { exit } s' "$T/ej" > "$T/eq"
+  [ -s "$T/eq" ] || { echo "equivalence does not compare the Linux runtime pkg with build-cross's"; return 1; }
   grep -qF 'LINUX_RESULT: ${{ needs.linux-runtime.result }}' "$T/eq" && grep -q '::warning::' "$T/eq" \
-    || { echo "collect does not warn when linux-runtime did not succeed"; return 1; }
+    || { echo "equivalence does not warn when linux-runtime did not succeed"; return 1; }
   grep -qF 'sh scripts/equivalence-warnings.sh "$(ls dist/swift-runtime-[0-9]*.pkg)" "$(ls linux-dist/swift-runtime-[0-9]*.pkg)"' "$T/eq" \
-    || { echo "collect does not run build-equivalence (scripts/equivalence-warnings.sh) on build-cross's runtime pkg against linux-runtime's"; return 1; }
-  if grep -q 'exit 1\|build-equivalence\.sh' "$T/eq"; then echo "collect's comparison can fail the job"; return 1; fi
-  grep -q 'name: swift-linux, path: linux-dist' "$T/cj" || { echo "collect does not download swift-linux"; return 1; }
+    || { echo "equivalence does not run build-equivalence (scripts/equivalence-warnings.sh) on build-cross's runtime pkg against linux-runtime's"; return 1; }
+  if grep -q 'exit 1\|build-equivalence\.sh' "$T/eq"; then echo "the comparison can fail the job"; return 1; fi
 }
 linux "$W" > "$T/why" || fail "release.yml: $(cat "$T/why")"
-lin_mutant() { sed "$2" "$W" > "$T/mutant.yml"; if linux "$T/mutant.yml" > "$T/why"; then fail "accepted $1"; fi; echo "  refused $1: $(cat "$T/why")"; }
+lin_mutant() { sed "$2" "$W" > "$T/mutant.yml"; cmp -s "$W" "$T/mutant.yml" && fail "the mutant where $1 changed nothing"
+  if linux "$T/mutant.yml" > "$T/why"; then fail "accepted $1"; fi; echo "  refused $1: $(cat "$T/why")"; }
 lin_mutant "no linux-runtime job" 's/^  linux-runtime:$/  linux-gone:/'
-lin_mutant "a collect that skips when the Linux build failed" "s/^    if: \${{ !cancelled() \&\& needs.version.result == 'success'.*/    if: success()/"
-lin_mutant "a collect that fails on a difference" 's|\(sh scripts/equivalence-warnings.sh .*\)$|\1 \&\& exit 1|'
-lin_mutant "a collect that blocks on build-equivalence.sh" 's|sh scripts/equivalence-warnings.sh |sh "$SHIPYARD_SCRIPTS/build-equivalence.sh" |'
-lin_mutant "a collect with no Linux pkg" 's/name: swift-linux, path: linux-dist/name: swift-cross, path: linux-dist/'
+lin_mutant "a collect that waits for the Linux build" 's/^    needs: \[version, build, build-cross\]$/    needs: [version, build, build-cross, linux-runtime]/'
+lin_mutant "a publish that waits for the comparison" 's/^    needs: \[collect, scan, vm-test\]$/    needs: [collect, scan, vm-test, equivalence]/'
+lin_mutant "no equivalence job" 's/^  equivalence:$/  equivalence-gone:/'
+lin_mutant "an equivalence that skips when the Linux build failed" "s/^    if: \${{ !cancelled() \&\& needs.build-cross.result == 'success' }}\$/    if: success()/"
+lin_mutant "an equivalence on macOS" '/^  equivalence:$/,$ s/^    runs-on: ubuntu-latest$/    runs-on: macos-26/'
+lin_mutant "a comparison that fails on a difference" 's|\(sh scripts/equivalence-warnings.sh .*\)$|\1 \&\& exit 1|'
+lin_mutant "a comparison that blocks on build-equivalence.sh" 's|sh scripts/equivalence-warnings.sh |sh "$SHIPYARD_SCRIPTS/build-equivalence.sh" |'
+lin_mutant "a comparison with no Linux pkg" 's/name: swift-linux, path: linux-dist/name: swift-cross, path: linux-dist/'
 lin_mutant "a Linux build of another version" 's/^      version: \${{ needs.version.outputs.version }}$/      version: ""/'
 
 # macOS runners: every job on one declares why, and when it leaves.
@@ -161,7 +178,7 @@ macos() {
     case "$k" in mutant.yml:*) k="release.yml:${k#mutant.yml:}" ;; esac
     grep -q "^- macos-runner:$k: .*exit" "$T/devs" || { echo "$k runs on macOS with no '- macos-runner:$k: <reason, exit>' in INGREDIENTS.md"; return 1; }
   done < "$T/macjobs"
-  for x in "$REPO/.github/workflows/linux-runtime.yml" "$REPO/.github/workflows/linux-build.yml" "$REPO/.github/workflows/vm-test.yml"; do
+  for x in "$REPO/.github/workflows/linux-runtime.yml" "$REPO/.github/workflows/linux-build.yml"; do
     if grep -q '^ *runs-on:.*macos' "$x"; then echo "${x##*/} runs on macOS"; return 1; fi
   done
 }

@@ -5,7 +5,8 @@
 #   and turns each unexcused difference and each unused entry into a GitHub ::warning::, and a comparison it could
 #   not make (exit 2) into one more; it exits 0 whatever build-equivalence.sh said, since collect only warns for now.
 #   build-equivalence.sh is faked here: its output lines are "<level>TAB<path>TAB<excusing glob or ->", detail lines
-#   indented under an interface line, and "unused TAB - TAB <glob>".
+#   indented under an interface line, and "unused TAB - TAB <glob>" (build-equivalence.sh's own usage), and an
+#   exit 1 with no such line still becomes a warning.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d "${TMPDIR:-/tmp}/equivalence-warnings-test.XXXXXX")"
@@ -36,6 +37,13 @@ grep -q '  only in A: _x' "$T/got" || fail "the report itself was not printed"
 rc=0; SHIPYARD_SCRIPTS="$T/sy" sh "$S" a.pkg b.pkg > "$T/got" 2>&1 || rc=$?
 [ "$rc" -eq 0 ] && ! grep -q '::warning::' "$T/got" || fail "equivalent builds were warned about, or failed"
 
+# exit 1 with no line it can read as a difference: still a warning, never silence.
+printf 'bytes%sshare/doc/NOTICE%sshare/doc/*\n' "$TAB" "$TAB" > "$T/out"; fake 1
+rc=0; SHIPYARD_SCRIPTS="$T/sy" sh "$S" a.pkg b.pkg > "$T/got" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || fail "it exited $rc on an exit 1 it could not read"
+grep -qx '::warning::build-equivalence exited 1 (a difference or an unused entry) but printed none this script reads' "$T/got" \
+  || fail "an exit 1 with nothing parsed was not warned about: $(cat "$T/got")"
+
 fake 2
 rc=0; SHIPYARD_SCRIPTS="$T/sy" sh "$S" a.pkg b.pkg > "$T/got" 2>&1 || rc=$?
 [ "$rc" -eq 0 ] || fail "it exited $rc when the comparison could not be made"
@@ -43,4 +51,17 @@ grep -q '^::warning::build-equivalence could not compare' "$T/got" || fail "a co
 
 rc=0; SHIPYARD_SCRIPTS="$T/nowhere" sh "$S" a.pkg b.pkg > "$T/got" 2>&1 || rc=$?
 [ "$rc" -eq 0 ] && grep -q '^::warning::' "$T/got" || fail "no shipyard should warn, not fail"
-echo "PASS: equivalence-warnings"
+
+# The real build-equivalence.sh, when this host's shipyard has it: two staged trees, a file that differs and one
+# only in A, each a warning in the form above.
+REAL="$(. "$REPO/msc.sh" 2>/dev/null && echo "$SHIPYARD")" || REAL=""
+if [ -n "$REAL" ] && [ -f "$REAL/build-equivalence.sh" ]; then
+  mkdir -p "$T/a/share" "$T/b/share"; echo one > "$T/a/share/x.txt"; echo two > "$T/b/share/x.txt"; echo a > "$T/a/share/only.txt"
+  rc=0; SHIPYARD_SCRIPTS="$REAL" sh "$S" "$T/a" "$T/b" > "$T/got" 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] || fail "it exited $rc against the real build-equivalence.sh"
+  grep -qx '::warning::build-equivalence: bytes share/x.txt' "$T/got" && grep -qx '::warning::build-equivalence: only-a share/only.txt' "$T/got" \
+    || fail "the real build-equivalence.sh's differences were not each warned about: $(cat "$T/got")"
+  echo "PASS: equivalence-warnings (and against $REAL/build-equivalence.sh)"
+else
+  echo "PASS: equivalence-warnings (no build-equivalence.sh in this host's shipyard to check the real format against)"
+fi

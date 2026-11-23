@@ -3,8 +3,8 @@ name: linux-build
 # The runtime built on Linux, with no macOS runner: the Linux-hosted compiler (build-toolchain.sh --host linux, this
 # repo's compiler and llvm patches, its Swift half compiled by swift.org's Linux toolchain), then build.sh with it,
 # the runtime pkg with its updater and, when asked, the self-test bundle, uploaded as the artifact swift-linux.
-# linux-runtime.yml calls it on every push and gates that bundle on 10.9 (vm-test.yml, prebuilt); release.yml calls
-# it beside build-cross, and collect compares the two runtime pkgs. Nothing it builds ships.
+# linux-runtime.yml calls it on every push and gates that bundle on 10.9 (vm-test-prebuilt); release.yml calls it
+# beside build-cross, and its equivalence job compares the two runtime pkgs. Nothing it builds ships.
 #
 # The compiler is built only when something its build reads changes, and is cached under
 # swift-linux-compiler-<runner.os>-x86_64-<hash>: the hash is scripts/compiler-cache-inputs.sh's, over the scripts
@@ -25,7 +25,7 @@ on:
         type: string
         default: ''
       selftest:
-        description: "Build the self-test bundle too (vm-test.yml's prebuilt mode gates it)"
+        description: "Build the self-test bundle too (linux-runtime.yml's vm-test-prebuilt gates it)"
         type: boolean
         default: true
     outputs:
@@ -48,6 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       hit: ${{ steps.probe.outputs.cache-hit }}
+      hash: ${{ steps.inputs.outputs.hash }}
     steps:
       - uses: actions/checkout@v7
       - name: Install mavericks-shipyard
@@ -87,6 +88,17 @@ jobs:
         uses: Mavergreen/shipyard/.github/actions/install@v1
         with:
           products: clang22@${{ steps.pins.outputs.clang22 }}
+      # The probe's hash is the run's: a job whose shipyard hashes otherwise would build, or restore, a compiler the
+      # key it was looked up under does not describe.
+      - name: Hash what the compiler's build reads (compiler-probe's hash, or stop)
+        id: inputs
+        env:
+          PROBE_HASH: ${{ needs.compiler-probe.outputs.hash }}
+        run: |
+          sh scripts/compiler-cache-inputs.sh $COMPILER_BUILD
+          h="$(sh scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD)"
+          echo "hash=$h" >> "$GITHUB_OUTPUT"
+          [ "$h" = "$PROBE_HASH" ] || { echo "::error::the compiler's inputs hash to $h here but to $PROBE_HASH in compiler-probe (shipyard moved between jobs?); re-run all jobs"; exit 1; }
       - name: The Linux host's packages
         run: sudo apt-get update -qq && sudo apt-get install -y -qq uuid-dev pkg-config ninja-build ccache
       - name: Room for the build
@@ -123,6 +135,17 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install mavericks-shipyard
         uses: Mavergreen/shipyard/.github/actions/install@v1
+      # The probe's hash is the run's: a job whose shipyard hashes otherwise would build, or restore, a compiler the
+      # key it was looked up under does not describe.
+      - name: Hash what the compiler's build reads (compiler-probe's hash, or stop)
+        id: inputs
+        env:
+          PROBE_HASH: ${{ needs.compiler-probe.outputs.hash }}
+        run: |
+          sh scripts/compiler-cache-inputs.sh $COMPILER_BUILD
+          h="$(sh scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD)"
+          echo "hash=$h" >> "$GITHUB_OUTPUT"
+          [ "$h" = "$PROBE_HASH" ] || { echo "::error::the compiler's inputs hash to $h here but to $PROBE_HASH in compiler-probe (shipyard moved between jobs?); re-run all jobs"; exit 1; }
       - name: The Linux host's packages
         run: sudo apt-get update -qq && sudo apt-get install -y -qq uuid-dev pkg-config ninja-build ccache
       - name: Room for the build
@@ -193,12 +216,17 @@ jobs:
           echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
           echo "SWIFT_BUILD=$RUNNER_TEMP/mm-build/swift" >> "$GITHUB_ENV"
           echo "CCACHE_DIR=$RUNNER_TEMP/ccache" >> "$GITHUB_ENV"
-      - name: Hash what the compiler's build reads
+      # The probe's hash is the run's: a job whose shipyard hashes otherwise would build, or restore, a compiler the
+      # key it was looked up under does not describe.
+      - name: Hash what the compiler's build reads (compiler-probe's hash, or stop)
         id: inputs
+        env:
+          PROBE_HASH: ${{ needs.compiler-probe.outputs.hash }}
         run: |
           sh scripts/compiler-cache-inputs.sh $COMPILER_BUILD
           h="$(sh scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD)"
           echo "hash=$h" >> "$GITHUB_OUTPUT"
+          [ "$h" = "$PROBE_HASH" ] || { echo "::error::the compiler's inputs hash to $h here but to $PROBE_HASH in compiler-probe (shipyard moved between jobs?); re-run all jobs"; exit 1; }
       - name: Restore ccache (swift)
         uses: actions/cache/restore@v6
         with:
@@ -215,7 +243,11 @@ jobs:
           for a in linux-compiler-tools linux-compiler-llvm; do
             tar --zstd -xf "$RUNNER_TEMP/$a.tar.zst" -C "$SWIFT_BUILD" && rm "$RUNNER_TEMP/$a.tar.zst"
           done
-      # LLVM is built, so its ninja finds nothing to do; swift-frontend then builds and the prefix is staged.
+      # LLVM is built, so its ninja should find nothing to do: said here, so a rebuild across the handoff shows.
+      - name: Does LLVM's ninja have anything left to do?
+        run: |
+          # Only said, never a failure: build-toolchain.sh below decides what to build.
+          { ninja -C "$SWIFT_BUILD/work/llvm-linux" -n llvm-libraries clang-libraries clang-resource-headers lld clang dsymutil || echo "ninja -n exited $?"; } | tail -1
       - name: Build the Linux-hosted compiler (cmark, swift-frontend; its Swift half by the swift.org Linux seed)
         id: swift
         run: ./build-toolchain.sh --host linux
@@ -236,7 +268,7 @@ jobs:
             ${{ runner.temp }}/mm-build/swift/work/llvm-build/bin/lld
             ${{ runner.temp }}/mm-build/swift/work/llvm-build/bin/ld64.lld
             ${{ runner.temp }}/mm-build/swift/out/llvm
-          key: swift-linux-compiler-${{ runner.os }}-x86_64-${{ steps.inputs.outputs.hash }}
+          key: swift-linux-compiler-${{ runner.os }}-x86_64-${{ needs.compiler-probe.outputs.hash }}
 
   # The runtime, with the cached compiler: build.sh, the pkg with its updater, and the bundle when asked.
   runtime:
@@ -265,13 +297,17 @@ jobs:
         run: |
           echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
           echo "SWIFT_BUILD=$RUNNER_TEMP/mm-build/swift" >> "$GITHUB_ENV"
-      - name: Hash what the compiler's build reads
+      # The restore looks up this job's own hash, so it never takes a compiler its inputs do not describe; when that
+      # is not the probe's, it misses (shipyard moved since the probe), and the error says why: re-run all jobs.
+      - name: Hash what the compiler's build reads (and compare it with compiler-probe's)
         id: inputs
+        env:
+          PROBE_HASH: ${{ needs.compiler-probe.outputs.hash }}
         run: |
           sh scripts/compiler-cache-inputs.sh $COMPILER_BUILD
           h="$(sh scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD)"
           echo "hash=$h" >> "$GITHUB_OUTPUT"
-      # A miss here is a key that changed since this run built or found the compiler (shipyard moved): re-run all jobs.
+          [ "$h" = "$PROBE_HASH" ] || echo "::error::the compiler's inputs hash to $h here but to $PROBE_HASH in compiler-probe (shipyard moved between jobs?); the restore below looks up $h"
       - name: Restore the compiler
         uses: actions/cache/restore@v6
         with:

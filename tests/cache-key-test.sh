@@ -65,7 +65,7 @@ while IFS= read -r s; do
   done
 done < "$T/scripts"
 
-# What Task-by-task changes to the compiler build must keep covered, and shipyard's tables.
+# What the compiler build is known to read, and shipyard's tables.
 for l in repo/build-toolchain.sh repo/build-llvm.sh repo/build-builtins.sh repo/lib.sh repo/pins.env repo/msc.sh \
   repo/fetch-linux-seed.sh repo/fetch-clang22.sh repo/components/clang22/version repo/toolchain/clang.cfg \
   shipyard/fetch_clang22.sh shipyard/fetch_sdk.sh shipyard/sdk-pins.sh shipyard/stevedore.pin shipyard/product-names; do
