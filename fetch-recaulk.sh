@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- pkgutil expands Recaulk's installer
+# platform: host-agnostic -- shipyard's fetch_product_pkg.sh reads the pkg (stevedore); a Mac also reads the receipt
 #   usage: fetch-recaulk.sh
 #          Prints the prefix of Recaulk, the family's library of back-filled OS APIs (lib/librecaulk.a, from
 #          which build.sh links the definitions libswiftCore takes, and share/recaulk/notices.tsv, the
@@ -9,8 +9,9 @@
 #          carry, which build.sh's recaulk_subset admits), at pins.env's RECAULK_VERSION. An
 #          installed /usr/local/mavergreen/recaulk at that version is used as is; otherwise shipyard's
 #          fetch_product_pkg.sh downloads the release's .pkg, verifies it against that release's own
-#          SHA256SUMS, and unpacks it into ~/Library/Caches/mavergreen-recaulk without root. Everything
-#          but the prefix goes to stderr.
+#          SHA256SUMS, and unpacks it into ~/Library/Caches/mavergreen-recaulk (~/.cache/mavergreen-recaulk
+#          on Linux, where no pkg receipt says what is installed) without root. Everything but the prefix
+#          goes to stderr.
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/pins.env"
@@ -18,12 +19,20 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 PREFIX=/usr/local/mavergreen/recaulk
 ok() { [ -f "$1/lib/librecaulk.a" ] && [ -f "$1/share/recaulk/notices.tsv" ] && [ -f "$1/share/recaulk/image-local-shadows.txt" ]; }
 
-have="$(pkgutil --pkg-info dev.mavergreen.recaulk 2>/dev/null | sed -n 's/^version: //p')"
+have=""
+if [ "$(uname -s)" = Darwin ]; then
+  # platform: guarded macOS-only call -- the uname test above; a pkg receipt exists only on a Mac
+  have="$(pkgutil --pkg-info dev.mavergreen.recaulk 2>/dev/null | sed -n 's/^version: //p')"
+fi
 if [ "$have" = "$RECAULK_VERSION" ] && ok "$PREFIX"; then
   echo "$PREFIX"; exit 0
 fi
 
-CACHE="${MAVERGREEN_RECAULK_CACHE:-$HOME/Library/Caches/mavergreen-recaulk}"
+# platform: Linux keeps caches under XDG's cache home, as shipyard's fetchers do there.
+case "$(uname -s)" in
+  Linux) CACHE="${MAVERGREEN_RECAULK_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/mavergreen-recaulk}" ;;
+  *) CACHE="${MAVERGREEN_RECAULK_CACHE:-$HOME/Library/Caches/mavergreen-recaulk}" ;;
+esac
 D="$CACHE/$RECAULK_VERSION/recaulk"
 if ! ok "$D"; then
   mkdir -p "$(dirname "$D")"

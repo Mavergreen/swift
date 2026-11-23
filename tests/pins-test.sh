@@ -41,6 +41,12 @@ printf '%s' "${16}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-mavericks\.[0-9]+$' || f
 printf '%s\n%s\n' "$(printf '%s' "${16}" | sed 's/-mavericks\./ /; s/\./ /g')" "22 1 8 5" \
   | awk 'NR == 1 { split($0, h, " ") } NR == 2 { split($0, m, " "); for (i = 1; i <= 4; i++) { if (h[i] + 0 > m[i] + 0) exit 0; if (h[i] + 0 < m[i] + 0) exit 1 } exit 0 }' \
   || fail "CLANG22_VERSION '${16}' is older than 22.1.8-mavericks.5, the first libcxx22 on the OS's own libc++abi"
+# platform: shipyard's fetch_clang22.sh, which gives Linux its clang22, reads the release from a pin directory,
+#           components/clang22/version; one Renovate PR moves it and CLANG22_VERSION together.
+[ "$(cat "$REPO/components/clang22/version" 2>/dev/null)" = "${16}" ] \
+  || fail "components/clang22/version is not CLANG22_VERSION '${16}'"
+grep -q '"/^components/clang22/version\$/"' "$REPO/.github/renovate.json" \
+  || fail "no Renovate manager moves components/clang22/version with CLANG22_VERSION"
 for h in "${17}" "${18}" "${19}"; do
   printf '%s' "$h" | grep -Eq '^[0-9a-f]{64}$' || fail "a *_TARBALL_SHA256 pin '$h' is not a SHA-256 (scripts/pin-source-tarballs.sh writes them)"
 done

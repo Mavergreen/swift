@@ -400,10 +400,12 @@ jobs:
 
       # The pkg this release ships, unpacked as lib.sh's pkg_extract_product lays it out: the compiler
       # that compiles this toolchain's Swift half, and the stdlib and builtins this toolchain stages.
-      # scripts/outdir.sh first: pkg_extract_product refuses to rm -rf its out-dir without its guard.
+      # scripts/outdir.sh first: pkg_extract_product refuses to rm -rf its out-dir without its guard;
+      # msc.sh for shipyard's stevedore, which reads the pkg.
       - name: Unpack the same run's cross toolchain
         run: |
           . ./scripts/outdir.sh
+          . ./msc.sh
           . ./lib.sh
           X="$(pkg_extract_product "$(ls "$RUNNER_TEMP"/cross-dist/swift-toolchain-cross-*.pkg)" swift-toolchain-cross "$RUNNER_TEMP/cross-toolchain")"
           "$X/bin/swift-frontend" -version

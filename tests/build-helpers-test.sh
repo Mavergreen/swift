@@ -7,7 +7,10 @@
 #   what it cannot use before it removes anything. apple_probe_answers must answer CMake's and LLVM's Apple
 #   probes (tapi, strip, ld64) without xcrun or a Command Line Tools name, and HOST_LINK_VERSION be 10.9's ld64.
 #   source_stamp must name each source tree's commit, so a build dir stamped with it starts afresh when
-#   another commit's tarball is extracted, and is kept when the same one is.
+#   another commit's tarball is extracted, and is kept when the same one is. clang22_prefix must require
+#   llvm-libtool-darwin on a Mac and not on Linux (a faked uname), whose clang22 archive has none, and
+#   fetch-clang22.sh on Linux must hand shipyard's fetch_clang22.sh the repo's components/clang22, refusing
+#   one whose version is not pins.env's CLANG22_VERSION, and run no pkgutil.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -270,4 +273,47 @@ if ( SWIFT_HOST_TOOLCHAIN_VERSION=6.3.3-mavericks.6; release ); then fail "accep
 receipt dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
 if ( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.8; release ); then fail "accepted a declaration the receipt contradicts"; fi
 ( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.7; release ) || fail "refused a declaration the receipt agrees with"
+echo "-- clang22_prefix: llvm-libtool-darwin required on a Mac, not on Linux (clang22's Linux archive has none)"
+mkdir -p "$T/unamebin"
+printf '#!/bin/sh\nif [ -n "${FAKE_UNAME:-}" ] && [ "$1" = -s ]; then echo "$FAKE_UNAME"; else exec /usr/bin/uname "$@"; fi\n' > "$T/unamebin/uname"
+chmod +x "$T/unamebin/uname"
+C="$T/c22"; mkdir -p "$C/bin"
+for t in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-lipo llvm-nm llvm-otool llvm-strings; do
+  printf '#!/bin/sh\n' > "$C/bin/$t"; chmod +x "$C/bin/$t"
+done
+mkdir -p "$T/c22repo"; printf '#!/bin/sh\necho "%s"\n' "$C" > "$T/c22repo/fetch-clang22.sh"
+on() { _h="$1"; shift; ( PATH="$T/unamebin:$PATH"; FAKE_UNAME="$_h"; export FAKE_UNAME; "$@" ); }
+[ "$(on Linux clang22_prefix cross "$T/c22repo" 2> "$T/err")" = "$C" ] || fail "Linux: refused a clang22 without llvm-libtool-darwin: $(cat "$T/err")"
+if on Darwin clang22_prefix cross "$T/c22repo" > /dev/null 2> "$T/err"; then fail "Darwin: accepted a clang22 without llvm-libtool-darwin"; fi
+grep -q "no $C/bin/llvm-libtool-darwin" "$T/err" || fail "Darwin: did not name llvm-libtool-darwin: $(cat "$T/err")"
+for t in llvm-ar llvm-otool; do
+  mv "$C/bin/$t" "$T/$t.away"
+  if on Linux clang22_prefix cross "$T/c22repo" > /dev/null 2> "$T/err"; then fail "Linux: accepted a clang22 without $t"; fi
+  grep -q "no $C/bin/$t" "$T/err" || fail "Linux: did not name $t: $(cat "$T/err")"
+  mv "$T/$t.away" "$C/bin/$t"
+done
+
+echo "-- fetch-clang22.sh on Linux: shipyard's fetch_clang22.sh, given the repo's components/clang22; no pkgutil"
+. "$REPO/pins.env"
+R="$T/fc22"; mkdir -p "$R/components/clang22" "$T/fc22-shipyard" "$T/fc22bin"
+cp "$REPO/fetch-clang22.sh" "$REPO/pins.env" "$REPO/msc.sh" "$R/"
+cp "$REPO/components/clang22/version" "$R/components/clang22/version"
+printf '#!/bin/sh\necho "fetch_clang22.sh $*" >> "%s/fc22.log"\necho "%s"\n' "$T" "$C" > "$T/fc22-shipyard/fetch_clang22.sh"
+: > "$T/fc22-shipyard/install-products.sh"
+printf '#!/bin/sh\necho "pkgutil $*" >> "%s/fc22.log"\nexit 1\n' "$T" > "$T/fc22bin/pkgutil"; chmod +x "$T/fc22bin/pkgutil"
+fc22() { ( PATH="$T/fc22bin:$T/unamebin:$PATH"; FAKE_UNAME=Linux SHIPYARD_SCRIPTS="$T/fc22-shipyard"; export FAKE_UNAME SHIPYARD_SCRIPTS
+           sh "$R/fetch-clang22.sh" ) > "$T/out" 2> "$T/err"; }
+: > "$T/fc22.log"
+fc22 || fail "fetch-clang22.sh failed on Linux: $(cat "$T/err")"
+[ "$(cat "$T/out")" = "$C" ] || fail "printed '$(cat "$T/out")', not fetch_clang22.sh's prefix"
+[ "$(cat "$T/fc22.log")" = "fetch_clang22.sh $R/components/clang22" ] || fail "ran: $(cat "$T/fc22.log")"
+[ "$(cat "$R/components/clang22/version")" = "$CLANG22_VERSION" ] || fail "the repo's components/clang22/version is not pins.env's CLANG22_VERSION"
+echo 22.1.8-mavericks.1 > "$R/components/clang22/version"
+if fc22; then fail "accepted a components/clang22/version that is not CLANG22_VERSION"; fi
+grep -q "22.1.8-mavericks.1" "$T/err" && grep -q "$CLANG22_VERSION" "$T/err" || fail "did not name both versions: $(cat "$T/err")"
+cp "$REPO/components/clang22/version" "$R/components/clang22/version"
+rm "$T/fc22-shipyard/install-products.sh"
+if fc22; then fail "used a shipyard whose fetch_clang22.sh predates the products: prefix"; fi
+grep -q 'shipyard' "$T/err" || fail "did not name shipyard: $(cat "$T/err")"
+if grep -q '^pkgutil' "$T/fc22.log"; then fail "ran pkgutil on Linux: $(grep '^pkgutil' "$T/fc22.log")"; fi
 echo "PASS"

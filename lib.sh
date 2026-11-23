@@ -1,5 +1,6 @@
 #!/bin/sh
-# platform: macOS-only -- runs pkgutil
+# platform: macOS-only -- host_toolchain_release reads a pkg receipt with pkgutil; the swift.org installer's
+#           check and expansion run pkgutil on a Mac alone; every other helper runs on a Mac and on Linux
 # lib.sh — the build root and the swift.org installer check, shared by every build script (sourced
 # after pins.env, which supplies TOOLCHAIN_SIGNER), and the helpers build.sh builds the runtime with on
 # either host (the dirs it hands the compilers, the prefix maps, the preflight's Mach-O readers). One
@@ -26,6 +27,7 @@ SWIFT_BUILD="$MAVERICKS_BUILD_ROOT/swift"
 # needs no human to paste a hash. Records the observed digest for provenance.
 verify_toolchain_signature() {
   _pkg="$1"
+  # platform: guarded macOS-only call -- only mirror-toolchain.sh and build.sh's swift.org branch call it, both macOS-only
   pkgutil --check-signature "$_pkg" > "$_pkg.sigcheck" 2>&1 || {
     echo "FAIL: $_pkg is not a validly signed installer" >&2; cat "$_pkg.sigcheck" >&2; return 1; }
   grep -Fq "$TOOLCHAIN_SIGNER" "$_pkg.sigcheck" || {
@@ -50,6 +52,7 @@ expand_toolchain() {
     return 0
   fi
   rm -rf "$2" "$2.x" "$_rec"
+  # platform: guarded macOS-only call -- only build.sh's swift.org branch calls it, after verify_toolchain_signature
   pkgutil --expand "$1" "$2.x" || return 1
   _payload="$(find "$2.x" -name Payload | head -1)"
   [ -n "$_payload" ] || { echo "expand_toolchain: $1 has no payload" >&2; return 1; }
@@ -766,14 +769,23 @@ toolchain_digests_agree() {
 # take from it is not there: clang, clang++ and ld64.lld, and llvm-ar, llvm-ranlib, llvm-libtool-darwin,
 # llvm-lipo and llvm-nm -- one archiver, one indexer and one reader on both hosts, so the archives the
 # build makes, and what links them, are the same bytes on both -- and llvm-otool
-# and llvm-strings, the readers the build's checks run in place of the Command Line Tools' (T5a).
+# and llvm-strings, the readers the build's checks run in place of the Command Line Tools' (T5a). On
+# Linux, cross mode's clang22 is its Linux archive (fetch-clang22.sh), which the list below fits.
 clang22_prefix() {
   case "$1" in
     cross) _cp="$(sh "$2/fetch-clang22.sh")" || { echo "clang22_prefix: $2/fetch-clang22.sh failed" >&2; return 1; } ;;
     native) _cp="${CLANG22_PREFIX:-/usr/local/mavergreen/clang22}" ;;
     *) echo "clang22_prefix: the mode is cross or native, not '$1'" >&2; return 2 ;;
   esac
-  for _ct in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-nm llvm-otool llvm-strings; do
+  _ct_all="clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-lipo llvm-nm llvm-otool llvm-strings"
+  case "$(uname -s)" in
+    # platform: clang22's Linux archive ships no llvm-libtool-darwin (shipyard asked clang-22 to add it,
+    #           2026-11-22); build-builtins.sh archives with llvm-ar there, whose archives are
+    #           llvm-libtool-darwin's bytes.
+    Linux) ;;
+    *) _ct_all="$_ct_all llvm-libtool-darwin" ;;
+  esac
+  for _ct in $_ct_all; do
     [ -x "$_cp/bin/$_ct" ] || { echo "clang22_prefix: no $_cp/bin/$_ct (mavericks-clang-22's $1 package provides it)" >&2; return 1; }
   done
   printf '%s\n' "$_cp"
@@ -960,26 +972,32 @@ TCEOF
 # pkg_extract_product <pkg> <product> <dir> -- extracts, into <dir> (replaced), the payload of the one
 # component of the product archive <pkg> that installs /usr/local/mavergreen/<product>, and prints that
 # prefix, <dir>/usr/local/mavergreen/<product>; the rest of the payload (an updater under Library/, the
-# family's base component) is left out. pkgutil --expand and ditto, so it runs on a modern Mac and on OS X
-# 10.9 alike (10.9's pkgutil has no --expand-full). Fails when no component installs that prefix, or more
-# than one does. <dir> is rm -rf'd first, so it is refused when relative, when it is $HOME, and when
-# scripts/outdir.sh's refuse_root_outdir (which the caller has sourced) refuses it: / by any name.
+# family's base component) is left out. shipyard's stevedore (fetch_stevedore.sh) expands the archive and
+# gzip and cpio unpack each payload, as shipyard's fetch_product_pkg.sh does, so it runs on a modern Mac,
+# on OS X 10.9 and on Linux alike. Needs $SHIPYARD (msc.sh). Fails when no component installs that
+# prefix, or more than one does. <dir> is rm -rf'd first, so it is refused when relative, when it is
+# $HOME, and when scripts/outdir.sh's refuse_root_outdir (which the caller has sourced) refuses it: / by
+# any name.
 pkg_extract_product() {
   case "$3" in /*) ;; *) echo "pkg_extract_product: '$3' is not an absolute path" >&2; return 1 ;; esac
   command -v refuse_root_outdir > /dev/null 2>&1 \
     || { echo "pkg_extract_product: source scripts/outdir.sh first (refuse_root_outdir guards the rm -rf of $3)" >&2; return 1; }
+  [ -n "${SHIPYARD:-}" ] && [ -f "$SHIPYARD/fetch_stevedore.sh" ] \
+    || { echo "pkg_extract_product: source msc.sh first (shipyard's fetch_stevedore.sh gives the stevedore that reads $1)" >&2; return 1; }
   ( refuse_root_outdir pkg_extract_product "$3" ) || return 1
   if [ -d "$3" ] && [ "$(CDPATH='' cd -P -- "$3" && pwd -P)" = "$(CDPATH='' cd -P -- "$HOME" && pwd -P)" ]; then
     echo "pkg_extract_product: refusing out-dir '$3' (it is \$HOME)" >&2; return 1
   fi
   [ -f "$1" ] || { echo "pkg_extract_product: no $1" >&2; return 1; }
+  _pe_sd="$(sh "$SHIPYARD/fetch_stevedore.sh")" || { echo "pkg_extract_product: shipyard's fetch_stevedore.sh gave no stevedore" >&2; return 1; }
   rm -rf "$3" "$3.x" && mkdir -p "$3/usr/local/mavergreen" "$3.x" || return 1
-  pkgutil --expand "$1" "$3.x/pkg" || { echo "pkg_extract_product: pkgutil could not expand $1" >&2; return 1; }
+  "$_pe_sd" expand "$1" "$3.x/pkg" >&2 || { echo "pkg_extract_product: stevedore could not expand $1" >&2; return 1; }
   _pe_n=0; _pe_hit=""
   for _pe_p in "$3.x"/pkg/*/Payload "$3.x"/pkg/Payload; do
     [ -f "$_pe_p" ] || continue
     _pe_n=$((_pe_n + 1)); _pe_t="$3.x/c$_pe_n"
-    mkdir -p "$_pe_t" && ditto -x -z "$_pe_p" "$_pe_t" || { echo "pkg_extract_product: could not extract $_pe_p" >&2; return 1; }
+    mkdir -p "$_pe_t" && ( cd "$_pe_t" && gzip -dc "$_pe_p" | cpio -id --quiet ) \
+      || { echo "pkg_extract_product: could not extract $_pe_p" >&2; return 1; }
     if [ -d "$_pe_t/usr/local/mavergreen/$2" ]; then
       [ -z "$_pe_hit" ] || { echo "pkg_extract_product: more than one component of $1 installs /usr/local/mavergreen/$2" >&2; return 1; }
       _pe_hit="$_pe_t"

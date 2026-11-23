@@ -57,6 +57,16 @@
       "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
     },
     {
+      "description": "The same clang-22 release as CLANG22_VERSION, in the pin directory shipyard's fetch_clang22.sh reads (components/clang22/version): on Linux it gives the runtime build clang22's Linux archive, or install@v1's products: install of it, verified against the release's SHA256SUMS. Same dependency, so the one Renovate branch moves both files; tests/pins-test.sh fails when they differ.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^components/clang22/version$/"],
+      "matchStrings": ["^(?<currentValue>\\S+)\\s*$"],
+      "depNameTemplate": "Mavergreen/clang-22",
+      "packageNameTemplate": "Mavergreen/clang-22",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
+    },
+    {
       "description": "Recaulk, whose librecaulk.a supplies the few post-10.9 APIs build.sh's RECAULK_RUNTIME_SYMBOLS names, linked statically into libswiftCore. The whole pin is the version: fetch-recaulk.sh verifies the pkg against that release's own SHA256SUMS. Recaulk tags YYYYMMDD.N; the versioning regex reads N as the build, so two releases on one day order.",
       "customType": "regex",
       "managerFilePatterns": ["/^pins\\.env$/"],
