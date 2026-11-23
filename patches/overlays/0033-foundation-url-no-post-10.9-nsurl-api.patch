@@ -1,0 +1,138 @@
+--- stdlib/public/Darwin/Foundation/URL.swift
++++ stdlib/public/Darwin/Foundation/URL.swift
+@@ -545,22 +545,9 @@
+         _url = URL._converted(from: inner)
+     }
+     
+-    /// Initializes a newly created file URL referencing the local file or directory at path, relative to a base URL.
+-    ///
+-    /// If an empty string is used for the path, then the path is assumed to be ".".
+-    /// - note: This function avoids an extra file system access to check if the file URL is a directory. You should use it if you know the answer already.
+-    @available(macOS 10.11, iOS 9.0, *)
+-    public init(fileURLWithPath path: __shared String, isDirectory: Bool, relativeTo base: __shared URL?) {
+-        _url = URL._converted(from: NSURL(fileURLWithPath: path.isEmpty ? "." : path, isDirectory: isDirectory, relativeTo: base))
+-    }
+-    
+-    /// Initializes a newly created file URL referencing the local file or directory at path, relative to a base URL.
+-    ///
+-    /// If an empty string is used for the path, then the path is assumed to be ".".
+-    @available(macOS 10.11, iOS 9.0, *)
+-    public init(fileURLWithPath path: __shared String, relativeTo base: __shared URL?) {
+-        _url = URL._converted(from: NSURL(fileURLWithPath: path.isEmpty ? "." : path, relativeTo: base))
+-    }
++    // Mavericks: no init(fileURLWithPath:isDirectory:relativeTo:) or init(fileURLWithPath:relativeTo:): NSURL's
++    // fileURLWithPath:isDirectory:relativeToURL: and fileURLWithPath:relativeToURL: are 10.11, which the 10.9 SDK does not
++    // declare; a Recaulk declaration of them would restore these
+     
+     /// Initializes a newly created file URL referencing the local file or directory at path.
+     ///
+@@ -577,19 +564,9 @@
+         _url = URL._converted(from: NSURL(fileURLWithPath: path.isEmpty ? "." : path))
+     }
+     
+-    /// Initializes a newly created URL using the contents of the given data, relative to a base URL.
+-    ///
+-    /// If the data representation is not a legal URL string as ASCII bytes, the URL object may not behave as expected. If the URL cannot be formed then this will return nil.
+-    @available(macOS 10.11, iOS 9.0, *)
+-    public init?(dataRepresentation: __shared Data, relativeTo url: __shared URL?, isAbsolute: Bool = false) {
+-        guard !dataRepresentation.isEmpty else { return nil }
+-        
+-        if isAbsolute {
+-            _url = URL._converted(from: NSURL(absoluteURLWithDataRepresentation: dataRepresentation, relativeTo: url))
+-        } else {
+-            _url = URL._converted(from: NSURL(dataRepresentation: dataRepresentation, relativeTo: url))
+-        }
+-    }
++    // Mavericks: no init?(dataRepresentation:relativeTo:isAbsolute:): NSURL's URLWithDataRepresentation:relativeToURL: and
++    // absoluteURLWithDataRepresentation:relativeToURL: are 10.11, which the 10.9 SDK does not declare; a Recaulk declaration
++    // of them would restore it
+ 
+     /// Initializes a URL that refers to a location specified by resolving bookmark data.
+     @available(swift, obsoleted: 4.2)
+@@ -607,11 +584,8 @@
+         bookmarkDataIsStale = stale.boolValue
+     }
+     
+-    /// Creates and initializes an NSURL that refers to the location specified by resolving the alias file at url. If the url argument does not refer to an alias file as defined by the NSURLIsAliasFileKey property, the NSURL returned is the same as url argument. This method fails and returns nil if the url argument is unreachable, or if the original file or directory could not be located or is not reachable, or if the original file or directory is on a volume that could not be located or mounted. The URLBookmarkResolutionWithSecurityScope option is not supported by this method.
+-    @available(macOS 10.10, iOS 8.0, *)
+-    public init(resolvingAliasFileAt url: __shared URL, options: BookmarkResolutionOptions = []) throws {
+-        self.init(reference: try NSURL(resolvingAliasFileAt: url, options: options))
+-    }
++    // Mavericks: no init(resolvingAliasFileAt:options:): NSURL's URLByResolvingAliasFileAtURL:options:error: is 10.10, which the
++    // 10.9 SDK does not declare; a Recaulk declaration of it would restore this
+ 
+     /// Initializes a newly created URL referencing the local file or directory at the file system representation of the path. File system representation is a null-terminated C string with canonical UTF-8 encoding.
+     public init(fileURLWithFileSystemRepresentation path: UnsafePointer<Int8>, isDirectory: Bool, relativeTo baseURL: __shared URL?) {
+@@ -624,13 +598,8 @@
+ 
+     // MARK: -
+     
+-    /// Returns the data representation of the URL's relativeString. 
+-    ///
+-    /// If the URL was initialized with `init?(dataRepresentation:relativeTo:isAbsolute:)`, the data representation returned are the same bytes as those used at initialization; otherwise, the data representation returned are the bytes of the `relativeString` encoded with UTF8 string encoding.
+-    @available(macOS 10.11, iOS 9.0, *)
+-    public var dataRepresentation: Data {
+-        return _url.dataRepresentation
+-    }
++    // Mavericks: no dataRepresentation: NSURL's is 10.11, which the 10.9 SDK does not declare; a Recaulk declaration of it
++    // would restore this
+     
+     // MARK: -
+     
+@@ -782,7 +751,8 @@
+     /// Returns true if the URL path represents a directory.
+     @available(macOS 10.11, iOS 9.0, *)
+     public var hasDirectoryPath: Bool {
+-        return _url.hasDirectoryPath
++        // Mavericks: CFURLHasDirectoryPath (10.0), what NSURL's hasDirectoryPath (10.11, which the 10.9 SDK does not declare) answers
++        return CFURLHasDirectoryPath(unsafeBitCast(_url, to: CFURL.self))
+     }
+     
+     /// Passes the URL's path in file system representation to `block`. 
+@@ -991,19 +961,8 @@
+         }
+     }
+     
+-    /// Returns whether the promised item URL's resource exists and is reachable.
+-    ///
+-    /// This method synchronously checks if the resource's backing store is reachable. Checking reachability is appropriate when making decisions that do not require other immediate operations on the resource, e.g. periodic maintenance of UI state that depends on the existence of a specific document. When performing operations such as opening a file or copying resource properties, it is more efficient to simply try the operation and handle failures. This method is currently applicable only to URLs for file system resources. For other URL types, `false` is returned.
+-    @available(macOS 10.10, iOS 8.0, *)
+-    public func checkPromisedItemIsReachable() throws -> Bool {
+-        var error : NSError?
+-        let result = _url.checkPromisedItemIsReachableAndReturnError(&error)
+-        if let e = error {
+-            throw e
+-        } else {
+-            return result
+-        }
+-    }
++    // Mavericks: no checkPromisedItemIsReachable(): NSURL's checkPromisedItemIsReachableAndReturnError: is 10.10, which the 10.9
++    // SDK does not declare; a Recaulk declaration of it would restore this
+     
+     // MARK: - Resource Values
+     
+@@ -1050,22 +1009,8 @@
+         _url.removeCachedResourceValue(forKey: key)
+     }
+     
+-    /// Get resource values from URLs of 'promised' items.
+-    ///
+-    /// A promised item is not guaranteed to have its contents in the file system until you use `FileCoordinator` to perform a coordinated read on its URL, which causes the contents to be downloaded or otherwise generated. Promised item URLs are returned by various APIs, including currently:
+-    ///     NSMetadataQueryUbiquitousDataScope
+-    ///     NSMetadataQueryUbiquitousDocumentsScope
+-    ///     A `FilePresenter` presenting the contents of the directory located by -URLForUbiquitousContainerIdentifier: or a subdirectory thereof
+-    ///
+-    /// The following methods behave identically to their similarly named methods above (`func resourceValues(forKeys:)`, etc.), except that they allow you to get resource values and check for presence regardless of whether the promised item's contents currently exist at the URL. You must use these APIs instead of the normal URL resource value APIs if and only if any of the following are true:
+-    ///     You are using a URL that you know came directly from one of the above APIs
+-    ///     You are inside the accessor block of a coordinated read or write that used NSFileCoordinatorReadingImmediatelyAvailableMetadataOnly, NSFileCoordinatorWritingForDeleting, NSFileCoordinatorWritingForMoving, or NSFileCoordinatorWritingContentIndependentMetadataOnly
+-    ///
+-    /// Most of the URL resource value keys will work with these APIs. However, there are some that are tied to the item's contents that will not work, such as `contentAccessDateKey` or `generationIdentifierKey`. If one of these keys is used, the method will return a `URLResourceValues` value, but the value for that property will be nil.
+-    @available(macOS 10.10, iOS 8.0, *)
+-    public func promisedItemResourceValues(forKeys keys: Set<URLResourceKey>) throws -> URLResourceValues {
+-        return URLResourceValues(keys: keys, values: try _url.promisedItemResourceValues(forKeys: Array(keys)))
+-    }
++    // Mavericks: no promisedItemResourceValues(forKeys:): NSURL's promisedItemResourceValuesForKeys:error: is 10.10, which the
++    // 10.9 SDK does not declare; a Recaulk declaration of it would restore this
+     
+     @available(*, unavailable, message: "Use struct URLResourceValues and URL.setResourceValues(_:) instead")
+     public func setResourceValue(_ value: AnyObject?, forKey key: URLResourceKey) throws {

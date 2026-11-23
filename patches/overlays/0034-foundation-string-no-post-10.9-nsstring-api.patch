@@ -1,0 +1,104 @@
+--- stdlib/public/Darwin/Foundation/NSStringAPI.swift
++++ stdlib/public/Darwin/Foundation/NSStringAPI.swift
+@@ -573,10 +573,7 @@
+ 
+   /// A capitalized representation of the string that is produced
+   /// using the current locale.
+-  @available(macOS 10.11, iOS 9.0, *)
+-  public var localizedCapitalized: String {
+-    return _ns.localizedCapitalized
+-  }
++  // Mavericks: no localizedCapitalized: NSString's localizedCapitalizedString is 10.11, which the 10.9 SDK does not declare; a Recaulk declaration of it would restore this
+ 
+   // - (NSString *)capitalizedStringWithLocale:(Locale *)locale
+ 
+@@ -924,10 +921,7 @@
+ 
+   /// A lowercase version of the string that is produced using the current
+   /// locale.
+-  @available(macOS 10.11, iOS 9.0, *)
+-  public var localizedLowercase: String {
+-    return _ns.localizedLowercase
+-  }
++  // Mavericks: no localizedLowercase: NSString's localizedLowercaseString is 10.11, which the 10.9 SDK does not declare; a Recaulk declaration of it would restore this
+ 
+   // - (NSString *)lowercaseStringWithLocale:(Locale *)locale
+ 
+@@ -989,12 +983,7 @@
+   /// similar to how searches are done generally in the system.  The search is
+   /// locale-aware, case and diacritic insensitive.  The exact list of search
+   /// options applied may change over time.
+-  @available(macOS 10.11, iOS 9.0, *)
+-  public func localizedStandardContains<
+-    T : StringProtocol
+-  >(_ string: T) -> Bool {
+-    return _ns.localizedStandardContains(string._ephemeralString)
+-  }
++  // Mavericks: no localizedStandardContains(_:): NSString's localizedStandardContainsString: is 10.11, which the 10.9 SDK does not declare; a Recaulk declaration of it would restore this
+ 
+   // @property NSStringEncoding smallestEncoding;
+ 
+@@ -1164,10 +1153,7 @@
+ 
+   /// An uppercase version of the string that is produced using the current
+   /// locale.
+-  @available(macOS 10.11, iOS 9.0, *)
+-  public var localizedUppercase: String {
+-    return _ns.localizedUppercase
+-  }
++  // Mavericks: no localizedUppercase: NSString's localizedUppercaseString is 10.11, which the 10.9 SDK does not declare; a Recaulk declaration of it would restore this
+ 
+   // - (NSString *)uppercaseStringWithLocale:(Locale *)locale
+ 
+@@ -1221,12 +1207,7 @@
+ 
+ #if !DEPLOYMENT_RUNTIME_SWIFT
+   /// Perform string transliteration.
+-  @available(macOS 10.11, iOS 9.0, *)
+-  public func applyingTransform(
+-    _ transform: StringTransform, reverse: Bool
+-  ) -> String? {
+-    return _ns.applyingTransform(transform, reverse: reverse)
+-  }
++  // Mavericks: no applyingTransform(_:reverse:): NSString's stringByApplyingTransform:reverse: is 10.11, which the 10.9 SDK does not declare; a Recaulk declaration of it would restore this
+ 
+   // - (void)
+   //     enumerateLinguisticTagsInRange:(NSRange)range
+@@ -1640,13 +1621,7 @@
+   /// similar to how searches are done generally in the system.  The search is
+   /// locale-aware, case and diacritic insensitive.  The exact list of search
+   /// options applied may change over time.
+-  @available(macOS 10.11, iOS 9.0, *)
+-  public func localizedStandardRange<
+-    T : StringProtocol
+-  >(of string: T) -> Range<Index>? {
+-    return _optionalRange(
+-      _ns.localizedStandardRange(of: string._ephemeralString))
+-  }
++  // Mavericks: no localizedStandardRange(of:): NSString's localizedStandardRangeOfString: is 10.11, which the 10.9 SDK does not declare; a Recaulk declaration of it would restore this
+ 
+ #if !DEPLOYMENT_RUNTIME_SWIFT
+   // - (NSString *)
+@@ -1674,9 +1649,7 @@
+   /// Equivalent to `self.range(of: other) != nil`
+   public func contains<T : StringProtocol>(_ other: T) -> Bool {
+     let r = self.range(of: other) != nil
+-    if #available(macOS 10.10, iOS 8.0, *) {
+-      assert(r == _ns.contains(other._ephemeralString))
+-    }
++    // Mavericks: no assertion against NSString's containsString: (10.10, which the 10.9 SDK does not declare)
+     return r
+   }
+ 
+@@ -1697,10 +1670,7 @@
+     let r = self.range(
+       of: other, options: .caseInsensitive, locale: Locale.current
+     ) != nil
+-    if #available(macOS 10.10, iOS 8.0, *) {
+-      assert(r ==
+-        _ns.localizedCaseInsensitiveContains(other._ephemeralString))
+-    }
++    // Mavericks: no assertion against NSString's localizedCaseInsensitiveContainsString: (10.10, which the 10.9 SDK does not declare)
+     return r
+   }
+ }

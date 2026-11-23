@@ -1,0 +1,55 @@
+--- apinotes/CoreGraphics.apinotes
++++ apinotes/CoreGraphics.apinotes
+@@ -145,6 +145,10 @@
+ - Name: CGColorGetComponents
+   SwiftName: getter:CGColor.__unsafeComponents(self:)
+   SwiftPrivate: true
++# Mavericks: the getters CoreGraphics.swift reads, named as Apple's later SDK names them (10.9's headers carry no
++# CF_SWIFT_NAME, and this compiler infers no member names)
++- Name: CGColorGetNumberOfComponents
++  SwiftName: getter:CGColor.numberOfComponents(self:)
+ 
+ 
+ # CGColorSpace
+@@ -164,6 +168,13 @@
+   SwiftName: getter:CGColorSpace.isWideGamutRGB(self:)
+ - Name: CGColorSpaceSupportsOutput
+   SwiftName: getter:CGColorSpace.supportsOutput(self:)
++# Mavericks: as for CGColorGetNumberOfComponents, above
++- Name: CGColorSpaceGetModel
++  SwiftName: getter:CGColorSpace.model(self:)
++- Name: CGColorSpaceGetBaseColorSpace
++  SwiftName: getter:CGColorSpace.baseColorSpace(self:)
++- Name: CGColorSpaceGetNumberOfComponents
++  SwiftName: getter:CGColorSpace.numberOfComponents(self:)
+ # These are hidden so we can improve them further in the SDK overlay
+ - Name: CGColorSpaceGetColorTableCount
+   # merged count and pointer to single array property
+@@ -640,6 +651,27 @@
+   SwiftName: CGMutablePath.__addPath(self:transform:path:)
+   SwiftPrivate: true
+ 
++# CGRect
++#
++# Mavericks: as for CGColorGetNumberOfComponents, above: the edges, centre and extent CoreGraphics.swift's minX and
++# minY name, and their siblings
++- Name: CGRectGetMinX
++  SwiftName: getter:CGRect.minX(self:)
++- Name: CGRectGetMidX
++  SwiftName: getter:CGRect.midX(self:)
++- Name: CGRectGetMaxX
++  SwiftName: getter:CGRect.maxX(self:)
++- Name: CGRectGetMinY
++  SwiftName: getter:CGRect.minY(self:)
++- Name: CGRectGetMidY
++  SwiftName: getter:CGRect.midY(self:)
++- Name: CGRectGetMaxY
++  SwiftName: getter:CGRect.maxY(self:)
++- Name: CGRectGetWidth
++  SwiftName: getter:CGRect.width(self:)
++- Name: CGRectGetHeight
++  SwiftName: getter:CGRect.height(self:)
++
+ #
+ # Global variables
+ #

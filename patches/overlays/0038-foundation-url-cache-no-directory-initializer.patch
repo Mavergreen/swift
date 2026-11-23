@@ -1,0 +1,14 @@
+--- stdlib/public/Darwin/Foundation/URLCache.swift
++++ stdlib/public/Darwin/Foundation/URLCache.swift
+@@ -12,9 +12,7 @@
+ 
+ @_exported import Foundation // Clang module
+ 
++// Mavericks: no init(memoryCapacity:diskCapacity:directory:): NSURLCache's initWithMemoryCapacity:diskCapacity:directoryURL: is
++// 10.15, which the 10.9 SDK does not declare; a Recaulk declaration of it would restore this
+ extension URLCache {
+-  @available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
+-  public convenience init(memoryCapacity: Int, diskCapacity: Int, directory: URL? = nil) {
+-    self.init(__memoryCapacity: memoryCapacity, diskCapacity: diskCapacity, directoryURL: directory)
+-  }
+ }

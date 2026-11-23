@@ -1,0 +1,48 @@
+--- stdlib/public/SwiftShims/NSCalendarShims.h
++++ stdlib/public/SwiftShims/NSCalendarShims.h
+@@ -25,7 +25,8 @@
+     return (autoCalendarClass && [calendar isKindOfClass:autoCalendarClass]) || (olderAutoCalendarClass && [calendar isKindOfClass:olderAutoCalendarClass]);
+ }
+ 
+-NS_INLINE NS_RETURNS_RETAINED NS_NON_BRIDGED(NSCalendar *) __NSCalendarCreate(NSCalendarIdentifier identifier) {
++// Mavericks: 10.9 types a calendar identifier NSString *; NSCalendarIdentifier is 10.12's typedef of it
++NS_INLINE NS_RETURNS_RETAINED NS_NON_BRIDGED(NSCalendar *) __NSCalendarCreate(NSString *identifier) {
+   return [[NSCalendar alloc] initWithCalendarIdentifier:identifier];
+ }
+ 
+--- stdlib/public/SwiftShims/NSDataShims.h
++++ stdlib/public/SwiftShims/NSDataShims.h
+@@ -21,7 +21,8 @@
+ FOUNDATION_EXPORT const NSDataDeallocator NSDataDeallocatorNone;
+ 
+ @interface NSData (FoundationSPI)
+-- (BOOL)_isCompact API_AVAILABLE(macos(10.10), ios(8.0), watchos(2.0), tvos(9.0));
++// Mavericks: the 10.9 SDK has no API_AVAILABLE; Data.swift calls this only under #available(macOS 10.10, *)
++- (BOOL)_isCompact;
+ @end
+ 
+ BOOL __NSDataWriteToURL(NS_NON_BRIDGED(NSData *) _Nonnull data NS_RELEASES_ARGUMENT, NSURL * _Nonnull url NS_RELEASES_ARGUMENT, NSDataWritingOptions writingOptions, NSError **errorPtr);
+--- stdlib/public/SwiftShims/NSDictionaryShims.h
++++ stdlib/public/SwiftShims/NSDictionaryShims.h
+@@ -15,7 +15,8 @@
+ NS_BEGIN_DECLS
+ 
+ NS_INLINE void __NSDictionaryGetObjects(NS_NON_BRIDGED(NSDictionary *)nsDictionary, void *_Nullable objects, void *_Nullable keys, NSUInteger count) {
+-    [(NSDictionary *)nsDictionary getObjects:(__unsafe_unretained id  _Nonnull *)(void *)objects andKeys:(__unsafe_unretained id  _Nonnull *)(void *)keys count:count];
++    // Mavericks: 10.9 has getObjects:andKeys:, which fills every entry, not 10.11's getObjects:andKeys:count:; count is the dictionary's own
++    [(NSDictionary *)nsDictionary getObjects:(__unsafe_unretained id  _Nonnull *)(void *)objects andKeys:(__unsafe_unretained id  _Nonnull *)(void *)keys];
+ }
+ 
+ NS_END_DECLS
+--- stdlib/public/SwiftShims/NSFileManagerShims.h
++++ stdlib/public/SwiftShims/NSFileManagerShims.h
+@@ -20,7 +20,8 @@
+     return success ? result : nil;
+ }
+ 
+-NS_INLINE NS_RETURNS_RETAINED NSDirectoryEnumerator<NSURL *> *_Nullable __NSFileManagerEnumeratorAtURL(NSFileManager *self_, NSURL *url, NSArray<NSURLResourceKey> *_Nullable keys, NSDirectoryEnumerationOptions options, BOOL (^errorHandler)(NSURL *url, NSError *error) ) {
++// Mavericks: 10.9 types a resource key NSString *; NSURLResourceKey is 10.12's typedef of it
++NS_INLINE NS_RETURNS_RETAINED NSDirectoryEnumerator<NSURL *> *_Nullable __NSFileManagerEnumeratorAtURL(NSFileManager *self_, NSURL *url, NSArray<NSString *> *_Nullable keys, NSDirectoryEnumerationOptions options, BOOL (^errorHandler)(NSURL *url, NSError *error) ) {
+     return [self_ enumeratorAtURL:url includingPropertiesForKeys:keys options:options errorHandler:^(NSURL *url, NSError *error) {
+         NSURL *realURL = url ?: error.userInfo[NSURLErrorKey];
+         if (!realURL) {

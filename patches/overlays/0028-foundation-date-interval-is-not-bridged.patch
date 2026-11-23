@@ -1,0 +1,59 @@
+--- stdlib/public/Darwin/Foundation/DateInterval.swift
++++ stdlib/public/Darwin/Foundation/DateInterval.swift
+@@ -15,9 +15,9 @@
+ 
+ /// DateInterval represents a closed date interval in the form of [startDate, endDate].  It is possible for the start and end dates to be the same with a duration of 0.  DateInterval does not support reverse intervals i.e. intervals where the duration is less than 0 and the end date occurs earlier in time than the start date.
+ @available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+-public struct DateInterval : ReferenceConvertible, Comparable, Hashable, Codable {
+-    public typealias ReferenceType = NSDateInterval
+-    
++// Mavericks: not ReferenceConvertible, and bridged to no class: its NSDateInterval (10.12) neither the 10.9 SDK nor Recaulk
++// declares; Calendar.swift uses the struct itself. A Recaulk declaration-only header for NSDateInterval would restore the bridging
++public struct DateInterval : Comparable, Hashable, Codable {
+     /// The start date.
+     public var start : Date
+     
+@@ -187,42 +187,5 @@
+     }
+ }
+ 
+-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+-extension DateInterval : _ObjectiveCBridgeable {
+-    public static func _getObjectiveCType() -> Any.Type {
+-        return NSDateInterval.self
+-    }
+-    
+-    @_semantics("convertToObjectiveC")
+-    public func _bridgeToObjectiveC() -> NSDateInterval {
+-        return NSDateInterval(start: start, duration: duration)
+-    }
+-
+-    public static func _forceBridgeFromObjectiveC(_ dateInterval: NSDateInterval, result: inout DateInterval?) {
+-        if !_conditionallyBridgeFromObjectiveC(dateInterval, result: &result) {
+-            fatalError("Unable to bridge \(_ObjectiveCType.self) to \(self)")
+-        }
+-    }
+-    
+-    public static func _conditionallyBridgeFromObjectiveC(_ dateInterval : NSDateInterval, result: inout DateInterval?) -> Bool {
+-        result = DateInterval(start: dateInterval.startDate, duration: dateInterval.duration)
+-        return true
+-    }
+-
+-    @_effects(readonly)
+-    public static func _unconditionallyBridgeFromObjectiveC(_ source: NSDateInterval?) -> DateInterval {
+-        var result: DateInterval?
+-        _forceBridgeFromObjectiveC(source!, result: &result)
+-        return result!
+-    }
+-}
+-
+-@available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *)
+-extension NSDateInterval : _HasCustomAnyHashableRepresentation {
+-    // Must be @nonobjc to avoid infinite recursion during bridging.
+-    @nonobjc
+-    public func _toCustomAnyHashable() -> AnyHashable? {
+-        return AnyHashable(self as DateInterval)
+-    }
+-}
++// Mavericks: no _ObjectiveCBridgeable conformance and no NSDateInterval extension (above)
+ 

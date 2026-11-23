@@ -1,0 +1,34 @@
+--- stdlib/public/Darwin/Foundation/NSUndoManager.swift
++++ stdlib/public/Darwin/Foundation/NSUndoManager.swift
+@@ -13,16 +13,7 @@
+ @_exported import Foundation // Clang module
+ @_implementationOnly import _SwiftFoundationOverlayShims
+ 
++// Mavericks: no registerUndo(withTarget:handler:): it calls NSUndoManager's registerUndoWithTarget:handler: (10.11), which
++// the 10.9 SDK does not declare; a Recaulk declaration of the method would restore it
+ extension UndoManager {
+-  @available(*, unavailable, renamed: "registerUndo(withTarget:handler:)")
+-  public func registerUndoWithTarget<TargetType : AnyObject>(_ target: TargetType, handler: (TargetType) -> Void) {
+-    fatalError("This API has been renamed")
+-  }
+-
+-  @available(macOS 10.11, iOS 9.0, *)
+-  public func registerUndo<TargetType : AnyObject>(withTarget target: TargetType, handler: @escaping (TargetType) -> Void) {
+-    __NSUndoManagerRegisterWithTargetHandler( self, target) { internalTarget in
+-      handler(internalTarget as! TargetType)
+-    }
+-  }
+ }
+--- stdlib/public/SwiftShims/NSUndoManagerShims.h
++++ stdlib/public/SwiftShims/NSUndoManagerShims.h
+@@ -14,8 +14,7 @@
+ 
+ NS_BEGIN_DECLS
+ 
+-NS_INLINE void __NSUndoManagerRegisterWithTargetHandler(NSUndoManager * self_, id target, void (^handler)(id)) {
+-    [self_ registerUndoWithTarget:target handler:handler];
+-}
++// Mavericks: no registerUndoWithTarget:handler: (10.11, which the 10.9 SDK does not declare): NSUndoManager.swift's
++// registerUndo(withTarget:handler:), its only caller, is gone; a Recaulk declaration of the method would restore it
+ 
+ NS_END_DECLS

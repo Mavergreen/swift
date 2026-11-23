@@ -1,0 +1,34 @@
+--- stdlib/public/Darwin/Foundation/URLRequest.swift
++++ stdlib/public/Darwin/Foundation/URLRequest.swift
+@@ -122,29 +122,8 @@
+         }
+     }
+     
+-    /// `true` if the receiver is allowed to use an interface marked as expensive to
+-    /// satify the request, `false` otherwise.
+-    @available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
+-    public var allowsExpensiveNetworkAccess: Bool {
+-        get {
+-            return _handle.map { $0.allowsExpensiveNetworkAccess }
+-        }
+-        set {
+-            _applyMutation { $0.allowsExpensiveNetworkAccess = newValue }
+-        }
+-    }
+-    
+-    /// `true` if the receiver is allowed to use an interface marked as constrained to
+-    /// satify the request, `false` otherwise.
+-    @available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
+-    public var allowsConstrainedNetworkAccess: Bool {
+-        get {
+-            return _handle.map { $0.allowsConstrainedNetworkAccess }
+-        }
+-        set {
+-            _applyMutation { $0.allowsConstrainedNetworkAccess = newValue }
+-        }
+-    }
++    // Mavericks: no allowsExpensiveNetworkAccess or allowsConstrainedNetworkAccess: NSURLRequest's are 10.15, which the 10.9
++    // SDK does not declare; a Recaulk declaration of them would restore these
+     
+     /// The HTTP request method of the receiver.
+     public var httpMethod: String? {

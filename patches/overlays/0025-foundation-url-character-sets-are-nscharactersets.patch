@@ -1,0 +1,88 @@
+--- stdlib/public/Darwin/Foundation/CharacterSet.swift
++++ stdlib/public/Darwin/Foundation/CharacterSet.swift
+@@ -517,59 +517,37 @@
+     }
+     
+     // MARK: Static functions, from NSURL
++    // Mavericks: each set is NSCharacterSet's (10.9), never CoreFoundation's _CFURLComponentsGet...AllowedCharacterSet (10.12 SPI,
++    // absent from 10.9's CoreFoundation)
+ 
+     /// Returns the character set for characters allowed in a user URL subcomponent.
+     public static var urlUserAllowed : CharacterSet {
+-        if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
+-            return CharacterSet(_uncopiedImmutableReference: _CFURLComponentsGetURLUserAllowedCharacterSet() as NSCharacterSet)
+-        } else {
+-            return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLUserAllowedCharacterSet() as! NSCharacterSet)
+-        }
++        return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLUserAllowedCharacterSet() as! NSCharacterSet)
+     }
+     
+     /// Returns the character set for characters allowed in a password URL subcomponent.
+     public static var urlPasswordAllowed : CharacterSet {
+-        if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
+-            return CharacterSet(_uncopiedImmutableReference: _CFURLComponentsGetURLPasswordAllowedCharacterSet() as NSCharacterSet)
+-        } else {
+-            return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLPasswordAllowedCharacterSet() as! NSCharacterSet)
+-        }
++        return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLPasswordAllowedCharacterSet() as! NSCharacterSet)
+     }
+     
+     /// Returns the character set for characters allowed in a host URL subcomponent.
+     public static var urlHostAllowed : CharacterSet {
+-        if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
+-            return CharacterSet(_uncopiedImmutableReference: _CFURLComponentsGetURLHostAllowedCharacterSet() as NSCharacterSet)
+-        } else {
+-            return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLHostAllowedCharacterSet() as! NSCharacterSet)
+-        }
++        return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLHostAllowedCharacterSet() as! NSCharacterSet)
+     }
+     
+     /// Returns the character set for characters allowed in a path URL component.
+     public static var urlPathAllowed : CharacterSet {
+-        if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
+-            return CharacterSet(_uncopiedImmutableReference: _CFURLComponentsGetURLPathAllowedCharacterSet() as NSCharacterSet)
+-        } else {
+-            return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLPathAllowedCharacterSet() as! NSCharacterSet)
+-        }
++        return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLPathAllowedCharacterSet() as! NSCharacterSet)
+     }
+     
+     /// Returns the character set for characters allowed in a query URL component.
+     public static var urlQueryAllowed : CharacterSet {
+-        if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
+-            return CharacterSet(_uncopiedImmutableReference: _CFURLComponentsGetURLQueryAllowedCharacterSet() as NSCharacterSet)
+-        } else {
+-            return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLQueryAllowedCharacterSet() as! NSCharacterSet)
+-        }
++        return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLQueryAllowedCharacterSet() as! NSCharacterSet)
+     }
+     
+     /// Returns the character set for characters allowed in a fragment URL component.
+     public static var urlFragmentAllowed : CharacterSet {
+-        if #available(macOS 10.12, iOS 10.0, watchOS 3.0, tvOS 10.0, *) {
+-            return CharacterSet(_uncopiedImmutableReference: _CFURLComponentsGetURLFragmentAllowedCharacterSet() as NSCharacterSet)
+-        } else {
+-            return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLFragmentAllowedCharacterSet() as! NSCharacterSet)
+-        }
++        return CharacterSet(_uncopiedImmutableReference: _NSURLComponentsGetURLFragmentAllowedCharacterSet() as! NSCharacterSet)
+     }
+     
+     // MARK: Immutable functions
+--- stdlib/public/SwiftShims/CFCharacterSetShims.h
++++ stdlib/public/SwiftShims/CFCharacterSetShims.h
+@@ -14,12 +14,9 @@
+ CF_EXTERN_C_BEGIN
+ _Pragma("clang assume_nonnull begin")
+ 
+-CF_EXPORT CFCharacterSetRef _CFURLComponentsGetURLUserAllowedCharacterSet() API_AVAILABLE(macos(10.12), ios(10.0), watchos(3.0), tvos(10.0));
+-CF_EXPORT CFCharacterSetRef _CFURLComponentsGetURLPasswordAllowedCharacterSet() API_AVAILABLE(macos(10.12), ios(10.0), watchos(3.0), tvos(10.0));
+-CF_EXPORT CFCharacterSetRef _CFURLComponentsGetURLHostAllowedCharacterSet() API_AVAILABLE(macos(10.12), ios(10.0), watchos(3.0), tvos(10.0));
+-CF_EXPORT CFCharacterSetRef _CFURLComponentsGetURLPathAllowedCharacterSet() API_AVAILABLE(macos(10.12), ios(10.0), watchos(3.0), tvos(10.0));
+-CF_EXPORT CFCharacterSetRef _CFURLComponentsGetURLQueryAllowedCharacterSet() API_AVAILABLE(macos(10.12), ios(10.0), watchos(3.0), tvos(10.0));
+-CF_EXPORT CFCharacterSetRef _CFURLComponentsGetURLFragmentAllowedCharacterSet() API_AVAILABLE(macos(10.12), ios(10.0), watchos(3.0), tvos(10.0));
++// Mavericks: no _CFURLComponentsGet...AllowedCharacterSet: 10.12 SPI, absent from 10.9's CoreFoundation; CharacterSet.swift reads
++// NSCharacterSet's URL sets (10.9) instead
++
+ 
+ _Pragma("clang assume_nonnull end")
+ CF_EXTERN_C_END

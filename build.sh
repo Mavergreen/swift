@@ -371,8 +371,21 @@ RECAULK_DARWIN_A="$ROOT/recaulk-darwin.a"; RECAULK_DARWIN_UNX="$ROOT/recaulk-dar
   recaulk_subset "$RECAULK_PREFIX/lib/librecaulk.a" "$RECAULK_DARWIN_A" "$RECAULK_DARWIN_UNX" $RECAULK_DARWIN_SYMBOLS ) \
   || { echo "FAIL: could not take $RECAULK_DARWIN_SYMBOLS from $RECAULK_PREFIX/lib/librecaulk.a"; exit 1; }
 echo "    Recaulk $RECAULK_VERSION for Darwin: $RECAULK_DARWIN_SYMBOLS, $(grep -c . "$RECAULK_DARWIN_UNX") globals, all unexported"
-PYTHON="${PY:-python3}" sh "$HERE/scripts/overlay-sources.sh" "$ROOT/swift-6.2" "$ROOT/swift-5.4" "$ROOT/swift" "$ROOT/swift/utils/gyb" "$OVS" \
+PYTHON="${PY:-python3}" sh "$HERE/scripts/overlay-sources.sh" "$ROOT/swift-6.2" "$ROOT/swift-5.4" "$ROOT/swift-4.0" "$ROOT/swift" "$ROOT/swift/utils/gyb" "$OVS" \
   || { echo "FAIL: could not lay out the overlays' sources"; exit 1; }
+# spec: "The overlays" -- the Foundation overlay's shims and sources are written against declarations the 10.9
+#       headers lack (NS_ASSUME_NONNULL, the collections' lightweight generics, ...), which Recaulk's
+#       sdk-metadata recipes declare over 10.9's own headers: materialized here, by lib.sh's
+#       recaulk_sdk_metadata_vfs, as a clang VFS overlay of the SDK the overlays are compiled against.
+FOUNDATION_SDK_METADATA="foundation-array-generics-v2 foundation-dictionary-generics-v1 foundation-set-generics-v1
+  foundation-orderedset-generics-v1 foundation-maptable-generics-v1 foundation-enumerator-generics-v1
+  foundation-directoryenumerator-generics-v1 foundation-objcruntime-macros-v1 foundation-rectedge-v1
+  foundation-locale-codes-v1 foundation-processinfo-version-v1"
+SDK_PLAIN="$(sh "$SHIPYARD/fetch_sdk.sh")" || { echo "FAIL: could not fetch the 10.9 SDK"; exit 1; }
+# shellcheck disable=SC2086  # space-free recipe ids
+recaulk_sdk_metadata_vfs "$SDK_PLAIN" "$SDK_OVERLAYS" "$RECAULK_PREFIX/share/sdk-metadata/recipes.json" "$ROOT/overlays/sdk-metadata" \
+  $FOUNDATION_SDK_METADATA || { echo "FAIL: could not materialize Recaulk's sdk-metadata recipes"; exit 1; }
+echo "    Recaulk $RECAULK_VERSION sdk-metadata: $ROOT/overlays/sdk-metadata/overlay.json"
 # host_object <object> clang|clang++ <source> [<flag>...] -- <source> compiled by the host clang against the
 # 10.9 SDK, with the stdlib's threading package and the runtime's headers, the build root prefix-mapped.
 host_object() {

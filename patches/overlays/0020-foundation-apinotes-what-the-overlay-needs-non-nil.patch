@@ -1,0 +1,110 @@
+--- apinotes/Foundation.apinotes
++++ apinotes/Foundation.apinotes
+@@ -16,6 +16,10 @@
+ - Name: NSMutableArray
+   SwiftImportAsNonGeneric: true
+   Methods:
++  # Mavericks: 10.9's headers carry no nullability, so what the overlay relies on never being nil is said so here, as later SDKs say it
++  - Selector: 'initWithCapacity:'
++    MethodKind: Instance
++    NullabilityOfRet: N
+   - Selector: 'removeObjectIdenticalTo:inRange:'
+     SwiftName: removeObject(identicalTo:in:)
+     MethodKind: Instance
+@@ -66,9 +70,13 @@
+ - Name: NSData
+   SwiftBridge: Data
+   Methods:
++  # Mavericks: 10.9's headers carry no nullability, so what the overlay relies on never being nil is said so here, as later SDKs say it
+   - Selector: 'enumerateByteRangesUsingBlock:'
+     SwiftName: enumerateBytes(_:)
+     MethodKind: Instance
++    Parameters:
++    - Position: 0
++      Type: 'void (^)(const void * _Nonnull, NSRange, BOOL * _Nonnull)'
+   - Selector: 'rangeOfData:options:range:'
+     SwiftName: range(of:options:in:)
+     MethodKind: Instance
+@@ -122,6 +130,23 @@
+ - Name: NSString
+   SwiftBridge: Swift.String
+   Methods:
++  # Mavericks: 10.9's headers carry no nullability, so what the overlay relies on never being nil is said so here, as later SDKs say it
++  - Selector: 'initWithString:'
++    MethodKind: Instance
++    NullabilityOfRet: N
++  - Selector: 'stringByAppendingPathComponent:'
++    MethodKind: Instance
++    NullabilityOfRet: N
++  - Selector: 'enumerateLinesUsingBlock:'
++    MethodKind: Instance
++    Parameters:
++    - Position: 0
++      Type: 'void (^)(NSString * _Nonnull, BOOL * _Nonnull)'
++  - Selector: 'enumerateSubstringsInRange:options:usingBlock:'
++    MethodKind: Instance
++    Parameters:
++    - Position: 2
++      Type: 'void (^)(NSString * _Nullable, NSRange, NSRange, BOOL * _Nonnull)'
+   - Selector: 'uppercaseStringWithLocale:'
+     SwiftName: uppercased(with:)
+     MethodKind: Instance
+@@ -291,6 +316,13 @@
+ - Name: NSUUID
+   SwiftBridge: UUID
+ - Name: NSIndexSet
++  Methods:
++  # Mavericks: 10.9's headers carry no nullability, so what the overlay relies on never being nil is said so here, as later SDKs say it
++  - Selector: 'indexesInRange:options:passingTest:'
++    MethodKind: Instance
++    Parameters:
++    - Position: 2
++      Type: 'BOOL (^)(NSUInteger, BOOL * _Nonnull)'
+   SwiftBridge: IndexSet
+ - Name: NSIndexPath
+   SwiftBridge: IndexPath
+@@ -568,6 +600,16 @@
+ - Name: NSLocale
+   SwiftBridge: Locale
+ - Name: NSTimeZone
++  Methods:
++  # Mavericks: 10.9's headers carry no nullability, so what the overlay relies on never being nil is said so here, as later SDKs say it
++  # and the factories return NSTimeZone, not id, so they import as init?(abbreviation:) and init(forSecondsFromGMT:), which
++  # TimeZone.swift calls
++  - Selector: 'timeZoneWithAbbreviation:'
++    MethodKind: Class
++    ResultType: 'NSTimeZone * _Nullable'
++  - Selector: 'timeZoneForSecondsFromGMT:'
++    MethodKind: Class
++    ResultType: 'NSTimeZone * _Nonnull'
+   SwiftBridge: TimeZone
+ - Name: NSCalendar
+   SwiftBridge: Calendar
+@@ -578,9 +620,13 @@
+   - Selector: 'dateWithEra:yearForWeekOfYear:weekOfYear:weekday:hour:minute:second:nanosecond:'
+     SwiftName: date(era:yearForWeekOfYear:weekOfYear:weekday:hour:minute:second:nanosecond:)
+     MethodKind: Instance
++  # Mavericks: 10.9's headers carry no nullability, so what the overlay relies on never being nil is said so here, as later SDKs say it
+   - Selector: 'enumerateDatesStartingAfterDate:matchingComponents:options:usingBlock:'
+     SwiftName: enumerateDates(startingAfter:matching:options:using:)
+     MethodKind: Instance
++    Parameters:
++    - Position: 3
++      Type: 'void (^)(NSDate * _Nullable, BOOL, BOOL * _Nonnull)'
+   - Selector: 'isDateInToday:'
+     SwiftName: isDateInToday(_:)
+     MethodKind: Instance
+@@ -769,6 +815,13 @@
+ - Name: NSScanner
+   SwiftName: Scanner
+   Methods:
++  # Mavericks: 10.9's headers carry no nullability, so what the overlay relies on never being nil is said so here, as later SDKs say it
++  - Selector: 'initWithString:'
++    MethodKind: Instance
++    NullabilityOfRet: N
++  - Selector: string
++    MethodKind: Instance
++    NullabilityOfRet: N
+   - Selector: 'scanInt:'
+     SwiftName: scanInt32(_:)
+     MethodKind: Instance

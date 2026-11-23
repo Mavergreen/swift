@@ -13,7 +13,7 @@ set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 WORK="${SWIFT_WORK:-${MAVERICKS_BUILD_ROOT:-${TMPDIR:-/tmp}/mm-build}/swift/work}"
-for d in swift-6.2 swift-5.4 swift; do
+for d in swift-6.2 swift-5.4 swift-4.0 swift; do
   [ -d "$WORK/$d" ] || { echo "no $WORK/$d -- skipping (build.sh fetches the pinned trees)"; exit 77; }
 done
 [ -f "$WORK/swift-5.4/stdlib/public/Darwin/Dispatch/Queue.swift" ] || { echo "no 5.4 Dispatch overlay under $WORK/swift-5.4 -- skipping"; exit 77; }
@@ -21,7 +21,7 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/overlay-sources.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 
 echo "-- lays out the sources"
-sh "$REPO/scripts/overlay-sources.sh" "$WORK/swift-6.2" "$WORK/swift-5.4" "$WORK/swift" "$WORK/swift/utils/gyb" "$T/out" > "$T/log" 2>&1 \
+sh "$REPO/scripts/overlay-sources.sh" "$WORK/swift-6.2" "$WORK/swift-5.4" "$WORK/swift-4.0" "$WORK/swift" "$WORK/swift/utils/gyb" "$T/out" > "$T/log" 2>&1 \
   || { cat "$T/log" >&2; fail "overlay-sources.sh failed"; }
 D="$T/out/Dispatch"
 for f in Block.swift Data.swift Dispatch.swift IO.swift Private.swift Queue.swift Source.swift Time.swift Dispatch.mm; do
@@ -137,4 +137,77 @@ echo "-- unchanged by the patches: Time.swift and Dispatch.mm are 5.4's bytes"
 for f in Time.swift Dispatch.mm; do
   cmp -s "$D/$f" "$WORK/swift-5.4/stdlib/public/Darwin/Dispatch/$f" || fail "$f differs from the pinned 5.4 tree's"
 done
+echo "-- CoreFoundation, CoreGraphics and Foundation: swift-5.4's, with their shims and swift-4.0's API notes"
+S54="$WORK/swift-5.4/stdlib/public/Darwin"; O="$T/out"
+for f in CoreFoundation/CoreFoundation.swift CoreGraphics/CoreGraphics.swift CoreGraphics/CGFloat.swift CoreGraphics/Private.swift \
+         Foundation/NSValue.swift Foundation/BundleLookup.mm Foundation/DataThunks.m \
+         apinotes/Foundation.apinotes apinotes/CoreGraphics.apinotes apinotes/Dispatch.apinotes; do
+  [ -s "$O/$f" ] || fail "no $O/$f"
+done
+# Every Swift file of 5.4's Foundation but the Combine ones and the four whose classes 10.9 lacks.
+for f in "$S54/Foundation"/*.swift; do
+  b="${f##*/}"
+  case "$b" in
+    Publishers+*|Schedulers+*|CombineTypealiases.swift)
+      [ ! -e "$O/Foundation/$b" ] || fail "$b was laid out (it is Combine's)" ;;
+    Measurement.swift|PersonNameComponents.swift|NSOrderedCollectionDifference.swift|NSItemProvider.swift)
+      [ ! -e "$O/Foundation/$b" ] || fail "$b was laid out (10.9 declares none of its class)" ;;
+    *) [ -s "$O/Foundation/$b" ] || fail "no $O/Foundation/$b" ;;
+  esac
+done
+[ "$(ls "$O/Foundation" | grep -Ec '^(Publishers\+|Schedulers\+|CombineTypealiases)')" = 0 ] || fail "a Combine file is in $O/Foundation"
+grep -q 'OSX 13.0' "$O/Foundation/NSValue.swift" "$O/CoreGraphics/CGFloat.swift" && fail "NSValue.swift or CGFloat.swift is 6.4's gyb's (OSX 13.0), not 5.4's"
+grep -q 'public struct CGFloat' "$O/CoreGraphics/CGFloat.swift" || fail "CGFloat.swift holds no CGFloat"
+[ "$(cat "$O/CoreFoundation/shims/module.modulemap")" = 'module _SwiftCoreFoundationOverlayShims [system] {
+  header "CoreFoundationOverlayShims.h"
+}' ] || fail "the CoreFoundation shims' module map is not one [system] module over CoreFoundationOverlayShims.h"
+[ "$(cat "$O/Foundation/shims/module.modulemap")" = 'module _SwiftFoundationOverlayShims [system] {
+  header "FoundationOverlayShims.h"
+}' ] || fail "the Foundation shims' module map is not one [system] module over FoundationOverlayShims.h"
+for h in CoreFoundationOverlayShims.h CFCharacterSetShims.h CFHashingShims.h; do
+  [ -s "$O/CoreFoundation/shims/$h" ] || fail "no $O/CoreFoundation/shims/$h"
+done
+for h in FoundationOverlayShims.h FoundationShimSupport.h NSCalendarShims.h NSCharacterSetShims.h NSCoderShims.h NSDataShims.h \
+         NSDictionaryShims.h NSErrorShims.h NSFileManagerShims.h NSIndexPathShims.h NSIndexSetShims.h NSKeyedArchiverShims.h \
+         NSLocaleShims.h NSTimeZoneShims.h NSUndoManagerShims.h; do
+  [ -s "$O/Foundation/shims/$h" ] || fail "no $O/Foundation/shims/$h"
+done
+[ "$(ls "$O/CoreFoundation/shims" | grep -c .)" = 4 ] && [ "$(ls "$O/Foundation/shims" | grep -c .)" = 16 ] \
+  || fail "a shims dir holds more than its headers and module map"
+
+echo "-- each CoreGraphics and Foundation patch's marker"
+omark() { grep -q "$3" "$O/$2" || fail "patch $1 not applied: $O/$2 lacks '$3'"; }
+omark 0017 apinotes/CoreGraphics.apinotes "Mavericks: the getters CoreGraphics.swift reads"
+omark 0018 apinotes/CoreGraphics.apinotes "Mavericks: 10.9 declares CGColorSpaceModel a plain C enum"
+omark 0019 apinotes/Foundation.apinotes "Mavericks: 10.9's NSCalendarUnit also lists the"
+omark 0020 apinotes/Foundation.apinotes "Mavericks: 10.9's headers carry no nullability, so what the"
+omark 0021 apinotes/Foundation.apinotes "Mavericks: not throwing, as later SDKs' NS_SWIFT_NOTHROW has"
+omark 0022 Foundation/shims/NSCalendarShims.h "Mavericks: 10.9 types a calendar identifier NSString "
+omark 0023 Foundation/NSCoder.swift "Mavericks: no resolveError: NSCoderValueNotFoundError (10.11)"
+omark 0024 Foundation/NSUndoManager.swift "Mavericks: no registerUndo(withTarget:handler:): it calls"
+omark 0025 Foundation/CharacterSet.swift "Mavericks: each set is NSCharacterSet's (10.9), never"
+omark 0026 Foundation/Codable.swift "Mavericks: no TopLevelEncoder/TopLevelDecoder conformances of"
+omark 0027 Foundation/URL.swift "Mavericks: no ubiquitousSharedItemOwnerNameComponents or"
+omark 0028 Foundation/DateInterval.swift "Mavericks: not ReferenceConvertible, and bridged to no class:"
+omark 0029 Foundation/URLComponents.swift "Mavericks: no queryItems or percentEncodedQueryItems: they are"
+omark 0030 Foundation/URLComponents.swift "Mavericks: no string: NSURLComponents' string is 10.10, which"
+omark 0031 Foundation/JSONEncoder.swift "Mavericks: no iso8601: it formats with ISO8601DateFormatter"
+omark 0032 Foundation/JSONEncoder.swift "Mavericks: JSONSerialization writes a top-level fragment (a"
+omark 0033 Foundation/URL.swift "Mavericks: no init(fileURLWithPath:isDirectory:relativeTo:) or"
+omark 0034 Foundation/NSStringAPI.swift "Mavericks: no localizedCapitalized: NSString's"
+omark 0035 Foundation/Progress.swift "Mavericks: no estimatedTimeRemaining, throughput,"
+omark 0036 Foundation/URLRequest.swift "Mavericks: no allowsExpensiveNetworkAccess or"
+omark 0037 Foundation/URLSession.swift "Mavericks: no URLSessionWebSocketTask (10.15) or"
+omark 0038 Foundation/URLCache.swift "Mavericks: no init(memoryCapacity:diskCapacity:directory:):"
+omark 0039 Foundation/NSError.swift "Mavericks: no user info value provider: NSError's"
+omark 0040 Foundation/IndexPath.swift "Mavericks: getIndexes(_:), every index, which count is: the"
+omark 0041 Foundation/Data.swift "Mavericks: 1299 is NSFoundationVersionNumber10_11_Max, which"
+omark 0042 Foundation/AffineTransform.swift "Mavericks: typed, as 10.9's unannotated -"
+omark 0043 Foundation/NSObject.swift "Mavericks: 10.9 declares NSKeyValueChange NS_OPTIONS, not"
+
+echo "-- no laid-out source names what neither the 10.9 SDK nor Recaulk declares, outside a comment"
+bad="$(grep -nE 'ISO8601DateFormatter|NSDateInterval|URLQueryItem|PersonNameComponents|URLSessionWebSocketTask|URLSessionTaskTransactionMetrics|import Combine|NSMeasurement|NSItemProvider|NSOrderedCollectionDifference|_CFURLComponentsGet|NSCoderValueNotFoundError|registerUndoWithTarget|decodeTopLevel' \
+  "$O"/Foundation/*.swift "$O"/Foundation/shims/*.h "$O"/CoreFoundation/shims/*.h | grep -vE '^[^:]*:[0-9]+: *//' || true)"
+[ -z "$bad" ] || fail "a source still names what 10.9 lacks: $bad"
+
 echo "PASS"

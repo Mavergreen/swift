@@ -1,0 +1,43 @@
+--- apinotes/Foundation.apinotes
++++ apinotes/Foundation.apinotes
+@@ -1755,6 +1755,40 @@
+   SwiftName: regularExpression
+ - Name: NSStringEnumerationByLines
+   SwiftName: byLines
++# Mavericks: 10.9's NSCalendarUnit also lists the NS...CalendarUnit spellings it deprecates, which spoil the common prefix the
++# importer strips, so each case is named as later SDKs, which mark those API_DEPRECATED, have it
++- Name: NSCalendarUnitEra
++  SwiftName: era
++- Name: NSCalendarUnitYear
++  SwiftName: year
++- Name: NSCalendarUnitMonth
++  SwiftName: month
++- Name: NSCalendarUnitDay
++  SwiftName: day
++- Name: NSCalendarUnitHour
++  SwiftName: hour
++- Name: NSCalendarUnitMinute
++  SwiftName: minute
++- Name: NSCalendarUnitSecond
++  SwiftName: second
++- Name: NSCalendarUnitWeekday
++  SwiftName: weekday
++- Name: NSCalendarUnitWeekdayOrdinal
++  SwiftName: weekdayOrdinal
++- Name: NSCalendarUnitQuarter
++  SwiftName: quarter
++- Name: NSCalendarUnitWeekOfMonth
++  SwiftName: weekOfMonth
++- Name: NSCalendarUnitWeekOfYear
++  SwiftName: weekOfYear
++- Name: NSCalendarUnitYearForWeekOfYear
++  SwiftName: yearForWeekOfYear
++- Name: NSCalendarUnitNanosecond
++  SwiftName: nanosecond
++- Name: NSCalendarUnitCalendar
++  SwiftName: calendar
++- Name: NSCalendarUnitTimeZone
++  SwiftName: timeZone
+ SwiftVersions:
+ - Version: 3
+   Protocols:

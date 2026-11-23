@@ -1,0 +1,12 @@
+--- stdlib/public/Darwin/Foundation/Data.swift
++++ stdlib/public/Darwin/Foundation/Data.swift
+@@ -2267,7 +2267,8 @@
+         // Avoid a crash that happens on OS X 10.11.x and iOS 9.x or before when writing a bridged Data non-atomically with Foundation's standard write() implementation.
+         if !options.contains(.atomic) {
+             #if os(macOS)
+-                return NSFoundationVersionNumber <= Double(NSFoundationVersionNumber10_11_Max)
++                // Mavericks: 1299 is NSFoundationVersionNumber10_11_Max, which the 10.9 SDK does not define
++                return NSFoundationVersionNumber <= 1299
+             #else
+                 return NSFoundationVersionNumber <= Double(NSFoundationVersionNumber_iOS_9_x_Max)
+             #endif

@@ -1,0 +1,19 @@
+--- stdlib/public/Darwin/Foundation/URL.swift
++++ stdlib/public/Darwin/Foundation/URL.swift
+@@ -477,13 +477,9 @@
+     @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+     public var ubiquitousSharedItemCurrentUserPermissions: URLUbiquitousSharedItemPermissions? { return _get(.ubiquitousSharedItemCurrentUserPermissionsKey) }
+     
+-    // The name components for the owner, or nil if not shared.
+-    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+-    public var ubiquitousSharedItemOwnerNameComponents: PersonNameComponents? { return _get(.ubiquitousSharedItemOwnerNameComponentsKey) }
+-    
+-    // The name components for the most recent editor, or nil if not shared.
+-    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+-    public var ubiquitousSharedItemMostRecentEditorNameComponents: PersonNameComponents? { return _get(.ubiquitousSharedItemMostRecentEditorNameComponentsKey) }
++    // Mavericks: no ubiquitousSharedItemOwnerNameComponents or ubiquitousSharedItemMostRecentEditorNameComponents: they are
++    // PersonNameComponents, whose NSPersonNameComponents (10.11) neither the 10.9 SDK nor Recaulk declares, so
++    // PersonNameComponents.swift is not laid out; a Recaulk declaration-only header for the class would restore them
+ #endif
+     
+ #if !os(macOS)

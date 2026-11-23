@@ -1,0 +1,12 @@
+--- stdlib/public/Darwin/Foundation/NSObject.swift
++++ stdlib/public/Darwin/Foundation/NSObject.swift
+@@ -211,7 +211,8 @@
+         @objc private func _swizzle_me_observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSString : Any]?, context: UnsafeMutableRawPointer?) {
+             guard let object = object as? NSObject, object === self.object, let change = change else { return }
+             let rawKind:UInt = change[NSKeyValueChangeKey.kindKey.rawValue as NSString] as! UInt
+-            let kind = NSKeyValueChange(rawValue: rawKind)!
++            // Mavericks: 10.9 declares NSKeyValueChange NS_OPTIONS, not NS_ENUM, so init(rawValue:) is not failable
++            let kind = NSKeyValueChange(rawValue: rawKind)
+             let notification = NSKeyValueObservedChange(kind: kind,
+                                                         newValue: change[NSKeyValueChangeKey.newKey.rawValue as NSString],
+                                                         oldValue: change[NSKeyValueChangeKey.oldKey.rawValue as NSString],

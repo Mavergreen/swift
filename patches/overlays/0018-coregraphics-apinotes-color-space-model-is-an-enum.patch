@@ -1,0 +1,13 @@
+--- apinotes/CoreGraphics.apinotes
++++ apinotes/CoreGraphics.apinotes
+@@ -800,6 +800,10 @@
+ # Tags
+ #
+ Tags:
++# Mavericks: 10.9 declares CGColorSpaceModel a plain C enum, not CF_ENUM, so its cases would import as global
++# constants; an open enum gives the prefix-stripped cases (.indexed, ...) later SDKs have
++- Name: CGColorSpaceModel
++  EnumExtensibility: open
+ # The below are not available in Swift
+ - Name: CGGlypDeprecatedEnum
+   Availability: nonswift

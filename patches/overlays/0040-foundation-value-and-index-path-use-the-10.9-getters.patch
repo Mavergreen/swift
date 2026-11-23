@@ -1,0 +1,259 @@
+--- stdlib/public/Darwin/Foundation/IndexPath.swift
++++ stdlib/public/Darwin/Foundation/IndexPath.swift
+@@ -626,7 +626,8 @@
+             _indexes = .pair(nsIndexPath.index(atPosition: 0), nsIndexPath.index(atPosition: 1))
+         default:
+             let indexes = Array<Int>(unsafeUninitializedCapacity: count) { buffer, initializedCount in
+-                nsIndexPath.getIndexes(buffer.baseAddress!, range: NSRange(location: 0, length: count))
++                // Mavericks: getIndexes(_:), every index, which count is: the 10.9 SDK does not declare getIndexes:range:
++                nsIndexPath.getIndexes(buffer.baseAddress!)
+                 initializedCount = count
+             }
+             _indexes = .array(indexes)
+--- stdlib/public/Darwin/Foundation/NSValue.swift
++++ stdlib/public/Darwin/Foundation/NSValue.swift
+@@ -26,11 +26,7 @@
+                         _getObjCTypeEncoding(NSRange.self)) == 0,
+                  "NSValue does not contain the right type to bridge to NSRange")
+     result = NSRange()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      source.getValue(&result!, size: MemoryLayout<NSRange>.size)
+-    } else {
+-      source.getValue(&result!)
+-    }
++    source.getValue(&result!) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+   }
+ 
+   public static func _conditionallyBridgeFromObjectiveC(_ source: NSValue,
+@@ -41,11 +37,7 @@
+       return false
+     }
+     result = NSRange()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      source.getValue(&result!, size: MemoryLayout<NSRange>.size)
+-    } else {
+-      source.getValue(&result!)
+-    }
++    source.getValue(&result!) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+     return true
+   }
+ 
+@@ -56,11 +48,7 @@
+                         _getObjCTypeEncoding(NSRange.self)) == 0,
+                  "NSValue does not contain the right type to bridge to NSRange")
+     var result = NSRange()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      unwrappedSource.getValue(&result, size: MemoryLayout<NSRange>.size)
+-    } else {
+-      unwrappedSource.getValue(&result)
+-    }
++    unwrappedSource.getValue(&result) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+     return result
+   }
+ }
+@@ -78,11 +66,7 @@
+                         _getObjCTypeEncoding(CGRect.self)) == 0,
+                  "NSValue does not contain the right type to bridge to CGRect")
+     result = CGRect()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      source.getValue(&result!, size: MemoryLayout<CGRect>.size)
+-    } else {
+-      source.getValue(&result!)
+-    }
++    source.getValue(&result!) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+   }
+ 
+   public static func _conditionallyBridgeFromObjectiveC(_ source: NSValue,
+@@ -93,11 +77,7 @@
+       return false
+     }
+     result = CGRect()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      source.getValue(&result!, size: MemoryLayout<CGRect>.size)
+-    } else {
+-      source.getValue(&result!)
+-    }
++    source.getValue(&result!) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+     return true
+   }
+ 
+@@ -108,11 +88,7 @@
+                         _getObjCTypeEncoding(CGRect.self)) == 0,
+                  "NSValue does not contain the right type to bridge to CGRect")
+     var result = CGRect()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      unwrappedSource.getValue(&result, size: MemoryLayout<CGRect>.size)
+-    } else {
+-      unwrappedSource.getValue(&result)
+-    }
++    unwrappedSource.getValue(&result) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+     return result
+   }
+ }
+@@ -130,11 +106,7 @@
+                         _getObjCTypeEncoding(CGPoint.self)) == 0,
+                  "NSValue does not contain the right type to bridge to CGPoint")
+     result = CGPoint()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      source.getValue(&result!, size: MemoryLayout<CGPoint>.size)
+-    } else {
+-      source.getValue(&result!)
+-    }
++    source.getValue(&result!) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+   }
+ 
+   public static func _conditionallyBridgeFromObjectiveC(_ source: NSValue,
+@@ -145,11 +117,7 @@
+       return false
+     }
+     result = CGPoint()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      source.getValue(&result!, size: MemoryLayout<CGPoint>.size)
+-    } else {
+-      source.getValue(&result!)
+-    }
++    source.getValue(&result!) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+     return true
+   }
+ 
+@@ -160,11 +128,7 @@
+                         _getObjCTypeEncoding(CGPoint.self)) == 0,
+                  "NSValue does not contain the right type to bridge to CGPoint")
+     var result = CGPoint()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      unwrappedSource.getValue(&result, size: MemoryLayout<CGPoint>.size)
+-    } else {
+-      unwrappedSource.getValue(&result)
+-    }
++    unwrappedSource.getValue(&result) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+     return result
+   }
+ }
+@@ -182,11 +146,7 @@
+                         _getObjCTypeEncoding(CGVector.self)) == 0,
+                  "NSValue does not contain the right type to bridge to CGVector")
+     result = CGVector()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      source.getValue(&result!, size: MemoryLayout<CGVector>.size)
+-    } else {
+-      source.getValue(&result!)
+-    }
++    source.getValue(&result!) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+   }
+ 
+   public static func _conditionallyBridgeFromObjectiveC(_ source: NSValue,
+@@ -197,11 +157,7 @@
+       return false
+     }
+     result = CGVector()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      source.getValue(&result!, size: MemoryLayout<CGVector>.size)
+-    } else {
+-      source.getValue(&result!)
+-    }
++    source.getValue(&result!) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+     return true
+   }
+ 
+@@ -212,11 +168,7 @@
+                         _getObjCTypeEncoding(CGVector.self)) == 0,
+                  "NSValue does not contain the right type to bridge to CGVector")
+     var result = CGVector()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      unwrappedSource.getValue(&result, size: MemoryLayout<CGVector>.size)
+-    } else {
+-      unwrappedSource.getValue(&result)
+-    }
++    unwrappedSource.getValue(&result) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+     return result
+   }
+ }
+@@ -234,11 +186,7 @@
+                         _getObjCTypeEncoding(CGSize.self)) == 0,
+                  "NSValue does not contain the right type to bridge to CGSize")
+     result = CGSize()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      source.getValue(&result!, size: MemoryLayout<CGSize>.size)
+-    } else {
+-      source.getValue(&result!)
+-    }
++    source.getValue(&result!) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+   }
+ 
+   public static func _conditionallyBridgeFromObjectiveC(_ source: NSValue,
+@@ -249,11 +197,7 @@
+       return false
+     }
+     result = CGSize()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      source.getValue(&result!, size: MemoryLayout<CGSize>.size)
+-    } else {
+-      source.getValue(&result!)
+-    }
++    source.getValue(&result!) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+     return true
+   }
+ 
+@@ -264,11 +208,7 @@
+                         _getObjCTypeEncoding(CGSize.self)) == 0,
+                  "NSValue does not contain the right type to bridge to CGSize")
+     var result = CGSize()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      unwrappedSource.getValue(&result, size: MemoryLayout<CGSize>.size)
+-    } else {
+-      unwrappedSource.getValue(&result)
+-    }
++    unwrappedSource.getValue(&result) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+     return result
+   }
+ }
+@@ -286,11 +226,7 @@
+                         _getObjCTypeEncoding(CGAffineTransform.self)) == 0,
+                  "NSValue does not contain the right type to bridge to CGAffineTransform")
+     result = CGAffineTransform()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      source.getValue(&result!, size: MemoryLayout<CGAffineTransform>.size)
+-    } else {
+-      source.getValue(&result!)
+-    }
++    source.getValue(&result!) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+   }
+ 
+   public static func _conditionallyBridgeFromObjectiveC(_ source: NSValue,
+@@ -301,11 +237,7 @@
+       return false
+     }
+     result = CGAffineTransform()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      source.getValue(&result!, size: MemoryLayout<CGAffineTransform>.size)
+-    } else {
+-      source.getValue(&result!)
+-    }
++    source.getValue(&result!) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+     return true
+   }
+ 
+@@ -316,11 +248,7 @@
+                         _getObjCTypeEncoding(CGAffineTransform.self)) == 0,
+                  "NSValue does not contain the right type to bridge to CGAffineTransform")
+     var result = CGAffineTransform()
+-    if #available(OSX 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *) {
+-      unwrappedSource.getValue(&result, size: MemoryLayout<CGAffineTransform>.size)
+-    } else {
+-      unwrappedSource.getValue(&result)
+-    }
++    unwrappedSource.getValue(&result) // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare
+     return result
+   }
+ }
+@@ -345,7 +273,9 @@
+             }
+             let allocated = UnsafeMutablePointer<StoredType>.allocate(capacity: 1)
+             defer { allocated.deallocate() }
+-            getValue(allocated, size: storedSize)
++            // Mavericks: getValue(_:) (10.0), not 10.13's getValue(_:size:), which the 10.9 SDK does not declare; storedSize is
++            // StoredType's, checked above
++            getValue(allocated)
+             return allocated.pointee
+         }
+         return nil

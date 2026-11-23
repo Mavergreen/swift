@@ -1,0 +1,15 @@
+--- apinotes/Foundation.apinotes
++++ apinotes/Foundation.apinotes
+@@ -260,6 +260,12 @@
+ - Name: NSURL
+   SwiftBridge: URL
+   Methods:
++  # Mavericks: not throwing, as later SDKs' NS_SWIFT_NOTHROW has it, which API notes cannot say: a BOOL result is what makes the
++  # importer throw the trailing NSError **, and a C _Bool, the same one-byte 0 or 1 NSURL returns, does not. URL.swift's
++  # checkResourceIsReachable() throws the error it is handed, and returns false for a URL that is not a file's, as NSURL does
++  - Selector: 'checkResourceIsReachableAndReturnError:'
++    MethodKind: Instance
++    ResultType: '_Bool'
+   - Selector: fileReferenceURL
+     SwiftName: fileReferenceURL()
+     MethodKind: Instance

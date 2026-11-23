@@ -1,0 +1,81 @@
+--- stdlib/public/Darwin/Foundation/NSError.swift
++++ stdlib/public/Darwin/Foundation/NSError.swift
+@@ -225,53 +225,10 @@
+   -> AnyObject? {
+   let hasUserInfoValueProvider: Bool
+ 
+-  // If the OS supports user info value providers, use those
+-  // to lazily populate the user-info dictionary for this domain.
+-  if #available(macOS 10.11, iOS 9.0, tvOS 9.0, watchOS 2.0, *) {
+-    // Note: the Cocoa error domain specifically excluded from
+-    // user-info value providers.
+-    let domain = error._domain
+-    if domain != NSCocoaErrorDomain {
+-      _errorDomainUserInfoProviderQueue.sync {
+-        if NSError.userInfoValueProvider(forDomain: domain) != nil { return }
+-        NSError.setUserInfoValueProvider(forDomain: domain) { (error, key) in
+-
+-          switch key {
+-          case NSLocalizedDescriptionKey:
+-            return (error as? LocalizedError)?.errorDescription
+-
+-          case NSLocalizedFailureReasonErrorKey:
+-            return (error as? LocalizedError)?.failureReason
+-
+-          case NSLocalizedRecoverySuggestionErrorKey:
+-            return (error as? LocalizedError)?.recoverySuggestion
+-
+-          case NSHelpAnchorErrorKey:
+-            return (error as? LocalizedError)?.helpAnchor
+-
+-          case NSLocalizedRecoveryOptionsErrorKey:
+-            return (error as? RecoverableError)?.recoveryOptions
+-
+-          case NSRecoveryAttempterErrorKey:
+-            if error is RecoverableError {
+-              return __NSErrorRecoveryAttempter()
+-            }
+-            return nil
+-
+-          default:
+-            return nil
+-          }
+-        }
+-      }
+-      assert(NSError.userInfoValueProvider(forDomain: domain) != nil)
+-
+-      hasUserInfoValueProvider = true
+-    } else {
+-      hasUserInfoValueProvider = false
+-    }
+-  } else {
+-    hasUserInfoValueProvider = false
+-  }
++  // Mavericks: no user info value provider: NSError's setUserInfoValueProviderForDomain:provider: and
++  // userInfoValueProviderForDomain: are 10.11, which the 10.9 SDK does not declare, so the dictionary is populated below, as
++  // upstream does on an OS without them; a Recaulk declaration of those methods would restore the lazy provider
++  hasUserInfoValueProvider = false
+ 
+   // Populate the user-info dictionary 
+   var result: [String : Any]
+@@ -2021,17 +1978,9 @@
+     return nil
+   }
+ 
+-  /// The reason why a background URLSessionTask was cancelled.
+-  @available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
+-  public var backgroundTaskCancelledReason: BackgroundTaskCancelledReason? {
+-    return (_nsUserInfo[NSURLErrorBackgroundTaskCancelledReasonKey] as? Int).flatMap(BackgroundTaskCancelledReason.init(rawValue:))
+-  }
+-
+-  /// The reason why the network is unavailable when the task failed due to unsatisfiable network constraints.
+-  @available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)
+-  public var networkUnavailableReason: NetworkUnavailableReason? {
+-    return (_nsUserInfo[NSURLErrorNetworkUnavailableReasonKey] as? Int).flatMap(NetworkUnavailableReason.init(rawValue:))
+-  }
++  // Mavericks: no backgroundTaskCancelledReason or networkUnavailableReason: NSURLErrorBackgroundTaskCancelledReasonKey and
++  // NSURLErrorNetworkUnavailableReasonKey are 10.15, which the 10.9 SDK does not declare; a Recaulk declaration of them would
++  // restore these
+ 
+   /// An opaque data blob to resume a failed download task.
+   @available(macOS 10.15, iOS 13.0, watchOS 6.0, tvOS 13.0, *)

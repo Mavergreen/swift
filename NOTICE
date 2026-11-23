@@ -82,7 +82,48 @@ authors):
 The API notes for the Foundation, CoreGraphics and AppKit overlays (Foundation.apinotes,
 CoreGraphics.apinotes, AppKit.apinotes) are from swift-4.0-RELEASE's apinotes (pins.env's
 SWIFT40_SHA), under the same license (Apache License v2.0 with Runtime Library Exception);
-10.9's SDK predates Swift and has none.
+10.9's SDK predates Swift and has none. They carry the local patches in ./patches/overlays:
+  0017  CoreGraphics.apinotes: the CGColor, CGColorSpace and CGRect getters the
+        CoreGraphics overlay reads are named, as later SDKs name them.
+  0018  CoreGraphics.apinotes: CGColorSpaceModel, a plain C enum in 10.9, is
+        imported as an open extensible enum.
+  0019  Foundation.apinotes: NSCalendarUnit's cases are named, as 10.9's
+        deprecated NS...CalendarUnit spellings spoil the prefix the importer strips.
+  0020  Foundation.apinotes: what the Foundation overlay relies on never being nil
+        is marked so, as the 10.9 headers, which carry no nullability
+        annotations, do not say so; NSTimeZone's two factories return NSTimeZone.
+  0021  Foundation.apinotes: -[NSURL checkResourceIsReachableAndReturnError:]
+        does not throw, as later SDKs' NS_SWIFT_NOTHROW has it.
+
+The CoreFoundation, CoreGraphics and Foundation overlays' sources (their Swift files,
+BundleLookup.mm, DataThunks.m) and shims headers are from swift-5.4-RELEASE's
+stdlib/public/Darwin and stdlib/public/SwiftShims (pins.env's SWIFT54_SHA), under the same
+license (Apache License v2.0 with Runtime Library Exception; Copyright (c) 2014 - present
+Apple Inc. and the Swift project authors), with the local patches in ./patches/overlays,
+each renaming what 5.4 spells as a later SDK does or removing what neither the 10.9 SDK nor
+Recaulk declares:
+  0022  The shims use the 10.9 SDK's spellings.
+  0023  No NSCoder top-level decoding (10.11).
+  0024  No UndoManager registration with a handler (10.11).
+  0025  The URL character sets are NSCharacterSet's, not CoreFoundation's 10.12 SPI.
+  0026  No Combine conformances of the JSON and property-list coders.
+  0027  No URL person-name components (10.11).
+  0028  DateInterval is bridged to no class (NSDateInterval is 10.12).
+  0029  No URLQueryItem (10.10).
+  0030  No URLComponents string or ranges (10.10, 10.11).
+  0031  No ISO 8601 JSON date strategy (ISO8601DateFormatter is 10.12).
+  0032  JSON top-level fragments are written on macOS 10.15 and later, and read.
+  0033  No URL API past what 10.9's NSURL declares.
+  0034  No String API past what 10.9's NSString declares.
+  0035  No Progress properties of 10.13.
+  0036  No URLRequest network-access constraints (10.15).
+  0037  No URLSession extensions of 10.12 or 10.15.
+  0038  No URLCache directory initializer (10.15).
+  0039  No NSError user-info provider (10.11) or 10.15 keys.
+  0040  NSValue and IndexPath use 10.9's getValue: and getIndexes:.
+  0041  Data names macOS 10.11's NSFoundationVersionNumber by its value.
+  0042  An NSObject -init result is typed, as 10.9's imports as init!().
+  0043  NSKeyValueChange is 10.9's NS_OPTIONS, whose init(rawValue:) is not failable.
 
 Both toolchain packages also contain Dispatch.apinotes (lib/swift/apinotes), from
 the Swift open source project at pins.env's SWIFT_SHA (apinotes/Dispatch.apinotes),

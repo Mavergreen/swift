@@ -174,6 +174,35 @@ recaulk_importer_layout() {
     && cp "$2" "$4/Dispatch.modulemap" && echo "$3" > "$4/VERSION"
 }
 
+# recaulk_sdk_metadata_vfs <plain-sdk> <sdk> <recipes.json> <out-dir> <id>... -- materializes the Recaulk
+# sdk-metadata recipes <id>... of <recipes.json> (Recaulk's share/sdk-metadata) with shipyard's
+# mavericks_materialize_sdk_metadata (MavericksSDKMetadata.cmake, beside $SHIPYARD; run by ${CMAKE:-shipyard-cmake} -P): the edited headers
+# and <out-dir>/overlay.json, a clang VFS overlay (-Xcc -ivfsoverlay) naming each header under <sdk>,
+# fetch_sdk.sh's with-sdk-settings-json view that build.sh compiles the overlays against, whose System
+# must be <plain-sdk>'s. <out-dir> is replaced; nothing is left there when a recipe fails its check.
+# spec: temporary -- shipyard's function refuses the view itself (its System and usr are links out of
+#       it), so the recipes are materialized over <plain-sdk>, the SDK the view links to, and each header's
+#       name is moved under <sdk>. When shipyard reads the view, this function becomes the one call.
+recaulk_sdk_metadata_vfs() {
+  _rsm_plain="$1"; _rsm_sdk="$2"; _rsm_recipes="$3"; _rsm_out="$4"; shift 4
+  _rsm_mod="${SHIPYARD:-}/../MavericksSDKMetadata.cmake"
+  [ -f "$_rsm_mod" ] || { echo "recaulk_sdk_metadata_vfs: no $_rsm_mod -- set SHIPYARD (msc.sh) to a shipyard with it" >&2; return 1; }
+  [ $# -gt 0 ] || { echo "recaulk_sdk_metadata_vfs: no recipe ids" >&2; return 1; }
+  case "$_rsm_plain$_rsm_sdk$_rsm_out" in *'|'*|*'"'*|*'
+'*) echo "recaulk_sdk_metadata_vfs: a | quote or newline in a path" >&2; return 1 ;; esac
+  _rsm_a="$(cd "$_rsm_plain/System" 2>/dev/null && pwd -P)" && _rsm_b="$(cd "$_rsm_sdk/System" 2>/dev/null && pwd -P)" \
+    && [ "$_rsm_a" = "$_rsm_b" ] || { echo "recaulk_sdk_metadata_vfs: $_rsm_sdk/System is not $_rsm_plain/System" >&2; return 1; }
+  rm -rf "$_rsm_out" || return 1
+  _rsm_t="$(mktemp -d "${TMPDIR:-/tmp}/sdk-metadata.XXXXXX")" || return 1
+  printf '%s\n' "include(\"$_rsm_mod\")" \
+    'mavericks_materialize_sdk_metadata(VFS SDK "${SDK}" RECIPES "${RECIPES}" IDS ${IDS} OUTPUT_DIR "${OUT}")' > "$_rsm_t/m.cmake"
+  _rsm_ids="$(printf '%s;' "$@")"
+  "${CMAKE:-shipyard-cmake}" -DSDK="$_rsm_plain" -DRECIPES="$_rsm_recipes" -DIDS="${_rsm_ids%;}" -DOUT="$_rsm_out" -P "$_rsm_t/m.cmake" >&2 \
+    && sed "s|\"name\" : \"$_rsm_plain/|\"name\" : \"$_rsm_sdk/|" "$_rsm_out/overlay.json" > "$_rsm_t/overlay.json" \
+    && mv "$_rsm_t/overlay.json" "$_rsm_out/overlay.json" || { rm -rf "$_rsm_t" "$_rsm_out"; echo "recaulk_sdk_metadata_vfs: could not materialize $* over $_rsm_plain" >&2; return 1; }
+  rm -rf "$_rsm_t"
+}
+
 # patch_source <dir> <patch>... -- applies each <patch> (an absolute path, -p0 paths as patches/ holds
 # them) to the source tree <dir>, in order, with the OS's patch: OS X 10.9's GNU patch 2.5.8 and a modern
 # Mac's BSD patch 2.0 write the same bytes. Each is first tried with --dry-run, so one that does not
