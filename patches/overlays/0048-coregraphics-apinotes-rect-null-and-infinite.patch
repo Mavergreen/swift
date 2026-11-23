@@ -1,0 +1,15 @@
+--- apinotes/CoreGraphics.apinotes
++++ apinotes/CoreGraphics.apinotes
+@@ -688,6 +688,12 @@
+   Availability: nonswift
+ - Name: CGAffineTransformIdentity
+   Availability: nonswift
++# Mavericks: 10.9 names CGRectNull and CGRectInfinite with no Swift member name, where later SDKs' API
++# notes make them CGRect's static properties null and infinite
++- Name: CGRectNull
++  SwiftName: CGRect.null
++- Name: CGRectInfinite
++  SwiftName: CGRect.infinite
+ # The below are not available in Swift
+ - Name: kCGColorSpaceGenericGray
+   Availability: nonswift

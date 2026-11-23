@@ -8,8 +8,8 @@
 // class copied, not shared, an Error to NSError and back (code, domain, the cast back), a bridged NSError's
 // localizedDescription (which once recursed forever under another SDK view), Codable through JSON and property
 // lists (XML and binary) and the DecodingErrors a bad document throws, a file URL with a space and a non-ASCII
-// name, a Gregorian date in GMT, a file written, measured and removed with FileManager, and NSString's API on
-// String. Nothing a program writes loads libswiftCoreFoundation or libswiftCoreGraphics, so each of the three
+// name, a Gregorian date in GMT, a file written, measured and removed with FileManager, NSString's API on
+// String, and CGRect's null and infinite rects by their Swift names. Nothing a program writes loads libswiftCoreFoundation or libswiftCoreGraphics, so each of the three
 // overlay dylibs is dlopened by its @rpath name, and must come from the directory libswiftCore came from.
 // What 10.9's Foundation lacks is not tried: JSONEncoder's .sortedKeys says macOS 10.13, so on 10.9 a
 // one-key object is encoded without it (an object of one key has one order). The 10.9 headers carry no
@@ -189,7 +189,16 @@ func stringAPI() {
   check(s == "007", "stringAPI: String(format: %03d, 7) is \(s)")
 }
 
+// --- CGRectNull and CGRectInfinite, by the names later SDKs give them
+func cgRectConstants() {
+  check(CGRect.null.isNull, "cgRectConstants: CGRect.null is not null")
+  check(CGRect.infinite.isInfinite, "cgRectConstants: CGRect.infinite is not infinite")
+  let r = CGRect(x: 1, y: 2, width: 3, height: 4)
+  check(CGRect.null.union(r) == r, "cgRectConstants: CGRect.null.union(r) is \(CGRect.null.union(r)), not r")
+}
+
 overlayDylibs(); bridgingBothWays(); bridgingCopiesMutable(); errorRoundTrip(); errorDescription()
 codableJSON(); codablePlist(); decodingErrors(); urlNonASCII(); dateCalendar(); fileManager(); stringAPI()
+cgRectConstants()
 if failures > 0 { print("foundation_overlay_test FAILED (\(failures))"); exit(1) }
 print("foundation_overlay_test: OK")

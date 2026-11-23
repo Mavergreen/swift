@@ -208,6 +208,10 @@ omark 0044 apinotes/CoreGraphics.apinotes "Mavericks: 10.9 declares CGRectEdge a
 omark 0045 Foundation/URL.swift "Mavericks: no isApplication or applicationIsScriptable"
 omark 0046 Foundation/Calendar.swift "Mavericks: NSCalendarIdentifierIslamicTabular and"
 omark 0047 Foundation/NSDictionary.swift "Mavericks: an empty NSDictionary is an empty Dictionary: for no"
+omark 0048 apinotes/CoreGraphics.apinotes "Mavericks: 10.9 names CGRectNull and CGRectInfinite with no Swift member name"
+for g in null infinite; do
+  grep -q "^  SwiftName: CGRect.$g\$" "$O/apinotes/CoreGraphics.apinotes" || fail "patch 0048 does not name CGRect.$g"
+done
 [ "$(grep -c 'guard numElems > 0 else { return 0 }' "$O/Foundation/NSDictionary.swift")" = 2 ] \
   || fail "patch 0047 does not guard both of NSDictionary.swift's in-place bridges against an empty dictionary"
 

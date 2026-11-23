@@ -97,6 +97,8 @@ SWIFT40_SHA), under the same license (Apache License v2.0 with Runtime Library E
         does not throw, as later SDKs' NS_SWIFT_NOTHROW has it.
   0044  CoreGraphics.apinotes: CGRectEdge, a plain C enum in 10.9, is imported as a
         closed enum, as later SDKs' CF_CLOSED_ENUM has it.
+  0048  CoreGraphics.apinotes: CGRectNull and CGRectInfinite are named CGRect.null and
+        CGRect.infinite, as later SDKs' API notes name them.
 
 The CoreFoundation, CoreGraphics and Foundation overlays' sources (their Swift files,
 BundleLookup.mm, DataThunks.m) and shims headers are from swift-5.4-RELEASE's

@@ -28,25 +28,25 @@ include test/stdlib/Bundle.swift
 exclude test/stdlib/CharacterRecognizer.swift -- RUN hands the test arguments (%S/Inputs/)
 exclude test/stdlib/CodableEnumUnavailableElement.swift -- RUN uses -Xfrontend -unavailable-decl-optimization=complete, which no included test is known to need
 exclude test/stdlib/CodableMultifile.swift -- RUN runs cp
-exclude test/stdlib/CodableTests.swift -- does not compile against 10.9's Foundation: it codes types 10.9 lacks, PersonNameComponents (line 36, "cannot find type 'PersonNameComponents' in scope") and Measurement, Dimension and UnitLength (lines 764-788), and CGRect.null (line 365, "type 'CGRect' has no member 'null'"), as the 10.9 headers name CGRectNull with no Swift member name
+exclude test/stdlib/CodableTests.swift -- does not compile against 10.9's Foundation: it codes types 10.9 lacks, PersonNameComponents (line 36, "cannot find type 'PersonNameComponents' in scope") and Measurement, Dimension and UnitLength (lines 764-788), and URL(fileURLWithPath:relativeTo:) (OS X 10.11, line 957, "incorrect argument label in call (have 'fileURLWithPath:relativeTo:', expected 'string:relativeTo:')"); and the swift.org compiler also refuses its CollectionDifference values (line 448, "'CollectionDifference' is only available in macOS 10.15 or newer")
 exclude test/stdlib/DarwinAPI.swift -- a Darwin test too: tests/upstream/darwin.list includes it, so it is built once
 include test/stdlib/DictionaryCompactMapValues.swift
 include test/stdlib/EmptyCollectionSingletonRealization.swift
 exclude test/stdlib/ErrorBridged.swift -- RUN uses %target-ptrsize
 exclude test/stdlib/Foundation_NewGenericAPIs.swift -- RUN uses %target-typecheck-verify-swift, and runs no executable
-exclude test/stdlib/KVO.swift -- does not compile against the 10.9 SDK: its observeValue(forKeyPath:of:change:context:) (line 56) takes [NSKeyValueChangeKey: Any]?, where the SDK view's -observeValueForKeyPath:... takes an untyped NSDictionary ("method does not override any method from its superclass"), and NSString.h there marks no initializer NS_DESIGNATED_INITIALIZER, so Target (line 38), which overrides only some, does not inherit the overlay's required init(stringLiteral:) ("'required' initializer 'init(stringLiteral:)' must be provided by subclass of 'NSString'")
+exclude test/stdlib/KVO.swift -- does not compile against the 10.9 SDK: its observeValue(forKeyPath:of:change:context:) (line 56) takes [NSKeyValueChangeKey: Any]?, where the SDK view's -observeValueForKeyPath:... takes an untyped NSDictionary ("method does not override any method from its superclass"), and NSString.h there marks no initializer NS_DESIGNATED_INITIALIZER, so Target (line 17), which overrides only some (its initializers end at line 37), does not inherit the overlay's required init(stringLiteral:) (the diagnostic, at line 38, just after them: "'required' initializer 'init(stringLiteral:)' must be provided by subclass of 'NSString'")
 exclude test/stdlib/KVOKeyPaths.swift -- RUN redirects the test's input or output (> %t/output.txt)
 include test/stdlib/KeyPathObjC.swift
 include test/stdlib/KeyValuePairs.swift
 include test/stdlib/NSArrayAPI.swift
 include test/stdlib/NSDictionary.swift
-exclude test/stdlib/NSEnumeratorAPI.swift -- does not compile against the 10.9 SDK, which has no nullability: NSDictionary().keyEnumerator() is NSEnumerator! there (line 15, "value of optional type 'NSEnumerator?' must be unwrapped to a value of type 'NSEnumerator'")
+exclude test/stdlib/NSEnumeratorAPI.swift -- does not compile against the 10.9 SDK, which has no nullability: NSDictionary().keyEnumerator() (line 14) is NSEnumerator! there, so its use at line 15 does not type-check (the diagnostic's line: "value of optional type 'NSEnumerator?' must be unwrapped to a value of type 'NSEnumerator'")
 exclude test/stdlib/NSError.swift -- RUN's %target-build-swift writes no %t executable
 exclude test/stdlib/NSItemProvider.swift -- does not compile against 10.9's Foundation, which has no NSItemProvider (OS X 10.10) (line 22, "cannot find 'NSItemProvider' in scope")
-exclude test/stdlib/NSKeyedArchival.swift -- does not compile against 10.9's Foundation: NSKeyedArchiver(forWritingWith:) is optional there, as the SDK has no nullability (line 39, "value of optional type 'NSKeyedArchiver?' must be unwrapped"), and decodingFailurePolicy (OS X 10.11, line 50), decodeDecodable and decodeTopLevelDecodable (line 91, "value of type 'NSKeyedUnarchiver' has no member 'decodeDecodable'") and unarchivedObject (macOS 10.13, line 173) are not there
+exclude test/stdlib/NSKeyedArchival.swift -- does not compile against 10.9's Foundation: NSKeyedArchiver(forWritingWith:) (line 37) is optional there, as the SDK has no nullability, so its use at line 39 does not type-check (the diagnostic's line: "value of optional type 'NSKeyedArchiver?' must be unwrapped"), and decodingFailurePolicy (OS X 10.11, line 50), decodeDecodable and decodeTopLevelDecodable (line 91, "value of type 'NSKeyedUnarchiver' has no member 'decodeDecodable'") and unarchivedObject (macOS 10.13, line 173) are not there
 exclude test/stdlib/NSObject-hashing.swift -- RUN uses %target-swift-frontend
 include test/stdlib/NSObject.swift
-exclude test/stdlib/NSSetAPI.swift -- does not compile against the 10.9 SDK, which has no nullability: NSIndexSet(indexesIn:) is optional there (line 111, "value of optional type 'NSIndexSet?' must be unwrapped to a value of type 'NSIndexSet'")
+exclude test/stdlib/NSSetAPI.swift -- does not compile against the 10.9 SDK, which has no nullability: NSIndexSet() (line 110) is NSIndexSet! there, so its use at line 111 does not type-check (the diagnostic's line: "value of optional type 'NSIndexSet?' must be unwrapped to a value of type 'NSIndexSet'")
 exclude test/stdlib/NSSlowString.swift -- RUN uses %target-clang
 exclude test/stdlib/NSSlowTaggedLocalizedString.swift -- upstream disables it (REQUIRES: rdar100559801)
 exclude test/stdlib/NSValueBridging.swift.gyb -- needs StdlibUnittestFoundationExtras, test support this release does not build (line 23, "no such module 'StdlibUnittestFoundationExtras'")
@@ -73,7 +73,7 @@ include test/stdlib/objc-array-slice.swift
 exclude validation-test/stdlib/ArrayBridging.swift -- upstream disables it (REQUIRES: rdar88637598)
 exclude validation-test/stdlib/ArrayTrapsObjC.swift -- RUN has more than one executable step (it builds and runs the test at -Onone and at -O)
 exclude validation-test/stdlib/ArraysObjc.swift.gyb -- upstream disables it (REQUIRES: rdar88581116)
-exclude validation-test/stdlib/CoreGraphics-execute.swift -- does not compile against the 10.9 SDK: its CGEvent enums are plain UInt32 typedefs there (line 75, "type 'CGEventMouseSubtype' (aka 'UInt32') has no member 'defaultType'"), it names CGRectNull and CGRectInfinite with no Swift member name (line 364, "type 'CGRect' has no member 'null'"), and it has no nullability (line 282, "value of optional type 'CFDictionary?' must be unwrapped")
+exclude validation-test/stdlib/CoreGraphics-execute.swift -- does not compile against the 10.9 SDK: its CGEvent enums are plain UInt32 typedefs there (line 75, "type 'CGEventMouseSubtype' (aka 'UInt32') has no member 'defaultType'"; CGEventSourceStateID, line 86, and CGEventTapOptions, line 97, too), and CGPointCreateDictionaryRepresentation carries no nullability, so point.dictionaryRepresentation (line 281) is CFDictionary? and its use at line 282 does not type-check (the diagnostic's line: "value of optional type 'CFDictionary?' must be unwrapped to a value of type 'CFDictionary'")
 exclude validation-test/stdlib/CoreGraphics-verifyOnly.swift -- RUN uses %target-typecheck-verify-swift
 exclude validation-test/stdlib/Data.swift -- needs StdlibCollectionUnittest, test support this release does not build (line 6, "no such module 'StdlibCollectionUnittest'")
 exclude validation-test/stdlib/DictionaryBridging.swift -- RUN uses %target-clang

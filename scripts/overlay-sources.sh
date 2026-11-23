@@ -143,7 +143,7 @@ done
 #       which links Recaulk's real dispatch_activate, as for every other function 10.9's libSystem lacks, rather than
 #       import dispatch_activate itself, which only a program linked with Recaulk would load.
 #  0007 is retired: Recaulk now declares and defines dispatch_block_wait and _notify.
-#  0017 .. 0021 apinotes -- CoreGraphics.apinotes and Foundation.apinotes, swift-4.0's, for what the 5.4 overlays read
+#  0017 .. 0021, 0044, 0048 apinotes -- CoreGraphics.apinotes and Foundation.apinotes, swift-4.0's, for what the 5.4 overlays read
 #       and 10.9 declares but 4.0's notes leave unnamed:
 #       0017 CoreGraphics.swift's getters (numberOfComponents, model, baseColorSpace, the CGRect minX .. height), named
 #            as later SDKs name them;
@@ -155,7 +155,8 @@ done
 #            NSTimeZone rather than id, so they import as initializers; the NSCalendar and NSIndexSet blocks are
 #            NoEscape, as later SDKs' NS_NOESCAPE has them;
 #       0021 -[NSURL checkResourceIsReachableAndReturnError:] does not throw, as NS_SWIFT_NOTHROW has it later;
-#       0044 CGRectEdge, a plain C enum in 10.9, is a closed enum, as later SDKs' CF_CLOSED_ENUM has it.
+#       0044 CGRectEdge, a plain C enum in 10.9, is a closed enum, as later SDKs' CF_CLOSED_ENUM has it;
+#       0048 CGRectNull and CGRectInfinite are CGRect.null and CGRect.infinite, as later SDKs' API notes name them.
 #  0022 .. 0041, 0043, 0045, 0046 Foundation -- the shims and sources, for the 10.9 SDK, which predates much of what
 #       5.4 calls. Where 5.4 names a later spelling of what 10.9 declares, it is renamed; where it names a constant
 #       neither declares, it is named by value; where it names a class or method neither the 10.9 SDK nor Recaulk
@@ -179,7 +180,7 @@ done
 #  0042 is retired: Recaulk declares -[NSObject init] nonnull, so an untyped let of its result is not optional.
 OVERLAY_PATCHES="0001 0002 0003 0004 0005 0006 0008 0009 0010 0011 0012 0013 0014 0015 0016 0017 0018 0019 0020 0021
   0022 0023 0024 0025 0026 0027 0028 0029 0030 0031 0032 0033 0034 0035 0036 0037 0038 0039 0040 0041 0043
-  0044 0045 0046 0047"
+  0044 0045 0046 0047 0048"
 PATCHES_DIR="$HERE/patches/overlays"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $OVERLAY_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED" >&2
@@ -263,6 +264,7 @@ fmark 0044 apinotes/CoreGraphics.apinotes "Mavericks: 10.9 declares CGRectEdge a
 fmark 0045 stdlib/public/Darwin/Foundation/URL.swift "Mavericks: no isApplication or applicationIsScriptable" "foundation-url-no-post-10.9-resource-keys"
 fmark 0046 stdlib/public/Darwin/Foundation/Calendar.swift "Mavericks: NSCalendarIdentifierIslamicTabular and" "foundation-calendar-names-the-10.10-islamic-calendars-by-value"
 fmark 0047 stdlib/public/Darwin/Foundation/NSDictionary.swift "Mavericks: an empty NSDictionary is an empty Dictionary: for no" "foundation-dictionary-bridges-an-empty-nsdictionary"
+fmark 0048 apinotes/CoreGraphics.apinotes "Mavericks: 10.9 names CGRectNull and CGRectInfinite with no Swift member name" "coregraphics-apinotes-rect-null-and-infinite"
 cp "$P/ObjectiveC.swift" "$OUT/ObjectiveC/"
 for f in $DFILES; do cp "$PD/$f" "$OUT/Dispatch/"; done
 cp "$PS/DispatchOverlayShims.h" "$OUT/Dispatch/shims/"
