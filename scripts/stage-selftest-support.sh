@@ -18,7 +18,8 @@
 #          The modules are binary .swiftmodule files, which only the compiler that wrote them reads: the one
 #          that built this release's stdlib. In CI that is the same run's cross toolchain (build-cross), the
 #          same Swift and the same release as the native toolchain vm-test installs and builds the bundle
-#          with on 10.9; a local bundle is built by the host toolchain build.sh ran with.
+#          with on 10.9; a local bundle is built by the host toolchain build.sh ran with: on Linux always the
+#          prefix SWIFT_HOST_TOOLCHAIN names, which make-selftest.sh's default mode compiles with too.
 #   Env: PYTHON (gyb's and upstream-tests.py's python, default python3).
 set -eu
 [ $# -eq 4 ] || { echo "usage: stage-selftest-support.sh <stdlib-build> <tree> <lists-dir> <out>" >&2; exit 2; }

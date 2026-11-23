@@ -29,7 +29,7 @@
 #     libuuid (the host needs uuid-dev and pkg-config); the seed's lld links swift-frontend, with --gc-sections.
 #     Its result is staged as a toolchain prefix, $SWIFT_WORK/toolchain-linux, laid out where build.sh reads the
 #     cross toolchain's in CI, so build.sh takes it as SWIFT_HOST_TOOLCHAIN: bin/swift-frontend (bin/swiftc a
-#     link to it), clang with clang.cfg and clang++.cfg, ld64.lld, lib/swift with the seed's libswiftCore.so in
+#     link to it), clang with clang.cfg and clang++.cfg, ld64.lld, dsymutil (swiftc -g's), lib/swift with the seed's libswiftCore.so in
 #     lib/swift/linux (the frontend's RUNPATH), clang's headers and build-builtins.sh's archive.
 # All three hosts' clang default to the lld beside them, with one pinned host linker version
 # (HOST_LINK_VERSION below). They share every source, pin and patch but compiler patches 0002 (x86_64's
@@ -469,10 +469,13 @@ linux)
   rm -rf "$P" && mkdir -p "$P/bin" "$P/lib/clang/$CLANG_V/lib/darwin" || exit 1
   # Copies, not links into the build dirs: the prefix stands alone. lib/swift's links into the compiler's
   # source are copied as files; the seed's libswiftCore.so is the one Swift library swift-frontend loads.
+  # platform: swiftc -g links an executable through dsymutil, which the driver looks for beside swift-frontend
+  #           (as the shipped toolchains carry theirs); clang22's Linux archive has none, so without this copy
+  #           every -g link here (make-selftest.sh's upstream tests) fails at generate-dSYM.
   cp "$S/bin/swift-frontend" "$P/bin/swift-frontend" && ln -s swift-frontend "$P/bin/swiftc" \
     && cp "$L/bin/clang" "$P/bin/clang" && ln -s clang "$P/bin/clang++" \
     && cp "$HERE/toolchain/clang.cfg" "$P/bin/clang.cfg" && cp "$HERE/toolchain/clang.cfg" "$P/bin/clang++.cfg" \
-    && cp "$L/bin/lld" "$P/bin/ld64.lld" \
+    && cp "$L/bin/lld" "$P/bin/ld64.lld" && cp "$L/bin/dsymutil" "$P/bin/dsymutil" \
     && cp -RL "$S/lib/swift" "$P/lib/swift" && mkdir -p "$P/lib/swift/linux" \
     && cp "$SEED/lib/swift/linux/libswiftCore.so" "$P/lib/swift/linux/libswiftCore.so" \
     && cp -R "$CLANG_INC" "$P/lib/clang/$CLANG_V/include" && rm -rf "$P/lib/swift/clang" && ln -s "../clang/$CLANG_V" "$P/lib/swift/clang" \

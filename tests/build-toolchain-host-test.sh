@@ -29,7 +29,7 @@
 #   its clang and clang++ compile, its swiftc compiles the Swift half (HOSTTOOLS), the cmake on PATH
 #   configures, build-llvm.sh's TableGen, compiler patches 0001, 0003, 0004, 0005 and 0006 in its own checkout,
 #   no Dispatch, pkg-config looked for (uuid-dev is required first), lld with --gc-sections; it stages the
-#   prefix build.sh takes as SWIFT_HOST_TOOLCHAIN, with the seed's libswiftCore.so, and refuses a clang whose
+#   prefix build.sh takes as SWIFT_HOST_TOOLCHAIN, with the seed's libswiftCore.so and its own dsymutil, and refuses a clang whose
 #   default triple (read without its cfgs), or a swift-frontend whose default target, is not
 #   x86_64-apple-macosx10.9; its OK line says when it has no builtins. --host linux on Darwin, and any other host on Linux, is
 #   refused before anything runs.
@@ -138,7 +138,7 @@ cat > "$T/bin/ninja" <<F
 { echo "ninja"; for a in "\$@"; do echo "  \$a"; done; } >> "$T/log"
 case "\$2" in
   */llvm-linux) mkdir -p "\$2/bin" "\$2/lib/clang/21/include"; echo hdr > "\$2/lib/clang/21/include/stddef.h"
-                cp "$T/tpl/clang" "\$2/bin/clang"; echo lld > "\$2/bin/lld" ;;
+                cp "$T/tpl/clang" "\$2/bin/clang"; echo lld > "\$2/bin/lld"; echo dsymutil > "\$2/bin/dsymutil" ;;
   */swift-linux) mkdir -p "\$2/bin" "\$2/lib/swift/migrator" "\$2/lib/swift/linux"; echo mig > "\$2/lib/swift/migrator/macos4.json"
                  cp "$T/tpl/swift-frontend" "\$2/bin/swift-frontend" ;;
 esac
@@ -457,7 +457,7 @@ lacks linux "llvm-x86"
 if grep -q '^git ' "$T/linux.log"; then fail "linux ran git"; fi
 grep -qx '    host: Swift version 6.4.2 (swift.org seed)' "$T/linux.out" || fail "linux: did not print the seed's version: $(cat "$T/linux.out")"
 P="$W/toolchain-linux"
-for f in bin/swift-frontend bin/clang bin/clang.cfg bin/clang++.cfg bin/ld64.lld lib/swift/migrator/macos4.json \
+for f in bin/swift-frontend bin/clang bin/clang.cfg bin/clang++.cfg bin/ld64.lld bin/dsymutil lib/swift/migrator/macos4.json \
          lib/clang/21/include/stddef.h; do
   [ -f "$P/$f" ] && [ ! -L "$P/$f" ] || fail "linux: the prefix holds no file $f: $(cat "$T/linux.out")"
 done

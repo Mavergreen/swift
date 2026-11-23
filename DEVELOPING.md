@@ -238,6 +238,7 @@ An x86_64 Linux host (Ubuntu 24.04) builds the same runtime payload as a Mac's c
 P="${SWIFT_WORK:-$MAVERICKS_BUILD_ROOT/swift/work}/toolchain-linux"
 V="$(. ./pins.env && echo "$SWIFT_VERSION")-local"    # the release a prefix with no mavergreen.plist declares
 SWIFT_HOST_TOOLCHAIN="$P" SWIFT_HOST_TOOLCHAIN_VERSION="$V" ./build.sh
+SWIFT_HOST_TOOLCHAIN="$P" SELFTEST_SUPPORT="$MAVERICKS_BUILD_ROOT/swift/payload/selftest-support" ./make-selftest.sh
 ```
 
 `build-builtins.sh` comes before `build-toolchain.sh --host linux`, whose prefix carries its archive (without
@@ -245,6 +246,13 @@ it, the prefix is staged without builtins and says so). On Linux `build.sh` runs
 refuses to run without `SWIFT_HOST_TOOLCHAIN`: the swift.org seed branch needs `pkgutil` and `ditto`. It
 reads Mach-O with clang22's `llvm-otool`, `llvm-nm` and `llvm-strings`, and stages the payload in
 `$MAVERICKS_BUILD_ROOT/swift/payload/runtime`, as on a Mac. The Linux-hosted compiler ships in no package.
+
+`make-selftest.sh` builds the self-test bundle with that same prefix's compiler, so every test is built, the
+ones that need compiler patch 0003 and upstream's concurrency tests included (its `dsymutil` links the `-g`
+ones); without `SWIFT_HOST_TOOLCHAIN` it refuses to run on Linux. Its `SWIFTC=` mode rewrites rpaths there with
+clang22's `llvm-install-name-tool` (`CLANG22_PREFIX`) or `INSTALL_NAME_TOOL`. The bundle runs on 10.9 as one
+built anywhere does; vm-test's `bundle_mode: prebuilt` gates such a bundle against a runtime pkg, for
+iteration only, while a release is always gated by the bundle compiled in the guest (`compile`).
 
 ## A Swift bump
 

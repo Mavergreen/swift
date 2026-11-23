@@ -25,8 +25,12 @@ y=""; while [ \$# -gt 0 ]; do case "\$1" in -ivfsoverlay) y="\$3"; shift ;; -o) 
 [ -z "\$y" ] || cp "\$y" "$T/yaml-seen"
 EOF2
 chmod +x "$T/tc/usr/bin/swiftc"
+# platform: the default mode with TC= is a Mac's (on Linux it takes SWIFT_HOST_TOOLCHAIN, whose importer flags are
+#           the same); a fake uname makes it one on either host
+unset SWIFT_HOST_TOOLCHAIN
+mkdir -p "$T/darwin"; printf '#!/bin/sh\necho Darwin\n' > "$T/darwin/uname"; chmod +x "$T/darwin/uname"
 run() {  # run <env assignments>... -- the default mode over the fake toolchain
-  env TC="$T/tc/usr" SWIFT_WORK="$T/work" DIST="$T/dist" SELFTEST_SRC="$T/src" TMPDIR="$T/tmp" "$@" sh "$REPO/make-selftest.sh" > "$T/log" 2>&1
+  env PATH="$T/darwin:$PATH" TC="$T/tc/usr" SWIFT_WORK="$T/work" DIST="$T/dist" SELFTEST_SRC="$T/src" TMPDIR="$T/tmp" "$@" sh "$REPO/make-selftest.sh" > "$T/log" 2>&1
 }
 
 rm -f "$T/argv"
