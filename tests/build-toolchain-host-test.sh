@@ -30,7 +30,8 @@
 #   configures, build-llvm.sh's TableGen, compiler patches 0001, 0003, 0004, 0005 and 0006 in its own checkout,
 #   no Dispatch, pkg-config looked for (uuid-dev is required first), lld with --gc-sections; it stages the
 #   prefix build.sh takes as SWIFT_HOST_TOOLCHAIN, with the seed's libswiftCore.so, and refuses a clang whose
-#   default triple is not x86_64-apple-macosx10.9. --host linux on Darwin, and any other host on Linux, is
+#   default triple (read without its cfgs), or a swift-frontend whose default target, is not
+#   x86_64-apple-macosx10.9; its OK line says when it has no builtins. --host linux on Darwin, and any other host on Linux, is
 #   refused before anything runs.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -117,11 +118,20 @@ printf '#!/bin/sh\nif [ -n "${FAKE_UNAME:-}" ] && [ "$1" = -s ]; then echo "$FAK
 printf '#!/bin/sh\necho "pkg-config $*" >> "%s/log"\n[ -z "${FAKE_NO_UUID:-}" ]\n' "$T" > "$T/bin/pkg-config"
 # ninja records its arguments and, in a Linux build dir, leaves what that build makes (from $T/tpl).
 mkdir -p "$T/tpl"
+# clang: its own default target without its cfgs (FAKE_TRIPLE), and, read through them, the cfgs'
+# -mmacosx-version-min's, which masks a bad default.
 cat > "$T/tpl/clang" <<'F'
 #!/bin/sh
-[ "$1" = -print-target-triple ] && echo "${FAKE_TRIPLE:-x86_64-apple-macosx10.9}"
+case "$*" in
+  '--no-default-config -print-target-triple') echo "${FAKE_TRIPLE:-x86_64-apple-macosx10.9}" ;;
+  -print-target-triple) echo x86_64-apple-macosx10.9 ;;
+  *) exit 9 ;;
+esac
 F
-printf '#!/bin/sh\necho "Swift version 6.4.2 (linux frontend)"\n' > "$T/tpl/swift-frontend"
+cat > "$T/tpl/swift-frontend" <<'F'
+#!/bin/sh
+echo "Swift version 6.4.2 (linux frontend)"; echo "Target: ${FAKE_FE_TARGET:-x86_64-apple-macosx10.9}"
+F
 chmod +x "$T/tpl/"*
 cat > "$T/bin/ninja" <<F
 #!/bin/sh
@@ -437,6 +447,7 @@ for f in -DCMAKE_C_COMPILER=\<T\>/seed/usr/bin/clang -DCMAKE_CXX_COMPILER=\<T\>/
   has linux "  $f"
 done
 lacks linux "CMAKE_DISABLE_FIND_PACKAGE_PkgConfig"
+lacks linux "CMAKE_LINKER"   # an Apple host's reason (clang's `ld -v`); nothing on Linux reads it
 lacks linux "CMAKE_OSX_"
 lacks linux "MacOSX"
 lacks linux "clang22"
@@ -464,11 +475,18 @@ mv "$W/builtins-x86" "$T/builtins.away"
 mv "$T/builtins.away" "$W/builtins-x86"
 [ ! -e "$P/lib/clang/21/lib/darwin/libclang_rt.osx.a" ] || fail "linuxnort: staged a builtins archive from nowhere"
 grep -q 'no builtins archive at .*run build-builtins.sh' "$T/linuxnort.out" || fail "linuxnort: did not say so: $(cat "$T/linuxnort.out")"
-echo "   a clang whose default triple is not x86_64-apple-macosx10.9 (a host uname leaking into it) is refused"
+grep -qx "OK: the Linux toolchain prefix at $P (build.sh's SWIFT_HOST_TOOLCHAIN) (without builtins), targeting x86_64 / OS X 10.9" "$T/linuxnort.out" \
+  || fail "linuxnort: the OK line does not say the prefix is without builtins: $(cat "$T/linuxnort.out")"
+echo "   a clang whose default triple is not x86_64-apple-macosx10.9 (a host uname leaking into it) is refused,"
+echo "   though its cfgs mask it, and so is a swift-frontend whose default target is not"
 if (export FAKE_UNAME=Linux FAKE_TRIPLE=x86_64-apple-darwin6.8.0-1017-azure; run linuxtriple cross --host linux); then
   fail "passed a clang whose default triple is x86_64-apple-darwin6.8.0-1017-azure"; fi
 grep -q "default target is x86_64-apple-darwin6.8.0-1017-azure, not x86_64-apple-macosx10.9" "$T/linuxtriple.out" || fail "linuxtriple: $(cat "$T/linuxtriple.out")"
 if grep -q '^OK:' "$T/linuxtriple.out"; then fail "linuxtriple printed OK"; fi
+if (export FAKE_UNAME=Linux FAKE_FE_TARGET=x86_64-apple-macosx10.3-2-t2-noble; run linuxfe cross --host linux); then
+  fail "passed a swift-frontend whose default target is x86_64-apple-macosx10.3-2-t2-noble"; fi
+grep -q "swift-frontend's default target is not x86_64-apple-macosx10.9" "$T/linuxfe.out" || fail "linuxfe: $(cat "$T/linuxfe.out")"
+if grep -q '^OK:' "$T/linuxfe.out"; then fail "linuxfe printed OK"; fi
 echo "   no uuid-dev: refused before anything is fetched or configured"
 if (export FAKE_UNAME=Linux FAKE_NO_UUID=1; run linuxnouuid cross --host linux); then fail "built with no uuid-dev"; fi
 grep -q 'FAIL: .*uuid-dev' "$T/linuxnouuid.out" || fail "linuxnouuid: $(cat "$T/linuxnouuid.out")"

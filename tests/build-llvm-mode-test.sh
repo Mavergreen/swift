@@ -14,7 +14,8 @@
 #   place, when either differs. A tarball pin that does not match fails before anything is
 #   configured, naming the pin to refresh. On a Linux host (a faked uname) the swift.org Linux seed's clang and
 #   clang++ compile (fetch-linux-seed.sh), the cmake on PATH configures and installs, and ldd reads lld's
-#   libraries. On every host LLVMConfig.cmake's lit path is emptied.
+#   libraries; native mode there is refused before anything is fetched. On every host LLVMConfig.cmake's
+#   lit path is emptied.
 #   Nothing is built: every tool is a fake that records its arguments.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -200,6 +201,13 @@ lacks linux "clang22n"
 lacks linux "=/usr/bin/clang"
 if (export FAKE_UNAME=Linux FAKE_LDD_PKG=1; run linuxpkg cross); then fail "linux: passed an lld that loads a library from /opt/pkg"; fi
 grep -q 'links a library from /opt/pkg' "$T/linuxpkg.out" || fail "linuxpkg: $(cat "$T/linuxpkg.out")"
+
+echo "-- linux in native mode (OS X 10.9's): refused before anything is fetched"
+if (export FAKE_UNAME=Linux; run linuxnative native); then fail "built native mode on Linux"; fi
+grep -qx 'FAIL: on Linux the mode is cross' "$T/linuxnative.out" || fail "linuxnative: $(cat "$T/linuxnative.out")"
+lacks linuxnative "fetch_pinned_source"
+lacks linuxnative "fetch-linux-seed"
+lacks linuxnative "cmake"
 
 echo "-- a tarball pin that does not match: refused before anything is configured, naming the pin"
 if (FAKE_GOOD_SHA256=another run stale cross); then fail "built with a stale LLVM_TARBALL_SHA256"; fi

@@ -31,10 +31,10 @@
 #     cross toolchain's in CI, so build.sh takes it as SWIFT_HOST_TOOLCHAIN: bin/swift-frontend (bin/swiftc a
 #     link to it), clang with clang.cfg and clang++.cfg, ld64.lld, lib/swift with the seed's libswiftCore.so in
 #     lib/swift/linux (the frontend's RUNPATH), clang's headers and build-builtins.sh's archive.
-# Both hosts' clang default to the lld beside them, with one pinned host linker version
-# (HOST_LINK_VERSION below). They share every source, pin and patch but compiler patch 0002 (lib.sh's
-# compiler_patches), and each has its own build dirs and compiler checkout (lib.sh's
-# toolchain_host_select). The sources are GitHub's tarballs of the pinned commits, verified by pins.env's
+# All three hosts' clang default to the lld beside them, with one pinned host linker version
+# (HOST_LINK_VERSION below). They share every source, pin and patch but compiler patches 0002 (x86_64's
+# alone) and 0006 (linux's alone; lib.sh's compiler_patches), and each has its own build dirs and compiler
+# checkout (lib.sh's toolchain_host_select, and for linux the case arm below). The sources are GitHub's tarballs of the pinned commits, verified by pins.env's
 # SHA-256s and patched with the OS's patch; no git runs, and LLVM's, clang's and lld's version stamps are
 # forced to LLVM_SHA and its repository (Swift's own, which reaches no shipped byte, is off). Run after build-llvm.sh (and, for arm64, mirror-toolchain.sh and build.sh;
 # for linux, build-builtins.sh, whose archive the prefix carries).
@@ -227,7 +227,8 @@ arm64)
     -DCMAKE_LINKER="$NATIVE/bin/ld64.lld" -DCLANG_DEFAULT_LINKER=lld -DHOST_LINK_VERSION="$HOST_LINK_VERSION"
   ;;
 linux)
-  # arm64's configuration on the seed's clang: X86 alone, build-llvm.sh's TableGen, the same clang defaults.
+  # arm64's configuration on the seed's clang: X86 alone, build-llvm.sh's TableGen, the same clang defaults,
+  # but no CMAKE_LINKER: arm64 names an lld only so that clang's CMake, on an Apple host, runs no `ld -v`.
   # llvm patch 0006 keeps the host's uname out of the default x86_64-apple-macosx10.9 triple.
   echo "==> 1. LLVM + clang + lld for a Linux x86_64 host (the seed's clang, $SEED)"
   linux_cmake -S llvm-project/llvm -B "$L" \
@@ -239,7 +240,7 @@ linux)
     -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_TERMINFO=OFF \
     -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_ENABLE_ONDISK_CAS=OFF \
     -DLLVM_FORCE_VC_REVISION="$LLVM_SHA" -DLLVM_FORCE_VC_REPOSITORY="$LLVM_REPO_URL" -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON \
-    -DCMAKE_LINKER="$NATIVE/bin/ld64.lld" -DCLANG_DEFAULT_LINKER=lld -DHOST_LINK_VERSION="$HOST_LINK_VERSION"
+    -DCLANG_DEFAULT_LINKER=lld -DHOST_LINK_VERSION="$HOST_LINK_VERSION"
   ;;
 esac
 printf '%s\n' "$LLVM_SRC" > "$L/mavergreen-inputs.stamp"
@@ -305,11 +306,13 @@ else
   echo "==> 4. no native helper tools: this build runs the helpers it builds"
 fi
 
-# Both hosts' Swift build: the revision stamp off (the source is a tarball, and its SwiftRevision.inc is
-# dead-stripped from swift-frontend, T5a recheck row 3), and git, LibEdit, LibXml2 and pkg-config never
-# looked for, so what the host has on PATH changes nothing. Word-split on use: no spaces.
+# Every host's Swift build: the revision stamp off (the source is a tarball, and its SwiftRevision.inc is
+# dead-stripped from swift-frontend, T5a recheck row 3), and git, LibEdit and LibXml2 never looked for, nor,
+# on the x86_64 and arm64 hosts, pkg-config, so what the host has on PATH changes nothing. Word-split on use:
+# no spaces.
 SWIFT_UNFOUND="-DSWIFT_APPEND_VC_REV=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibEdit=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibXml2=ON"
-# platform: on Linux lib/Basic finds libuuid through pkg-config, so pkg-config is looked for there.
+# platform: on Linux lib/Basic finds libuuid through pkg-config, so the linux host looks for pkg-config
+#           (and refuses to start without it and uuid-dev, above).
 case "$HOST" in
   linux) ;;
   *) SWIFT_UNFOUND="$SWIFT_UNFOUND -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON" ;;
@@ -473,13 +476,18 @@ linux)
     && cp "$SEED/lib/swift/linux/libswiftCore.so" "$P/lib/swift/linux/libswiftCore.so" \
     && cp -R "$CLANG_INC" "$P/lib/clang/$CLANG_V/include" && rm -rf "$P/lib/swift/clang" && ln -s "../clang/$CLANG_V" "$P/lib/swift/clang" \
     || { echo "FAIL: could not stage $P"; exit 1; }
-  B="$W/builtins-x86/lib/darwin/libclang_rt.osx.a"
+  B="$W/builtins-x86/lib/darwin/libclang_rt.osx.a"; NO_BUILTINS=""
   if [ -f "$B" ]; then cp "$B" "$P/lib/clang/$CLANG_V/lib/darwin/libclang_rt.osx.a"
-  else echo "    no builtins archive at $B: $P has none until you run build-builtins.sh and this again (build.sh needs it, or SWIFT_BUILTINS)"; fi
-  "$P/bin/swift-frontend" -version 2>&1 | sed 's/^/    staged: /'
-  "$P/bin/swift-frontend" -version >/dev/null 2>&1 || { echo "FAIL: $P/bin/swift-frontend does not run (its lib/swift/linux/libswiftCore.so?)"; exit 1; }
-  TRIPLE="$("$P/bin/clang" -print-target-triple)" || { echo "FAIL: $P/bin/clang does not run"; exit 1; }
+  else NO_BUILTINS=" (without builtins)"
+       echo "    no builtins archive at $B: $P has none until you run build-builtins.sh and this again (build.sh needs it, or SWIFT_BUILTINS)"; fi
+  # Both default targets must be the pinned triple, read where no flag can stand in for it: llvm patch 0006
+  # keeps the host's uname out of it. clang without its cfgs, whose -mmacosx-version-min would mask a bad one.
+  FE_V="$("$P/bin/swift-frontend" -version 2>&1)" || { printf '%s\n' "$FE_V"; echo "FAIL: $P/bin/swift-frontend does not run (its lib/swift/linux/libswiftCore.so?)"; exit 1; }
+  printf '%s\n' "$FE_V" | sed 's/^/    staged: /'
+  printf '%s\n' "$FE_V" | grep -qx 'Target: x86_64-apple-macosx10.9' \
+    || { echo "FAIL: $P/bin/swift-frontend's default target is not x86_64-apple-macosx10.9 (llvm patch 0006?)"; exit 1; }
+  TRIPLE="$("$P/bin/clang" --no-default-config -print-target-triple)" || { echo "FAIL: $P/bin/clang does not run"; exit 1; }
   [ "$TRIPLE" = x86_64-apple-macosx10.9 ] || { echo "FAIL: $P/bin/clang's default target is $TRIPLE, not x86_64-apple-macosx10.9 (llvm patch 0006?)"; exit 1; }
-  echo "OK: the Linux toolchain prefix at $P (build.sh's SWIFT_HOST_TOOLCHAIN), targeting x86_64 / OS X 10.9"
+  echo "OK: the Linux toolchain prefix at $P (build.sh's SWIFT_HOST_TOOLCHAIN)$NO_BUILTINS, targeting x86_64 / OS X 10.9"
   ;;
 esac

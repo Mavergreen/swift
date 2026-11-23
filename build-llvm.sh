@@ -27,6 +27,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$ROOT"; cd "$ROOT"
 OUT="$SWIFT_BUILD/out/llvm"
 
+MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
+HOST_OS="$(uname -s)"
+# platform: native mode is OS X 10.9's; a Linux host builds as cross mode does, with the Linux seed's clang.
+case "$HOST_OS:$MODE" in
+  Linux:native) echo "FAIL: on Linux the mode is cross"; exit 1 ;;
+esac
+
 echo "==> 1. pinned llvm-project source (GitHub's tarball of LLVM_SHA, verified by LLVM_TARBALL_SHA256)"
 check_release_pin llvm-project "$LLVM_SWIFT_RELEASE" "$LLVM_TAG" "$LLVM_SHA" "$LLVM_REPO_URL" || exit 1
 # Extracted afresh every run, so the patches below start from upstream's bytes.
@@ -45,8 +52,6 @@ echo "==> 2. configure + build TableGen and lld (libswiftCore does not link LLVM
 #       product, and this repo's build.sh consumes them with shipyard-cmake. Generating them
 #       with one CMake and consuming them with another is the mismatch this repo exists to prevent,
 #       so the same pinned shipyard-cmake writes them.
-MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
-HOST_OS="$(uname -s)"
 case "$HOST_OS:$MODE" in
   # platform: Linux has no /usr/bin/clang; the Linux seed's clang is the one build-toolchain.sh --host linux
   #           compiles with too.
