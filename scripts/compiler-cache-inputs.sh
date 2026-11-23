@@ -2,7 +2,7 @@
 # platform: host-agnostic
 # usage: sh scripts/compiler-cache-inputs.sh [--hash] SCRIPT...
 #   What the Linux-hosted compiler's build reads, for the key it is cached under. SCRIPT... are the repo
-#   scripts that build runs, as linux-build.yml names them once (COMPILER_BUILD). Prints, sorted, one per line:
+#   scripts that build runs, as release.yml names them once (COMPILER_BUILD). Prints, sorted, one per line:
 #     repo/<path>      every tracked file those scripts name through a variable ("$HERE/lib.sh",
 #                      "$HERE"/patches/llvm/*.patch, "$HERE/patches/compiler", lib.sh's "$2/fetch-clang22.sh") or
 #                      beside themselves ("$(dirname "$0")/../msc.sh"), and in turn every shell file among them

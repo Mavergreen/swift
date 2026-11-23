@@ -2,8 +2,8 @@
 # platform: host-agnostic
 # usage: sh tests/vm-test-workflow-test.sh
 #   Every run is accepted on Mac OS X 10.9 by release.yml's vm-test job (id and name vm-test, the required check;
-#   needing version, build-cross and build; publish waits for it), in bundle_mode compile, and every push's Linux
-#   runtime by linux-runtime.yml's vm-test-prebuilt, in prebuilt. Each job checks out, fetches what its guest
+#   needing version, build-cross and build; publish waits for it), in bundle_mode compile, and the same run's Linux
+#   runtime by release.yml's vm-test-prebuilt (needing version and linux-runtime; publish does not wait), in prebuilt. Each job checks out, fetches what its guest
 #   installs with .github/actions/vm-test, and boots Mavergreen/mavericks-vm's guest in a step of its own, so the
 #   job itself holds the VM step, its key, its runner, its timeout and its permissions; the action holds no secret.
 #   compile, the release gate: the action downloads swift-cross and swift-native and the previous release; the guest
@@ -28,12 +28,14 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 # guest <job file> <out> -- the job's Mavergreen/mavericks-vm step
 guest() { awk '/^      - / { if (s) exit; buf = "" } { buf = buf $0 "\n" } /^        uses: Mavergreen\/mavericks-vm@v1$/ { s = 1; printf "%s", buf; next } s' "$1" > "$2"; }
 
-# check <release.yml> <action.yml> <linux-runtime.yml>
+# check <release.yml, for vm-test> <action.yml> <release.yml, for vm-test-prebuilt>
 check() {
   awk '/^  vm-test:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" > "$T/rj"
   [ -s "$T/rj" ] || { echo "release.yml has no vm-test job"; return 1; }
   awk '/^  vm-test-prebuilt:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$3" > "$T/lj"
-  [ -s "$T/lj" ] || { echo "linux-runtime.yml has no vm-test-prebuilt job"; return 1; }
+  [ -s "$T/lj" ] || { echo "release.yml has no vm-test-prebuilt job"; return 1; }
+  grep -qx '    needs: \[version, linux-runtime\]' "$T/lj" || { echo "vm-test-prebuilt does not need version and linux-runtime"; return 1; }
+  grep -qx '          prebuilt_artifact: swift-linux' "$T/lj" || { echo "vm-test-prebuilt does not gate linux-runtime's swift-linux"; return 1; }
   grep -qx '    name: vm-test' "$T/rj" || { echo "release.yml's vm-test job is not named vm-test, the required check"; return 1; }
   grep -qx '    needs: \[version, build-cross, build\]' "$T/rj" || { echo "vm-test does not need build-cross and build"; return 1; }
   for j in rj lj; do
@@ -96,7 +98,7 @@ check() {
   grep -qF "pkgutil --files dev.mavergreen.swift-runtime | grep 'swift-runtime-updater\\.app/Contents/MacOS/swift-runtime-updater\$'" "$T/prebuilt" && grep -q '! grep -q .^dyld: .' "$T/prebuilt" \
     || { echo "prebuilt mode does not find the runtime's updater in its receipt and fail when dyld cannot load it"; return 1; }
   grep -qF 'got="$(pkgutil --pkg-info dev.mavergreen.swift-runtime | sed -n '"'s/^version: //p'"')"' "$T/prebuilt" && grep -q '\[ "\$got" = "\$SWIFT_FULL_VERSION" \]' "$T/prebuilt" \
-    && grep -qx '          SWIFT_FULL_VERSION: ${{ needs.build.outputs.version }}' "$T/prebuilt" \
+    && grep -qx '          SWIFT_FULL_VERSION: ${{ needs.version.outputs.version }}' "$T/prebuilt" \
     || { echo "prebuilt mode does not hold the runtime's receipt to the build's version"; return 1; }
   grep -q 'sh swift-runtime-selftest/run-selftest\.sh --loads &&$' "$T/prebuilt" && grep -q '^ *sh swift-runtime-selftest/run-selftest\.sh --gate )$' "$T/prebuilt" \
     && awk '/run-selftest\.sh --loads/ { l = NR } /run-selftest\.sh --gate/ { g = NR } END { exit !(l && l < g) }' "$T/prebuilt" \
@@ -132,7 +134,7 @@ check() {
   if grep -qi 'rosetta\|arch -x86_64' "$1" "$2" "$3"; then echo "a workflow still runs something under Rosetta"; return 1; fi
 }
 
-R="$REPO/.github/workflows/release.yml"; A="$REPO/.github/actions/vm-test/action.yml"; L="$REPO/.github/workflows/linux-runtime.yml"
+R="$REPO/.github/workflows/release.yml"; A="$REPO/.github/actions/vm-test/action.yml"; L="$R"
 [ -f "$A" ] || fail "no .github/actions/vm-test/action.yml"
 [ ! -e "$REPO/.github/workflows/vm-test.yml" ] || fail ".github/workflows/vm-test.yml is still here: the action replaced it"
 check "$R" "$A" "$L" > "$T/why" || fail "$(cat "$T/why")"
@@ -140,7 +142,15 @@ check "$R" "$A" "$L" > "$T/why" || fail "$(cat "$T/why")"
 mk() { sed "$3" "$2" > "$T/m.yml"; cmp -s "$2" "$T/m.yml" && fail "the mutant where $1 changed nothing"; :; }
 amutant() { mk "$1" "$A" "$2"; if check "$R" "$T/m.yml" "$L" > "$T/why"; then fail "the check passed an action where $1"; fi; }
 rmutant() { mk "$1" "$R" "$2"; if check "$T/m.yml" "$A" "$L" > "$T/why"; then fail "the check passed a release.yml where $1"; fi; }
-lmutant() { mk "$1" "$L" "$2"; if check "$R" "$A" "$T/m.yml" > "$T/why"; then fail "the check passed a linux-runtime.yml where $1"; fi; }
+# lmutant <why> <sed> -- release.yml with only vm-test-prebuilt's lines (its id line on) put through <sed>
+lmutant() {
+  awk -v d="$T" '/^  [a-z-]+:$/ { p = ($0 == "  vm-test-prebuilt:") ? 2 : (p == 2 ? 3 : p) } { print > (d "/part." (p ? p : 1)) }' "$L"
+  [ -s "$T/part.2" ] || fail "release.yml has no vm-test-prebuilt to mutate"
+  touch "$T/part.3"; sed "$2" "$T/part.2" > "$T/part.2m"
+  cmp -s "$T/part.2" "$T/part.2m" && fail "the mutant where vm-test-prebuilt $1 changed nothing"
+  cat "$T/part.1" "$T/part.2m" "$T/part.3" > "$T/m.yml"; rm -f "$T"/part.*
+  if check "$R" "$A" "$T/m.yml" > "$T/why"; then fail "the check passed a release.yml whose vm-test-prebuilt $1"; fi
+}
 rmutant "vm-test is gone" 's/^  vm-test:$/  vm-gone:/'
 rmutant "vm-test's check is renamed" 's/^    name: vm-test$/    name: vm-test (compile)/'
 rmutant "vm-test needs only build" 's/^    needs: \[version, build-cross, build\]$/    needs: [build]/'
@@ -189,7 +199,8 @@ amutant "the action boots the VM itself" 's|^  steps:$|  steps:\
     - uses: Mavergreen/mavericks-vm@v1|'
 amutant "the action reads a secret" 's|GH_TOKEN: \${{ github.token }}|GH_TOKEN: ${{ secrets.GH }}|'
 afirst "a run step names no shell" '      shell: bash'
-lmutant "vm-test-prebuilt is gone" 's/^  vm-test-prebuilt:$/  other:/'
+lmutant "is gone" 's/^  vm-test-prebuilt:$/  other:/'
+lmutant "does not wait for linux-runtime" 's/^    needs: \[version, linux-runtime\]$/    needs: [version]/'
 lmutant "prebuilt mode compiles in the guest" 's|^\(            mkdir gate\)$|            SWIFTC=/usr/local/mavergreen/bin/swiftc DIST="$PWD/gate" sh make-selftest.sh\
 \1|'
 lmutant "prebuilt mode runs the toolchain smoke" 's|^\(            mkdir gate\)$|            sh tests/toolchain-smoke-test.sh\
@@ -202,6 +213,6 @@ lmutant "prebuilt mode installs no clang22 for FileCheck" '/^            install
 lmutant "prebuilt mode does not hold the runtime receipt" 's/^\(            got="\$(pkgutil --pkg-info dev.mavergreen.swift-runtime\)/\1-other/'
 lmutant "prebuilt mode never launches the updater" '/DYLD_BIND_AT_LAUNCH=1 "\$u" --background/d'
 lmutant "a dyld failure of the updater passes" "/! grep -q '^dyld: '/d"
-lmutant "vm-test-prebuilt has no VM key" 's/^          image-key: \${{ secrets.MAVERICKS_VM_KEY }}$/          image-key: none/'
-lmutant "vm-test-prebuilt cannot pull the VM image" '/^  vm-test-prebuilt:$/,$ { /^      packages: write$/d; }'
+lmutant "has no VM key" 's/^          image-key: \${{ secrets.MAVERICKS_VM_KEY }}$/          image-key: none/'
+lmutant "cannot pull the VM image" '/^      packages: write$/d'
 echo "PASS: vm-test-workflow"

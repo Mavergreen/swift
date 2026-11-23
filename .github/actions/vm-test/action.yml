@@ -6,7 +6,7 @@ description: >-
 
 # compile (release.yml's vm-test, the release gate): build-cross's swift-cross (the runtime pkg and selftest-support)
 # and build's swift-native, and the previous release's runtime and native toolchain pkgs, to upgrade from.
-# prebuilt (linux-runtime.yml's vm-test-prebuilt, for iteration and never a release): only the caller's run's
+# prebuilt (release.yml's vm-test-prebuilt, the Linux-built bundle's gate, never a release's): only the run's
 # artifact that prebuilt_artifact names, a runtime pkg and the self-test bundle built beside it. No macOS job's
 # artifact and no previous release. The mode is checked first: compile or prebuilt, and never prebuilt when the
 # run publishes.

@@ -3,7 +3,7 @@
 # usage: sh scripts/build-runtime-updater.sh
 #   Builds swift-runtime-updater.app (Cocoa and Sparkle, x86_64, OS X 10.9) into $SWIFT_BUILD/build/updater, where
 #   package.sh takes it, and fails when it links a Swift runtime library: the runtime's updater must never need
-#   the runtime it updates. release.yml's build-cross and linux-build.yml's runtime job both run it, so the Mac
+#   the runtime it updates. release.yml's build-cross and linux-runtime jobs both run it, so the Mac
 #   and Linux runtime pkgs carry the same updater.
 # spec: shipyard's "The updater builds with clang22 on every host" -- clang22's target, flags and lld, and its Mach-O
 #       readers for the compat guard; mavericks_add_updater_app fetches the Sparkle framework itself.

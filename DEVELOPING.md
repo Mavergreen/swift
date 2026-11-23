@@ -268,12 +268,12 @@ stages under umask 022, and `package.sh` refuses a group- or world-writable entr
 
 ### In CI
 
-`.github/workflows/linux-runtime.yml` does all of this on every push, on Linux runners only (`linux-build.yml`),
-and gates the pkg and bundle it built on 10.9 (its `vm-test-prebuilt` job). release.yml calls `linux-build.yml`
-too, at the run's version, and its `equivalence` job compares that runtime pkg with build-cross's
-(`scripts/equivalence-warnings.sh`: warnings, never a failure; publish does not wait for it). The Linux-hosted compiler is cached under a key
-`scripts/compiler-cache-inputs.sh` computes from every file its build reads (`COMPILER_BUILD` in
-`linux-build.yml` names the scripts), so only a change to one of them rebuilds it: cold, in three jobs
+release.yml does all of this on every push, at the run's version, in jobs on Linux runners only, off the release's
+path: `linux-runtime` builds the pkg and the bundle, `vm-test-prebuilt` gates them on 10.9, and `equivalence`
+compares that runtime pkg with build-cross's (`scripts/equivalence-warnings.sh`: warnings, never a failure).
+publish waits for none of them. The Linux-hosted compiler is cached under a key `scripts/compiler-cache-inputs.sh`
+computes from every file its build reads (`COMPILER_BUILD`, in release.yml's `env`, names the scripts), so only a
+change to one of them rebuilds it: cold, in three `linux-compiler-*` jobs
 (`build-toolchain.sh --stop-after llvm` ends the second), because the whole build is longer than one job may run.
 
 ## A Swift bump

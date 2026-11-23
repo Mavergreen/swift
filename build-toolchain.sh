@@ -252,7 +252,7 @@ linux)
 esac
 printf '%s\n' "$LLVM_SRC" > "$L/mavergreen-inputs.stamp"
 ninja -C "$L" -j "$JOBS" llvm-libraries clang-libraries clang-resource-headers lld clang dsymutil
-# spec: linux-build.yml's compiler-llvm job -- a cold Linux build is longer than one CI job may run, so CI builds
+# spec: release.yml's linux-compiler-llvm job -- a cold Linux build is longer than one CI job may run, so CI builds
 #       LLVM in one job and the rest in the next, which runs this again without --stop-after over the same dirs.
 if [ "$STOP_AFTER" = llvm ]; then
   echo "OK: LLVM, clang, lld and dsymutil for the $HOST host at $L; build-toolchain.sh without --stop-after finishes the compiler"

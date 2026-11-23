@@ -2,7 +2,7 @@
 # platform: host-agnostic
 # usage: sh tests/cache-key-test.sh
 #   The Linux-hosted compiler is cached under a key that hashes what its build reads
-#   (scripts/compiler-cache-inputs.sh over linux-build.yml's COMPILER_BUILD), so a cached compiler can never pass
+#   (scripts/compiler-cache-inputs.sh over release.yml's COMPILER_BUILD), so a cached compiler can never pass
 #   where a cold build would fail. Checked against a grep of its own: every file a script in the list sources
 #   (`.` or `source`, by a variable or beside itself), pins.env, every file under a patches/ or components/
 #   directory a script names, and every shipyard script named as $SHIPYARD/<name>, plus shipyard's pin and
@@ -28,10 +28,10 @@ SY="$T/shipyard/scripts"
 I="$REPO/scripts/compiler-cache-inputs.sh"
 [ -f "$I" ] || fail "no scripts/compiler-cache-inputs.sh"
 
-W="$REPO/.github/workflows/linux-build.yml"
-[ -f "$W" ] || fail "no .github/workflows/linux-build.yml"
+W="$REPO/.github/workflows/release.yml"
+[ -f "$W" ] || fail "no .github/workflows/release.yml"
 CB="$(sed -n 's/^  COMPILER_BUILD: *//p' "$W")"
-[ -n "$CB" ] || fail "linux-build.yml names no COMPILER_BUILD"
+[ -n "$CB" ] || fail "release.yml names no COMPILER_BUILD"
 
 # shellcheck disable=SC2086  # COMPILER_BUILD is a list of script names
 SHIPYARD_SCRIPTS="$SY" sh "$I" $CB > "$T/list" 2> "$T/err" || fail "the inputs script failed: $(cat "$T/err")"
