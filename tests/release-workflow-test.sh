@@ -6,7 +6,9 @@
 #   unless version and build-cross both succeeded: a failed build-cross must fail the check, never skip it
 #   (PR 9 automerged 6.4.1 with 6.4.0's tarball pins that way). Each check is run against a workflow mutated to
 #   break it, and must refuse it. Its guard steps (build-cross's and build's) must guard the payload's
-#   builtins archive and its Recaulk archive (lib/recaulk/librecaulk.a, linked whole) by name.
+#   builtins archive and its Recaulk archive (lib/recaulk/librecaulk.a, linked whole) by name. build-cross builds
+#   the runtime's updater with clang22 (fetch-clang22.sh's), never Apple's /usr/bin/clang, and still fails when
+#   that updater links a Swift runtime library.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d "${TMPDIR:-/tmp}/release-workflow-test.XXXXXX")"
@@ -45,6 +47,32 @@ for job in build-cross build; do
   sed "/^  $job:\$/,/^  [a-z-]*:\$/{/--linked-with/d;}" "$W" > "$T/no-rk.yml"
   if archives "$T/no-rk.yml" > /dev/null; then fail "a $job without Recaulk's guard passed"; fi
 done
+
+# The runtime's updater: clang22 builds it on every host (shipyard's convention), with clang22's own target and
+# linker flags; its load commands, read with clang22's llvm-otool, must name no Swift runtime library.
+updater() {
+  awk '/^  build-cross:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" \
+    | awk '/^      - name: Build swift-runtime-updater\.app/ { s = 1; print; next } s && /^      - / { exit } s' > "$T/upd"
+  [ -s "$T/upd" ] || { echo "build-cross has no swift-runtime-updater step"; return 1; }
+  ! grep -q '/usr/bin/clang' "$T/upd" || { echo "build-cross builds the runtime's updater with /usr/bin/clang"; return 1; }
+  grep -qx '          CL="$(./fetch-clang22.sh)"' "$T/upd" || { echo "the updater step does not take clang22 from fetch-clang22.sh"; return 1; }
+  for a in '-DCMAKE_OBJC_COMPILER="$CL/bin/clang"' -DCMAKE_OBJC_COMPILER_TARGET=x86_64-apple-macos10.9 \
+    -DCMAKE_OBJC_FLAGS=--no-default-config -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld \
+    '-DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"'; do
+    grep -qF -- "$a" "$T/upd" || { echo "the updater step does not configure $a"; return 1; }
+  done
+  grep -qF '"$CL/bin/llvm-otool" -L "$SWIFT_BUILD/build/updater/swift-runtime-updater.app/Contents/MacOS/swift-runtime-updater"' "$T/upd" \
+    && grep -qF "! grep -q 'libswift' " "$T/upd" && grep -qF 'self-update circularity)"; exit 1; }' "$T/upd" \
+    || { echo "the updater step does not fail on an updater that links a Swift runtime library"; return 1; }
+}
+updater "$W" > "$T/why" || fail "release.yml: $(cat "$T/why")"
+upd_mutant() {
+  sed "$2" "$W" > "$T/mutant.yml"
+  if updater "$T/mutant.yml" > "$T/why"; then fail "accepted $1"; fi
+  echo "  refused $1: $(cat "$T/why")"
+}
+upd_mutant "an updater built by Apple's clang" 's|-DCMAKE_OBJC_COMPILER="$CL/bin/clang"|-DCMAKE_OBJC_COMPILER=/usr/bin/clang|'
+upd_mutant "an updater whose Swift link is not checked" "/! grep -q 'libswift' .*updater links/d"
 
 mutant() {
   sed "$2" "$W" > "$T/mutant.yml"

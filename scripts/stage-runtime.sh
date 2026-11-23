@@ -14,8 +14,11 @@
 #          it exports, libswiftDarwin defines: build.sh's step 7 checks that), so no client links it.
 #          <out-dir> persists between builds, so everything an earlier layout left under usr/ (and a stray LICENSE.txt at
 #          the payload root) is removed first; <out-dir>/Library belongs to package.sh and is
-#          left alone.
+#          left alone. Every entry it stages is 0755 (0644 for the license and notice), <out-dir> included, whatever
+#          the host's umask: a pkg installs each mode as staged, the payload root's onto / itself.
 set -eu
+# platform: a Linux desktop's umask is 002, a Mac's 022; the pkg must not depend on which host staged it.
+umask 022
 [ $# -eq 4 ] || { echo "usage: stage-runtime.sh <built-lib-dir> <out-dir> <license-file> <notice-file>" >&2; exit 2; }
 BUILT="$1"; OUT="$2"; LICENSE="$3"; NOTICE="$4"
 . "$(dirname "$0")/outdir.sh"
@@ -32,6 +35,8 @@ done
 PREFIX="$OUT/usr/local/mavergreen/swift-runtime"
 rm -rf "$OUT/usr" "$OUT/LICENSE.txt"
 mkdir -p "$PREFIX/lib/swift" "$PREFIX/share/doc"
+# <out-dir> persists between builds, so it may predate this umask.
+chmod 755 "$OUT"
 for lib in $RUNTIME_DYLIBS; do cp "$BUILT/$lib" "$PREFIX/lib/swift/"; done
 # Core's $ld$previous sends the Span types' symbols to @rpath/libswiftCompatibilitySpan.dylib for a client
 # below macOS 26, and compiler patch 0003 opens Span for 10.9 with the rest of the stdlib. On an older OS

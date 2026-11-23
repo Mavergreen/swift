@@ -238,15 +238,21 @@ jobs:
       - name: Compat guard over the runtime (must pass)
         run: ./scripts/guard.sh "$SWIFT_BUILD/payload/runtime/usr/local/mavergreen/swift-runtime/lib/swift"/*.dylib
 
-      - name: Build swift-runtime-updater.app (Cocoa/Sparkle; must NOT link Swift)
+      - name: Build swift-runtime-updater.app (Cocoa/Sparkle, by clang22; must NOT link Swift)
         run: |
           # The Sparkle framework is fetched inside mavericks_add_updater_app (mavericks_fetch_sparkle).
-          shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
-            -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
+          # spec: shipyard's "The updater builds with clang22 on every host" -- clang22's target, flags and lld, and
+          #       its Mach-O readers for the compat guard, so these lines build the same updater on Linux.
+          CL="$(./fetch-clang22.sh)"
+          export LIPO="$CL/bin/llvm-lipo" OTOOL="$CL/bin/llvm-otool" NM="$CL/bin/llvm-nm" STRINGS="$CL/bin/llvm-strings"
+          shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater" \
+            -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake" \
+            -DCMAKE_OBJC_COMPILER="$CL/bin/clang" -DCMAKE_OBJC_COMPILER_TARGET=x86_64-apple-macos10.9 \
+            -DCMAKE_OBJC_FLAGS=--no-default-config -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
           shipyard-cmake --build "$SWIFT_BUILD/build/updater" --target swift-runtime-updater
-          otool -L "$SWIFT_BUILD/build/updater/swift-runtime-updater.app/Contents/MacOS/swift-runtime-updater" > /tmp/o.txt
-          cat /tmp/o.txt
-          ! grep -q 'libswift' /tmp/o.txt || { echo "::error::updater links a Swift runtime library (self-update circularity)"; exit 1; }
+          "$CL/bin/llvm-otool" -L "$SWIFT_BUILD/build/updater/swift-runtime-updater.app/Contents/MacOS/swift-runtime-updater" > "$RUNNER_TEMP/o.txt"
+          cat "$RUNNER_TEMP/o.txt"
+          ! grep -q 'libswift' "$RUNNER_TEMP/o.txt" || { echo "::error::updater links a Swift runtime library (self-update circularity)"; exit 1; }
 
       - name: Package runtime .pkg (10.9.5 floor; stages the manifest, updater + LaunchAgent)
         run: REQUIRE_UPDATER=1 ./package.sh

@@ -257,6 +257,13 @@ lay out their coroutine frames differently by host, which is under investigation
 `bundle_mode: prebuilt` is for gating such a bundle against a runtime pkg, for iteration only; a release is
 always gated by the bundle compiled in the guest (`compile`).
 
+The runtime pkg builds on Linux as on a Mac. Its updater is built by the lines of release.yml's
+"Build swift-runtime-updater.app" step, clang22's on either host; Linux has no `shipyard-cmake`, so `cmake` with
+`-DMavericksShipyard_DIR` naming the shipyard checkout stands in. Then `REQUIRE_UPDATER=1 ./package.sh`.
+shipyard's `build_component_pkg.sh` and `set_install_floor.sh` build the pkg, so the same payload, updater and
+`SOURCE_DATE_EPOCH` give the same bytes on both hosts. A pkg installs each mode as staged, so `stage-runtime.sh`
+stages under umask 022, and `package.sh` refuses a group- or world-writable entry.
+
 ## A Swift bump
 
 Renovate moves the Swift, llvm-project and swift-cmark pins together, in one pull request. It cannot

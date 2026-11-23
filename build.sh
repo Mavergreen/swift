@@ -563,7 +563,7 @@ for l in "$HERE"/tests/upstream/*.list; do
   echo "    $UL"
 done
 
-echo "==> 6. stage the payload (usr/local/mavergreen/swift-runtime/, for package.sh's pkgbuild --root)"
+echo "==> 6. stage the payload (usr/local/mavergreen/swift-runtime/, the root of package.sh's component pkg)"
 OUT="${SWIFT_RUNTIME_OUT:-$SWIFT_BUILD/payload/runtime}"
 sh "$HERE/scripts/stage-runtime.sh" "$ROOT/stdlib-build/lib/swift/macosx/$ARCH" "$OUT" "$HERE/LICENSE" "$HERE/NOTICE"
 CORE="$OUT/usr/local/mavergreen/swift-runtime/lib/swift/libswiftCore.dylib"
