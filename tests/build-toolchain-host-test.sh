@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- runs build-toolchain.sh, a macOS-only script, with every tool it calls faked
+# platform: macOS-only -- runs build-toolchain.sh with every tool it calls faked, uname too for its Linux host
 # usage: sh tests/build-toolchain-host-test.sh
 #   build-toolchain.sh must build each toolchain from its own dirs and checkout, with its own patches and
 #   configure, and without building anything: every tool it runs is a fake that records its arguments.
@@ -25,6 +25,13 @@
 #   with clang22's llvm-otool, llvm-lipo, llvm-nm and llvm-strings in both modes. "The installed toolchain" is
 #   SWIFT_INSTALLED_TOOLCHAIN, here always a prefix under this test's own dir, so whether this machine has
 #   /usr/local/mavergreen/swift-toolchain (OS X 10.9 does, as does a Mac with the pkg) changes nothing.
+#   The linux host (a faked Linux uname) builds with the swift.org Linux seed that fetch-linux-seed.sh prints:
+#   its clang and clang++ compile, its swiftc compiles the Swift half (HOSTTOOLS), the cmake on PATH
+#   configures, build-llvm.sh's TableGen, compiler patches 0001, 0003, 0004, 0005 and 0006 in its own checkout,
+#   no Dispatch, pkg-config looked for (uuid-dev is required first), lld with --gc-sections; it stages the
+#   prefix build.sh takes as SWIFT_HOST_TOOLCHAIN, with the seed's libswiftCore.so, and refuses a clang whose
+#   default triple is not x86_64-apple-macosx10.9. --host linux on Darwin, and any other host on Linux, is
+#   refused before anything runs.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -38,6 +45,13 @@ T="$(CDPATH='' cd -P -- "$T" && pwd -P)"
 R="$T/repo"; mkdir -p "$R/scripts" "$R/patches"
 cp "$REPO/build-toolchain.sh" "$REPO/lib.sh" "$REPO/pins.env" "$REPO/msc.sh" "$R/"
 cp -R "$REPO/patches/compiler" "$R/patches/"
+mkdir -p "$R/toolchain"; cp "$REPO/toolchain/clang.cfg" "$R/toolchain/"
+# The Linux seed: fetch-linux-seed.sh prints its usr, a toolchain whose clang, swiftc and libswiftCore.so the build takes.
+printf '#!/bin/sh\necho "fetch-linux-seed $*" >> "%s/log"\necho "%s/seed/usr"\n' "$T" "$T" > "$R/fetch-linux-seed.sh"
+mkdir -p "$T/seed/usr/bin" "$T/seed/usr/lib/swift/linux"
+for t in clang clang++ swiftc; do printf '#!/bin/sh\n' > "$T/seed/usr/bin/$t"; done
+printf '#!/bin/sh\necho "Swift version 6.4.2 (swift.org seed)"\n' > "$T/seed/usr/bin/swift-frontend"
+chmod +x "$T/seed/usr/bin/"*; echo seedcore > "$T/seed/usr/lib/swift/linux/libswiftCore.so"
 printf '#!/bin/sh\necho "%s/clang22"\n' "$T" > "$R/fetch-clang22.sh"
 printf '#!/bin/sh\necho "guard ALLOW=${MAVERICKS_ALLOW_ARCHS:-} LIPO=${LIPO:-} OTOOL=${OTOOL:-} NM=${NM:-} STRINGS=${STRINGS:-} $*" >> "%s/log"\n' "$T" > "$R/scripts/guard.sh"
 REAL_SHIPYARD="$(. "$REPO/msc.sh" 2>/dev/null && echo "$SHIPYARD")" || { echo "no shipyard -- skipping"; exit 77; }
@@ -86,6 +100,7 @@ case "\${p##*/}" in
   0003-*) for f in lib/AST/Availability.cpp include/swift/AST/ASTContext.h lib/Serialization/Deserialization.cpp; do echo "Mavergreen: the 10.9 runtime is the pkgs'" >> \$f; done ;;
   0004-*) echo 'Mavergreen: the length of the string passed, which is empty when optimizing' >> lib/IRGen/GenHeap.cpp ;;
   0005-*) for f in lib/AST/Decl.cpp lib/Sema/TypeCheckExpr.cpp lib/Sema/TypeCheckDeclPrimary.cpp; do echo "Mavergreen: #isolation is the caller's" >> \$f; done ;;
+  0006-*) mkdir -p stdlib/public/Cxx/libstdcxx; echo '# Mavergreen: no swift-stdlib target exists when SWIFT_BUILD_STDLIB is off' >> stdlib/public/Cxx/libstdcxx/CMakeLists.txt ;;
 esac
 F
 # shipyard-cmake records its arguments and, like a configure, leaves a CMakeCache.txt in its -B dir.
@@ -94,7 +109,30 @@ cat > "$T/bin/shipyard-cmake" <<F
 { echo "shipyard-cmake"; for a in "\$@"; do echo "  \$a"; done; echo "  env CC_FOR_BUILD=\${CC_FOR_BUILD:-}"; } >> "$T/log"
 b=""; for a in "\$@"; do if [ "\$b" = next ]; then mkdir -p "\$a" && : > "\$a/CMakeCache.txt"; b=""; elif [ "\$a" = -B ]; then b=next; fi; done
 F
-printf '#!/bin/sh\n{ echo "ninja"; for a in "$@"; do echo "  $a"; done; } >> "%s/log"\n' "$T" > "$T/bin/ninja"
+# On Linux the cmake on PATH configures; it records itself as cmake.
+sed 's/echo "shipyard-cmake"/echo "cmake"/' "$T/bin/shipyard-cmake" > "$T/bin/cmake"
+# uname is the host's unless FAKE_UNAME names another kernel for -s.
+printf '#!/bin/sh\nif [ -n "${FAKE_UNAME:-}" ] && [ "$1" = -s ]; then echo "$FAKE_UNAME"; else exec /usr/bin/uname "$@"; fi\n' > "$T/bin/uname"
+# pkg-config finds uuid (uuid-dev) unless FAKE_NO_UUID.
+printf '#!/bin/sh\necho "pkg-config $*" >> "%s/log"\n[ -z "${FAKE_NO_UUID:-}" ]\n' "$T" > "$T/bin/pkg-config"
+# ninja records its arguments and, in a Linux build dir, leaves what that build makes (from $T/tpl).
+mkdir -p "$T/tpl"
+cat > "$T/tpl/clang" <<'F'
+#!/bin/sh
+[ "$1" = -print-target-triple ] && echo "${FAKE_TRIPLE:-x86_64-apple-macosx10.9}"
+F
+printf '#!/bin/sh\necho "Swift version 6.4.2 (linux frontend)"\n' > "$T/tpl/swift-frontend"
+chmod +x "$T/tpl/"*
+cat > "$T/bin/ninja" <<F
+#!/bin/sh
+{ echo "ninja"; for a in "\$@"; do echo "  \$a"; done; } >> "$T/log"
+case "\$2" in
+  */llvm-linux) mkdir -p "\$2/bin" "\$2/lib/clang/21/include"; echo hdr > "\$2/lib/clang/21/include/stddef.h"
+                cp "$T/tpl/clang" "\$2/bin/clang"; echo lld > "\$2/bin/lld" ;;
+  */swift-linux) mkdir -p "\$2/bin" "\$2/lib/swift/migrator" "\$2/lib/swift/linux"; echo mig > "\$2/lib/swift/migrator/macos4.json"
+                 cp "$T/tpl/swift-frontend" "\$2/bin/swift-frontend" ;;
+esac
+F
 printf '#!/bin/sh\necho "python3 $*" >> "%s/log"\nexit "${FAKE_AUDIT_RC:-0}"\n' "$T" > "$T/bin/python3"
 cat > "$T/bin/xcrun" <<F
 #!/bin/sh
@@ -143,7 +181,7 @@ LLVM_SOURCE="$LLVM_REPO_URL $LLVM_SHA $LLVM_TARBALL_SHA256"   # build-llvm.sh's 
 echo "$LLVM_SOURCE" > "$W/llvm-project/.mavergreen-source"
 run() {  # run <log-name> <mode> [build-toolchain.sh args] -- a fresh checkout state and log each time
   _n="$1"; _m="$2"; shift 2
-  rm -rf "$W/swift-compiler" "$W/swift-compiler-arm64" "$W/cmark" "$T/log" "$T/xcrun.log"; : > "$T/log"
+  rm -rf "$W/swift-compiler" "$W/swift-compiler-arm64" "$W/swift-compiler-linux" "$W/cmark" "$T/log" "$T/xcrun.log"; : > "$T/log"
   _rc=0
   PATH="$T/bin:$PATH" CC_FOR_BUILD="" SHIPYARD_SCRIPTS="$T/shipyard" SWIFT_WORK="$W" JOBS=2 MAVERICKS_USE_CCACHE=0 MAVERICKS_MODE="$_m" \
     MAVERICKS_SDK_CACHE="$T/sdkcache" CLANG22_PREFIX="$T/clang22n" sh "$R/build-toolchain.sh" "$@" > "$T/$_n.out" 2>&1 || _rc=$?
@@ -246,6 +284,7 @@ S_LINE="source swift-compiler $SWIFT_REPO_URL $SWIFT_SHA $SWIFT_TARBALL_SHA256"
 [ "$(cat "$W/cmark-x86/mavergreen-inputs.stamp")" = "$C_LINE" ] || fail "cmark-x86's stamp: $(cat "$W/cmark-x86/mavergreen-inputs.stamp")"
 # The compiler's source line is followed by each compiler patch the x86_64 build applied to it, in order.
 for p in "$REPO"/patches/compiler/*.patch; do
+  case "${p##*/}" in 0006-*) continue ;; esac   # the linux host's alone
   S_LINE="$S_LINE
 patch swift-compiler ${p##*/} $(shasum -a 256 < "$p" | awk '{ print $1 }')"
 done
@@ -371,6 +410,82 @@ if (FAKE_AUDIT_RC=1 run audit cross --host arm64); then fail "passed a frontend 
 has audit "python3 <T>/repo/scripts/audit-imports.py <T>/w/swift-arm64/bin/swift-frontend <T>/sdk/MacOSX11.3.sdk"
 if grep -q '^OK:' "$T/audit.out"; then fail "printed OK after the import audit failed: $(cat "$T/audit.out")"; fi
 unset FAKE_ARCH FAKE_PLATFORM FAKE_RPATH
+
+echo "-- linux (a Linux uname): the seed's clang, clang++ and swiftc, the cmake on PATH, 0006, no Dispatch, lld, the staged prefix"
+mkdir -p "$W/builtins-x86/lib/darwin"; echo rt > "$W/builtins-x86/lib/darwin/libclang_rt.osx.a"
+(export FAKE_UNAME=Linux; run linux cross --host linux) || fail "the linux build failed: $(cat "$T/linux.out")"
+has linux "fetch-linux-seed <T>/w/linux-seed"
+has linux "pkg-config --exists uuid"
+has linux "curl $CMARK_REPO_URL/info/refs?service=git-upload-pack"
+has linux "fetch_pinned_source $SWIFT_REPO_URL $SWIFT_SHA $SWIFT_TARBALL_SHA256 swift-compiler-linux"
+for p in 0001-accept-10.9-sdk 0003-runtime-versions-macos-10.9 0004-escaping-closure-check-filename-length \
+         0005-isolation-default-arg-caller-side 0006-linux-libstdcxx-no-stdlib-target; do
+  has linux "patch swift-compiler-linux <T>/repo/patches/compiler/$p.patch"
+done
+lacks linux "0002-hosttools-rpath-loader-path.patch"
+has linux "cmake"
+lacks linux "shipyard-cmake"
+for f in -DCMAKE_C_COMPILER=\<T\>/seed/usr/bin/clang -DCMAKE_CXX_COMPILER=\<T\>/seed/usr/bin/clang++ \
+         -DCMAKE_Swift_COMPILER=\<T\>/seed/usr/bin/swiftc -DBOOTSTRAPPING_MODE=HOSTTOOLS \
+         -DLLVM_DEFAULT_TARGET_TRIPLE=x86_64-apple-macosx10.9 -DLLVM_TARGETS_TO_BUILD=X86 \
+         -DLLVM_TABLEGEN=\<T\>/w/llvm-build/bin/llvm-tblgen -DCLANG_TABLEGEN=\<T\>/w/llvm-build/bin/clang-tblgen \
+         -DCLANG_DEFAULT_LINKER=lld -DHOST_LINK_VERSION=241.9 \
+         -DSWIFT_HOST_VARIANT_SDK=LINUX -DSWIFT_HOST_VARIANT_ARCH=x86_64 -DSWIFT_SDKS=LINUX \
+         -DSWIFT_ENABLE_DISPATCH=OFF -DSWIFT_USE_LINKER=lld -DLLVM_USE_LINKER=lld -DCMAKE_EXE_LINKER_FLAGS=-Wl,--gc-sections \
+         -DSWIFT_BUILD_STDLIB=OFF -DSWIFT_APPEND_VC_REV=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON \
+         "-DLLVM_FORCE_VC_REVISION=$LLVM_SHA" \<T\>/w/llvm-linux \<T\>/w/cmark-linux \<T\>/w/swift-linux; do
+  has linux "  $f"
+done
+lacks linux "CMAKE_DISABLE_FIND_PACKAGE_PkgConfig"
+lacks linux "CMAKE_OSX_"
+lacks linux "MacOSX"
+lacks linux "clang22"
+lacks linux "native-helpers"
+lacks linux "guard "
+lacks linux "llvm-x86"
+if grep -q '^git ' "$T/linux.log"; then fail "linux ran git"; fi
+grep -qx '    host: Swift version 6.4.2 (swift.org seed)' "$T/linux.out" || fail "linux: did not print the seed's version: $(cat "$T/linux.out")"
+P="$W/toolchain-linux"
+for f in bin/swift-frontend bin/clang bin/clang.cfg bin/clang++.cfg bin/ld64.lld lib/swift/migrator/macos4.json \
+         lib/clang/21/include/stddef.h; do
+  [ -f "$P/$f" ] && [ ! -L "$P/$f" ] || fail "linux: the prefix holds no file $f: $(cat "$T/linux.out")"
+done
+[ "$(readlink "$P/bin/swiftc")" = swift-frontend ] || fail "linux: bin/swiftc is not a link to swift-frontend"
+[ "$(readlink "$P/bin/clang++")" = clang ] || fail "linux: bin/clang++ is not a link to clang"
+[ "$(readlink "$P/lib/swift/clang")" = ../clang/21 ] || fail "linux: lib/swift/clang is not a link to ../clang/21"
+cmp -s "$P/lib/swift/linux/libswiftCore.so" "$T/seed/usr/lib/swift/linux/libswiftCore.so" || fail "linux: no seed libswiftCore.so in lib/swift/linux"
+cmp -s "$P/lib/clang/21/lib/darwin/libclang_rt.osx.a" "$W/builtins-x86/lib/darwin/libclang_rt.osx.a" || fail "linux: no builtins in the prefix"
+cmp -s "$P/bin/clang.cfg" "$REPO/toolchain/clang.cfg" && cmp -s "$P/bin/clang++.cfg" "$REPO/toolchain/clang.cfg" || fail "linux: the cfgs are not toolchain/clang.cfg"
+grep -qx "OK: the Linux toolchain prefix at $P (build.sh's SWIFT_HOST_TOOLCHAIN), targeting x86_64 / OS X 10.9" "$T/linux.out" \
+  || fail "linux did not finish OK: $(cat "$T/linux.out")"
+echo "   without build-builtins.sh's archive, the prefix is staged without one, saying so"
+mv "$W/builtins-x86" "$T/builtins.away"
+(export FAKE_UNAME=Linux; run linuxnort cross --host linux) || fail "the linux build without builtins failed: $(cat "$T/linuxnort.out")"
+mv "$T/builtins.away" "$W/builtins-x86"
+[ ! -e "$P/lib/clang/21/lib/darwin/libclang_rt.osx.a" ] || fail "linuxnort: staged a builtins archive from nowhere"
+grep -q 'no builtins archive at .*run build-builtins.sh' "$T/linuxnort.out" || fail "linuxnort: did not say so: $(cat "$T/linuxnort.out")"
+echo "   a clang whose default triple is not x86_64-apple-macosx10.9 (a host uname leaking into it) is refused"
+if (export FAKE_UNAME=Linux FAKE_TRIPLE=x86_64-apple-darwin6.8.0-1017-azure; run linuxtriple cross --host linux); then
+  fail "passed a clang whose default triple is x86_64-apple-darwin6.8.0-1017-azure"; fi
+grep -q "default target is x86_64-apple-darwin6.8.0-1017-azure, not x86_64-apple-macosx10.9" "$T/linuxtriple.out" || fail "linuxtriple: $(cat "$T/linuxtriple.out")"
+if grep -q '^OK:' "$T/linuxtriple.out"; then fail "linuxtriple printed OK"; fi
+echo "   no uuid-dev: refused before anything is fetched or configured"
+if (export FAKE_UNAME=Linux FAKE_NO_UUID=1; run linuxnouuid cross --host linux); then fail "built with no uuid-dev"; fi
+grep -q 'FAIL: .*uuid-dev' "$T/linuxnouuid.out" || fail "linuxnouuid: $(cat "$T/linuxnouuid.out")"
+lacks linuxnouuid "cmake"
+lacks linuxnouuid "fetch-linux-seed"
+
+echo "-- --host linux on Darwin, and any other host on Linux, is refused before anything runs"
+rc=0; run linuxmac cross --host linux || rc=$?
+[ "$rc" -eq 2 ] || fail "--host linux on Darwin: exit $rc, not 2: $(cat "$T/linuxmac.out")"
+grep -qx 'FAIL: --host linux builds on Linux' "$T/linuxmac.out" || fail "linuxmac: $(cat "$T/linuxmac.out")"
+[ ! -s "$T/linuxmac.log" ] || fail "--host linux on Darwin ran [$(head -1 "$T/linuxmac.log")] before refusing"
+for h in "" "--host x86_64" "--host arm64"; do
+  rc=0; (export FAKE_UNAME=Linux; run linuxother cross $h) || rc=$?
+  [ "$rc" -eq 2 ] || fail "'$h' on Linux: exit $rc, not 2: $(cat "$T/linuxother.out")"
+  grep -qx 'FAIL: on Linux, --host linux is the only host' "$T/linuxother.out" || fail "linuxother '$h': $(cat "$T/linuxother.out")"
+  [ ! -s "$T/linuxother.log" ] || fail "'$h' on Linux ran [$(head -1 "$T/linuxother.log")] before refusing"
+done
 
 echo "-- any other host, or mode, is refused before anything runs"
 for bad in "--host x86" "--host" "--hots arm64"; do

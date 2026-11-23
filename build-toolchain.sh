@@ -1,6 +1,6 @@
 #!/bin/sh
-# platform: macOS-only -- a modern arm64 Mac (cross: xcrun, dyld_info) or OS X 10.9 (native: clang22's llvm-otool), per MAVERICKS_MODE
-# build-toolchain.sh [--host x86_64|arm64] — build a Swift toolchain: a Swift compiler, lld and clang that
+# platform: macOS -- a modern arm64 Mac (cross: xcrun, dyld_info) or OS X 10.9 (native: clang22's llvm-otool), per MAVERICKS_MODE; and Linux for --host linux alone
+# build-toolchain.sh [--host x86_64|arm64|linux] — build a Swift toolchain: a Swift compiler, lld and clang that
 # target OS X 10.9 (x86_64) by default.
 #   --host x86_64 (the default): the NATIVE toolchain, which RUNS on OS X 10.9 (x86_64). One recipe, two
 #     modes (MAVERICKS_MODE, else shipyard's mavericks_mode.sh), the same bytes from both:
@@ -22,12 +22,22 @@
 #     built by Apple's clang against the pinned MacOSX11.3.sdk, with nothing cross-compiled; its Swift half
 #     is compiled by the swift.org compiler (build.sh's), the one seed CI starts from. Cross mode only.
 #     The evidence: docs/superpowers/spikes/2026-09-27-t3-arm64-toolchain-FINDINGS.md.
+#   --host linux: the compiler that builds the runtime on a Linux host (x86_64), which ships in no pkg. On
+#     Linux it is the only host, and it builds nowhere else. swift.org's Linux toolchain (fetch-linux-seed.sh,
+#     SHA-256- and signature-verified) is its seed: that toolchain's clang and clang++ compile the C++ half, and
+#     its swiftc the Swift half (HOSTTOOLS); compiler patches as arm64's plus 0006; no Dispatch; pkg-config finds
+#     libuuid (the host needs uuid-dev and pkg-config); the seed's lld links swift-frontend, with --gc-sections.
+#     Its result is staged as a toolchain prefix, $SWIFT_WORK/toolchain-linux, laid out where build.sh reads the
+#     cross toolchain's in CI, so build.sh takes it as SWIFT_HOST_TOOLCHAIN: bin/swift-frontend (bin/swiftc a
+#     link to it), clang with clang.cfg and clang++.cfg, ld64.lld, lib/swift with the seed's libswiftCore.so in
+#     lib/swift/linux (the frontend's RUNPATH), clang's headers and build-builtins.sh's archive.
 # Both hosts' clang default to the lld beside them, with one pinned host linker version
 # (HOST_LINK_VERSION below). They share every source, pin and patch but compiler patch 0002 (lib.sh's
 # compiler_patches), and each has its own build dirs and compiler checkout (lib.sh's
 # toolchain_host_select). The sources are GitHub's tarballs of the pinned commits, verified by pins.env's
 # SHA-256s and patched with the OS's patch; no git runs, and LLVM's, clang's and lld's version stamps are
-# forced to LLVM_SHA and its repository (Swift's own, which reaches no shipped byte, is off). Run after build-llvm.sh (and, for arm64, mirror-toolchain.sh and build.sh).
+# forced to LLVM_SHA and its repository (Swift's own, which reaches no shipped byte, is off). Run after build-llvm.sh (and, for arm64, mirror-toolchain.sh and build.sh;
+# for linux, build-builtins.sh, whose archive the prefix carries).
 # STAGE_HOST=<host> scripts/stage-toolchain.sh lays the results out as that toolchain's pkg payload.
 # MAVERICKS_USE_CCACHE=1 compiles through ccache (CI sets it). Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, JOBS,
 # MAVERICKS_USE_CCACHE, MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_INSTALLED_TOOLCHAIN (native mode's default
@@ -37,20 +47,30 @@ set -eu
 HOST=x86_64
 while [ $# -gt 0 ]; do
   case "$1" in
-    --host) [ $# -ge 2 ] || { echo "usage: build-toolchain.sh [--host x86_64|arm64]" >&2; exit 2; }
+    --host) [ $# -ge 2 ] || { echo "usage: build-toolchain.sh [--host x86_64|arm64|linux]" >&2; exit 2; }
             HOST="$2"; shift 2 ;;
-    *) echo "usage: build-toolchain.sh [--host x86_64|arm64]" >&2; exit 2 ;;
+    *) echo "usage: build-toolchain.sh [--host x86_64|arm64|linux]" >&2; exit 2 ;;
   esac
 done
+case "$(uname -s):$HOST" in
+  Linux:linux) ;;
+  Linux:*) echo "FAIL: on Linux, --host linux is the only host" >&2; exit 2 ;;
+  *:linux) echo "FAIL: --host linux builds on Linux" >&2; exit 2 ;;
+esac
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/pins.env"
 . "$HERE/lib.sh"    # -> $SWIFT_BUILD, check_release_pin, toolchain_host_select, compiler_patches, the T4 helpers
-toolchain_host_select "$HOST" || exit 2
+# The linux host's compiler ships in no pkg, so it has build dirs and a checkout and no product or payload.
+case "$HOST" in
+  linux) TH_LLVM=llvm-linux; TH_CMARK=cmark-linux; TH_SWIFT=swift-linux; TH_CHECKOUT=swift-compiler-linux ;;
+  *) toolchain_host_select "$HOST" || exit 2 ;;
+esac
 . "$HERE/msc.sh"    # -> $SHIPYARD (fetch_pinned_source.sh, fetch_sdk.sh, mavericks_mode.sh)
 MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
 case "$MODE:$HOST" in
-  cross:x86_64|cross:arm64|native:x86_64) ;;
+  cross:x86_64|cross:arm64|native:x86_64|cross:linux) ;;
   native:arm64) echo "FAIL: --host arm64 builds the cross toolchain on an Apple-silicon Mac, not on OS X 10.9" >&2; exit 2 ;;
+  native:linux) echo "FAIL: --host linux builds on Linux, not on OS X 10.9" >&2; exit 2 ;;
   *) echo "FAIL: mode '$MODE' is neither cross nor native" >&2; exit 2 ;;
 esac
 # clang's Darwin driver picks some of the flags it passes a linker by that linker's version, which it
@@ -60,7 +80,10 @@ esac
 # these toolchains build for. Their clang defaults to lld (CLANG_DEFAULT_LINKER), for which the version
 # changes nothing, and `-fuse-ld=ld` on 10.9 gets the flags that ld understands. (lib.sh's HOST_LINK_VERSION.)
 W="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$W"; cd "$W"
-JOBS="${JOBS:-$(sysctl -n hw.ncpu)}"
+case "$HOST" in
+  linux) JOBS="${JOBS:-$(nproc)}" ;;
+  *) JOBS="${JOBS:-$(sysctl -n hw.ncpu)}" ;;
+esac
 LAUNCHER=""
 if [ "${MAVERICKS_USE_CCACHE:-0}" = 1 ] && command -v ccache >/dev/null 2>&1; then
   LAUNCHER="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
@@ -79,7 +102,8 @@ if [ "$MODE" = cross ]; then
   [ -x "$NATIVE/bin/llvm-tblgen" ] || { echo "FAIL: no native TableGen -- run ./build-llvm.sh"; exit 1; }
   [ -f "$NATIVE/lib/libLLVMBitstreamReader.a" ] || { echo "FAIL: no native LLVMBitstreamReader -- run ./build-llvm.sh"; exit 1; }
 fi
-if [ "$HOST" = x86_64 ]; then
+case "$HOST" in
+x86_64)
   # The Swift half's host compiler: the wrapper by its real path, so HOSTTOOLS finds the host stdlib at
   # <bin>/../lib/swift/macosx, and CMake's test link gets the wrapper's SDK and linker.
   # Natively it defaults to the installed release (SWIFT_INSTALLED_TOOLCHAIN, which tests point elsewhere).
@@ -90,12 +114,29 @@ if [ "$HOST" = x86_64 ]; then
   fi
   [ -x "$HTC/bin/swiftc" ] || { echo "FAIL: no $HTC/bin/swiftc -- name the Swift toolchain that compiles the Swift half with SWIFT_HOST_TOOLCHAIN"; exit 1; }
   HOST_STAMP="$(host_swiftc_stamp "$HTC")" || { echo "FAIL: cannot stamp the host toolchain at $HTC"; exit 1; }
-else
+  ;;
+arm64)
   [ -x "$TC/bin/swiftc" ] || { echo "FAIL: no host swiftc -- run ./build.sh"; exit 1; }
-fi
+  ;;
+linux)
+  # platform: Linux's lib/Basic finds libuuid through pkg-config (FindUUID.cmake's pkg_check_modules).
+  command -v pkg-config >/dev/null 2>&1 && pkg-config --exists uuid \
+    || { echo "FAIL: the compiler's build needs pkg-config and libuuid's headers on Linux -- install pkg-config and uuid-dev"; exit 1; }
+  SEED="$(sh "$HERE/fetch-linux-seed.sh" "$W/linux-seed")" || { echo "FAIL: could not fetch the swift.org Linux seed"; exit 1; }
+  for t in clang clang++ swiftc swift-frontend; do
+    [ -x "$SEED/bin/$t" ] || { echo "FAIL: the Linux seed at $SEED has no bin/$t"; exit 1; }
+  done
+  [ -f "$SEED/lib/swift/linux/libswiftCore.so" ] || { echo "FAIL: the Linux seed at $SEED has no lib/swift/linux/libswiftCore.so"; exit 1; }
+  # Every Linux build dir is compiled by the seed, from the same path whatever the seed: its pin joins each stamp.
+  SEED_STAMP="linux-seed $LINUX_SEED_SHA256"
+  ;;
+esac
 PATCHES="$(compiler_patches "$HOST" "$HERE/patches/compiler")" || { echo "FAIL: no compiler patches for $HOST"; exit 1; }
 L="$W/$TH_LLVM"; S="$W/$TH_SWIFT"; CM="$W/$TH_CMARK"; SC="$TH_CHECKOUT"
-SDK113="$(sh "$SHIPYARD/fetch_sdk.sh" --arch arm64)" || { echo "FAIL: could not fetch the pinned MacOSX11.3.sdk"; exit 1; }
+case "$HOST" in
+  linux) ;;
+  *) SDK113="$(sh "$SHIPYARD/fetch_sdk.sh" --arch arm64)" || { echo "FAIL: could not fetch the pinned MacOSX11.3.sdk"; exit 1; } ;;
+esac
 if [ "$HOST" = x86_64 ]; then
   X="$(clang22_prefix "$MODE" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
   SDK109="$(sdk109_stubs)" || { echo "FAIL: could not fetch the pinned 10.9 SDK"; exit 1; }
@@ -121,7 +162,7 @@ x86_cmake() {
   if [ "$MODE" = cross ]; then
     set -- -DCMAKE_CROSSCOMPILING=ON -DCMAKE_SYSTEM_NAME=Darwin -DCMAKE_SYSTEM_PROCESSOR=x86_64 "$@"
   fi
-  shipyard-cmake -G Ninja $LAUNCHER -DCMAKE_BUILD_TYPE=Release \
+  shipyard_cmake -G Ninja $LAUNCHER -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER="$X/clang" -DCMAKE_CXX_COMPILER="$X/clang++" \
     -DCMAKE_AR="$X/llvm-ar" -DCMAKE_RANLIB="$X/llvm-ranlib" -DCMAKE_LIBTOOL="$X/llvm-libtool-darwin" \
     -DCMAKE_LINKER="$X/ld64.lld" $(apple_probe_answers "$X") \
@@ -133,15 +174,26 @@ x86_cmake() {
 # The arm64 host: Apple's clang (the runner's Command Line Tools), the pinned MacOSX11.3.sdk, macOS 11.0,
 # arm64 alone, and nothing cross-compiled -- the configuration closest to upstream's own.
 host_cmake() {
-  shipyard-cmake -G Ninja $LAUNCHER -DCMAKE_BUILD_TYPE=Release \
+  shipyard_cmake -G Ninja $LAUNCHER -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
     -DCMAKE_OSX_SYSROOT="$SDK113" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DCMAKE_OSX_ARCHITECTURES=arm64 \
     "-DCMAKE_IGNORE_PREFIX_PATH=/opt/pkg;/opt/homebrew;/usr/local;/opt/local;/sw" \
     "$@"
 }
+# The linux host: the seed's clang and clang++, nothing cross-compiled, the host's own cmake (lib.sh's
+# shipyard_cmake).
+linux_cmake() {
+  shipyard_cmake -G Ninja $LAUNCHER -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER="$SEED/bin/clang" -DCMAKE_CXX_COMPILER="$SEED/bin/clang++" \
+    "-DCMAKE_IGNORE_PREFIX_PATH=/opt/pkg;/opt/homebrew;/usr/local;/opt/local;/sw" \
+    "$@"
+}
 
+if [ "$HOST" = linux ]; then LLVM_SRC="$LLVM_SRC
+$SEED_STAMP"; fi
 reuse_build_dir "$L" "$LLVM_SRC" || exit 1
-if [ "$HOST" = x86_64 ]; then
+case "$HOST" in
+x86_64)
   echo "==> 1. LLVM + clang + lld for an $ARCH / $DEPLOYMENT host ($MODE: $X)"
   TBLGEN=""
   if [ "$MODE" = cross ]; then
@@ -156,7 +208,8 @@ if [ "$HOST" = x86_64 ]; then
     -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_ENABLE_ONDISK_CAS=OFF \
     -DLLVM_FORCE_VC_REVISION="$LLVM_SHA" -DLLVM_FORCE_VC_REPOSITORY="$LLVM_REPO_URL" -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON \
     -DCLANG_DEFAULT_LINKER=lld -DHOST_LINK_VERSION="$HOST_LINK_VERSION"
-else
+  ;;
+arm64)
   # X86 alone, as in the native toolchain, so the two compilers carry the same code generator: the
   # toolchain emits nothing else, and no part of it needs AArch64 to build or run. TableGen is
   # build-llvm.sh's (an arm64 program either way). CMAKE_LINKER names an lld only so that clang takes
@@ -172,7 +225,23 @@ else
     -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_ENABLE_ONDISK_CAS=OFF \
     -DLLVM_FORCE_VC_REVISION="$LLVM_SHA" -DLLVM_FORCE_VC_REPOSITORY="$LLVM_REPO_URL" -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON \
     -DCMAKE_LINKER="$NATIVE/bin/ld64.lld" -DCLANG_DEFAULT_LINKER=lld -DHOST_LINK_VERSION="$HOST_LINK_VERSION"
-fi
+  ;;
+linux)
+  # arm64's configuration on the seed's clang: X86 alone, build-llvm.sh's TableGen, the same clang defaults.
+  # llvm patch 0006 keeps the host's uname out of the default x86_64-apple-macosx10.9 triple.
+  echo "==> 1. LLVM + clang + lld for a Linux x86_64 host (the seed's clang, $SEED)"
+  linux_cmake -S llvm-project/llvm -B "$L" \
+    -DLLVM_DEFAULT_TARGET_TRIPLE=x86_64-apple-macosx10.9 \
+    -DLLVM_TABLEGEN="$NATIVE/bin/llvm-tblgen" -DCLANG_TABLEGEN="$NATIVE/bin/clang-tblgen" \
+    -DLLVM_NATIVE_TOOL_DIR="$NATIVE/bin" \
+    "-DLLVM_ENABLE_PROJECTS=clang;lld" -DLLVM_ENABLE_RUNTIMES= -DLLVM_TARGETS_TO_BUILD=X86 \
+    -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_DOCS=OFF \
+    -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_TERMINFO=OFF \
+    -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_ENABLE_ONDISK_CAS=OFF \
+    -DLLVM_FORCE_VC_REVISION="$LLVM_SHA" -DLLVM_FORCE_VC_REPOSITORY="$LLVM_REPO_URL" -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON \
+    -DCMAKE_LINKER="$NATIVE/bin/ld64.lld" -DCLANG_DEFAULT_LINKER=lld -DHOST_LINK_VERSION="$HOST_LINK_VERSION"
+  ;;
+esac
 printf '%s\n' "$LLVM_SRC" > "$L/mavergreen-inputs.stamp"
 ninja -C "$L" -j "$JOBS" llvm-libraries clang-libraries clang-resource-headers lld clang dsymutil
 
@@ -180,12 +249,14 @@ echo "==> 2. swift-cmark"
 check_release_pin swift-cmark "$CMARK_SWIFT_RELEASE" "$CMARK_TAG" "$CMARK_SHA" "$CMARK_REPO_URL"
 fetch_source cmark "$CMARK_REPO_URL" "$CMARK_SHA" "$CMARK_TARBALL_SHA256" CMARK_TARBALL_SHA256 || exit 1
 CMARK_SRC="$(source_stamp cmark)" || exit 1
+if [ "$HOST" = linux ]; then CMARK_SRC="$CMARK_SRC
+$SEED_STAMP"; fi
 reuse_build_dir "$CM" "$CMARK_SRC" || exit 1
-if [ "$HOST" = x86_64 ]; then
-  x86_cmake -S cmark -B "$CM" -DBUILD_TESTING=OFF -DCMARK_TESTS=OFF -DBUILD_SHARED_LIBS=OFF
-else
-  host_cmake -S cmark -B "$CM" -DBUILD_TESTING=OFF -DCMARK_TESTS=OFF -DBUILD_SHARED_LIBS=OFF
-fi
+case "$HOST" in
+  x86_64) x86_cmake -S cmark -B "$CM" -DBUILD_TESTING=OFF -DCMARK_TESTS=OFF -DBUILD_SHARED_LIBS=OFF ;;
+  arm64) host_cmake -S cmark -B "$CM" -DBUILD_TESTING=OFF -DCMARK_TESTS=OFF -DBUILD_SHARED_LIBS=OFF ;;
+  linux) linux_cmake -S cmark -B "$CM" -DBUILD_TESTING=OFF -DCMARK_TESTS=OFF -DBUILD_SHARED_LIBS=OFF ;;
+esac
 printf '%s\n' "$CMARK_SRC" > "$CM/mavergreen-inputs.stamp"
 ninja -C "$CM" -j "$JOBS"
 
@@ -210,16 +281,22 @@ done
 if [ "$HOST" = x86_64 ]; then
   grep -q "host tools run on the toolchain's own bundled runtime" "$SC/cmake/modules/AddSwift.cmake" || { echo "FAIL: compiler patch 0002 not applied"; exit 1; }
 elif grep -q "host tools run on the toolchain's own bundled runtime" "$SC/cmake/modules/AddSwift.cmake"; then
-  echo "FAIL: compiler patch 0002 is in $SC: an arm64 frontend cannot load the x86_64 stdlib it would point at"; exit 1
+  echo "FAIL: compiler patch 0002 is in $SC: an $HOST frontend cannot load the x86_64 stdlib it would point at"; exit 1
+fi
+if [ "$HOST" = linux ]; then
+  grep -q 'Mavergreen: no swift-stdlib target exists when SWIFT_BUILD_STDLIB is off' "$SC/stdlib/public/Cxx/libstdcxx/CMakeLists.txt" \
+    || { echo "FAIL: compiler patch 0006 not applied"; exit 1; }
 fi
 # The native helpers compile the compiler's source against LLVM's headers; the Swift build, those and cmark's.
 HELPERS_SRC="$(source_stamp "$SC" llvm-project)" || exit 1
 SWIFT_SRC="$(source_stamp "$SC" llvm-project cmark)" || exit 1
+if [ "$HOST" = linux ]; then SWIFT_SRC="$SWIFT_SRC
+$SEED_STAMP"; fi
 
 if [ "$HOST:$MODE" = x86_64:cross ]; then
   echo "==> 4. native helper tools (the builder runs these while building the compiler)"
   reuse_build_dir "$W/native-helpers" "$HELPERS_SRC" || exit 1
-  shipyard-cmake -G Ninja -S "$HERE/native-helpers" -B "$W/native-helpers" -DCMAKE_BUILD_TYPE=Release \
+  shipyard_cmake -G Ninja -S "$HERE/native-helpers" -B "$W/native-helpers" -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
     -DLLVM_DIR="$NATIVE/lib/cmake/llvm" -DSWIFT_SOURCE_DIR="$W/$SC"
   printf '%s\n' "$HELPERS_SRC" > "$W/native-helpers/mavergreen-inputs.stamp"
@@ -231,9 +308,15 @@ fi
 # Both hosts' Swift build: the revision stamp off (the source is a tarball, and its SwiftRevision.inc is
 # dead-stripped from swift-frontend, T5a recheck row 3), and git, LibEdit, LibXml2 and pkg-config never
 # looked for, so what the host has on PATH changes nothing. Word-split on use: no spaces.
-SWIFT_UNFOUND="-DSWIFT_APPEND_VC_REV=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibEdit=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibXml2=ON -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON"
+SWIFT_UNFOUND="-DSWIFT_APPEND_VC_REV=OFF -DCMAKE_DISABLE_FIND_PACKAGE_Git=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibEdit=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibXml2=ON"
+# platform: on Linux lib/Basic finds libuuid through pkg-config, so pkg-config is looked for there.
+case "$HOST" in
+  linux) ;;
+  *) SWIFT_UNFOUND="$SWIFT_UNFOUND -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON" ;;
+esac
 reuse_build_dir "$S" "$SWIFT_SRC" || exit 1
-if [ "$HOST" = x86_64 ]; then
+case "$HOST" in
+x86_64)
   echo "==> 5. swift-frontend (HOSTTOOLS: $HTC compiles the Swift-written half)"
   "$HTC/bin/swift-frontend" -version 2>&1 | sed 's/^/    host: /'
   # A changed host compiler is configured afresh and recompiles the Swift half, and only that (lib.sh).
@@ -269,7 +352,8 @@ if [ "$HOST" = x86_64 ]; then
     -DSWIFT_INCLUDE_TESTS=OFF -DSWIFT_INCLUDE_DOCS=OFF -DSWIFT_BUILD_PERF_TESTSUITE=OFF -DSWIFT_ENABLE_LIBXML2=OFF \
     $SWIFT_UNFOUND
   printf '%s\n' "$HOST_STAMP" > "$S/mavergreen-host.stamp"
-else
+  ;;
+arm64)
   echo "==> 5. swift-frontend (HOSTTOOLS: the swift.org compiler builds the Swift-written half), for arm64 / macOS 11.0"
   # Both halves compile against the same 11.3 SDK. Its libc++ (2021) marks <filesystem> strict-available
   # from 10.15, and rebuilding the swift.org toolchain's CxxStdlib.swiftinterface (recorded -target
@@ -298,7 +382,38 @@ else
     -DSWIFT_BUILD_REGEX_PARSER_IN_COMPILER=OFF -DSWIFT_ENABLE_BACKTRACING=OFF \
     -DSWIFT_INCLUDE_TESTS=OFF -DSWIFT_INCLUDE_DOCS=OFF -DSWIFT_BUILD_PERF_TESTSUITE=OFF -DSWIFT_ENABLE_LIBXML2=OFF \
     $SWIFT_UNFOUND
-fi
+  ;;
+linux)
+  echo "==> 5. swift-frontend (HOSTTOOLS: the swift.org Linux seed builds the Swift-written half), for a Linux x86_64 host"
+  "$SEED/bin/swift-frontend" -version 2>&1 | sed 's/^/    host: /'
+  # arm64's configuration for a LINUX host SDK, and three Linux-only settings:
+  #   SWIFT_ENABLE_DISPATCH=OFF  off Darwin it defaults on and wants a libdispatch ExternalProject, which
+  #                              nothing here needs;
+  #   SWIFT_USE_LINKER=lld, --gc-sections  the default gold, without dead stripping, keeps ASTContextBridging's
+  #                              references to ASTGen's swift_Basic_* functions, which SWIFT_BUILD_SWIFT_SYNTAX=OFF
+  #                              leaves undefined (ld64 strips them on a Mac); the seed's ld.lld is beside its clang.
+  linux_cmake -S "$SC" -B "$S" \
+    -DCMAKE_Swift_COMPILER="$SEED/bin/swiftc" \
+    -DLLVM_DIR="$L/lib/cmake/llvm" -DClang_DIR="$L/lib/cmake/clang" \
+    -DLLVM_BUILD_LIBRARY_DIR="$L/lib" -DLLVM_BUILD_BINARY_DIR="$L" \
+    -DLLVM_BUILD_MAIN_SRC_DIR="$W/llvm-project/llvm" -DLLVM_MAIN_SRC_DIR="$W/llvm-project/llvm" \
+    -DLLVM_TABLEGEN="$NATIVE/bin/llvm-tblgen" \
+    -DSWIFT_PATH_TO_CMARK_SOURCE="$W/cmark" -DSWIFT_PATH_TO_CMARK_BUILD="$CM" \
+    -DSWIFT_CMARK_LIBRARY_DIR="$CM/src" \
+    -DBOOTSTRAPPING_MODE=HOSTTOOLS \
+    -DSWIFT_HOST_VARIANT_SDK=LINUX -DSWIFT_HOST_VARIANT_ARCH=x86_64 \
+    -DSWIFT_PRIMARY_VARIANT_SDK=LINUX -DSWIFT_PRIMARY_VARIANT_ARCH=x86_64 \
+    -DSWIFT_SDKS=LINUX \
+    -DSWIFT_INCLUDE_TOOLS=ON -DSWIFT_BUILD_STDLIB=OFF -DSWIFT_BUILD_DYNAMIC_STDLIB=OFF -DSWIFT_BUILD_STATIC_STDLIB=OFF \
+    -DSWIFT_BUILD_SDK_OVERLAY=OFF -DSWIFT_BUILD_DYNAMIC_SDK_OVERLAY=OFF -DSWIFT_BUILD_STATIC_SDK_OVERLAY=OFF \
+    -DSWIFT_BUILD_REMOTE_MIRROR=OFF -DSWIFT_BUILD_SOURCEKIT=OFF -DSWIFT_BUILD_SWIFT_SYNTAX=OFF \
+    -DSWIFT_BUILD_REGEX_PARSER_IN_COMPILER=OFF -DSWIFT_ENABLE_BACKTRACING=OFF \
+    -DSWIFT_INCLUDE_TESTS=OFF -DSWIFT_INCLUDE_DOCS=OFF -DSWIFT_BUILD_PERF_TESTSUITE=OFF -DSWIFT_ENABLE_LIBXML2=OFF \
+    -DSWIFT_ENABLE_DISPATCH=OFF \
+    -DSWIFT_USE_LINKER=lld -DLLVM_USE_LINKER=lld -DCMAKE_EXE_LINKER_FLAGS=-Wl,--gc-sections \
+    $SWIFT_UNFOUND
+  ;;
+esac
 printf '%s\n' "$SWIFT_SRC" > "$S/mavergreen-inputs.stamp"
 ninja -C "$S" -j "$JOBS" swift-frontend
 
@@ -306,7 +421,8 @@ ninja -C "$S" -j "$JOBS" swift-frontend
 #           lib.sh's readers fall back to OTOOL, clang22's llvm-otool.
 DI=""
 if [ "$MODE" = cross ]; then DI="$(xcrun -f dyld_info 2>/dev/null || :)"; fi
-if [ "$HOST" = x86_64 ]; then
+case "$HOST" in
+x86_64)
   echo "==> 6. check: minOS and SDK $DEPLOYMENT, 10.9-safe imports, the frontend's own rpath"
   OTOOL="$X/llvm-otool"; export OTOOL
   for b in "$S/bin/swift-frontend" "$L/bin/lld" "$L/bin/clang" "$L/bin/dsymutil"; do
@@ -320,7 +436,8 @@ if [ "$HOST" = x86_64 ]; then
   printf '%s\n' "$RPATHS" | grep -qx '@loader_path/../lib/swift/macosx' \
     || { echo "FAIL: swift-frontend's rpath is not @loader_path/../lib/swift/macosx"; exit 1; }
   echo "OK: swift-frontend, lld, clang and dsymutil for $ARCH / $DEPLOYMENT"
-else
+  ;;
+arm64)
   echo "==> 6. check: arm64 at minOS 11.0 / SDK 11.3, the OS's Swift runtime, and only macOS 11 imports"
   # The guard holds each to arm64 alone and the family's arm64 pin (sdk-pins.sh: minos 11.0, sdk 11.3).
   MAVERICKS_ALLOW_ARCHS=arm64 MAVERICKS_DEVIATIONS_ROOT="$HERE" sh "$HERE/scripts/guard.sh" \
@@ -339,4 +456,30 @@ else
   # pinned 11.3 SDK instead.
   python3 "$HERE/scripts/audit-imports.py" "$S/bin/swift-frontend" "$SDK113"
   echo "OK: swift-frontend, lld, clang and dsymutil for arm64 / macOS 11.0, targeting x86_64 / OS X 10.9"
-fi
+  ;;
+linux)
+  P="$W/toolchain-linux"
+  echo "==> 6. stage $P, the prefix build.sh takes as SWIFT_HOST_TOOLCHAIN, and check it"
+  CLANG_INC="$(clang_resource_include "$L")" || { echo "FAIL: no one clang resource dir in $L"; exit 1; }
+  CLANG_V="$(basename "$(dirname "$CLANG_INC")")"
+  rm -rf "$P" && mkdir -p "$P/bin" "$P/lib/clang/$CLANG_V/lib/darwin" || exit 1
+  # Copies, not links into the build dirs: the prefix stands alone. lib/swift's links into the compiler's
+  # source are copied as files; the seed's libswiftCore.so is the one Swift library swift-frontend loads.
+  cp "$S/bin/swift-frontend" "$P/bin/swift-frontend" && ln -s swift-frontend "$P/bin/swiftc" \
+    && cp "$L/bin/clang" "$P/bin/clang" && ln -s clang "$P/bin/clang++" \
+    && cp "$HERE/toolchain/clang.cfg" "$P/bin/clang.cfg" && cp "$HERE/toolchain/clang.cfg" "$P/bin/clang++.cfg" \
+    && cp "$L/bin/lld" "$P/bin/ld64.lld" \
+    && cp -RL "$S/lib/swift" "$P/lib/swift" && mkdir -p "$P/lib/swift/linux" \
+    && cp "$SEED/lib/swift/linux/libswiftCore.so" "$P/lib/swift/linux/libswiftCore.so" \
+    && cp -R "$CLANG_INC" "$P/lib/clang/$CLANG_V/include" && rm -rf "$P/lib/swift/clang" && ln -s "../clang/$CLANG_V" "$P/lib/swift/clang" \
+    || { echo "FAIL: could not stage $P"; exit 1; }
+  B="$W/builtins-x86/lib/darwin/libclang_rt.osx.a"
+  if [ -f "$B" ]; then cp "$B" "$P/lib/clang/$CLANG_V/lib/darwin/libclang_rt.osx.a"
+  else echo "    no builtins archive at $B: $P has none until you run build-builtins.sh and this again (build.sh needs it, or SWIFT_BUILTINS)"; fi
+  "$P/bin/swift-frontend" -version 2>&1 | sed 's/^/    staged: /'
+  "$P/bin/swift-frontend" -version >/dev/null 2>&1 || { echo "FAIL: $P/bin/swift-frontend does not run (its lib/swift/linux/libswiftCore.so?)"; exit 1; }
+  TRIPLE="$("$P/bin/clang" -print-target-triple)" || { echo "FAIL: $P/bin/clang does not run"; exit 1; }
+  [ "$TRIPLE" = x86_64-apple-macosx10.9 ] || { echo "FAIL: $P/bin/clang's default target is $TRIPLE, not x86_64-apple-macosx10.9 (llvm patch 0006?)"; exit 1; }
+  echo "OK: the Linux toolchain prefix at $P (build.sh's SWIFT_HOST_TOOLCHAIN), targeting x86_64 / OS X 10.9"
+  ;;
+esac

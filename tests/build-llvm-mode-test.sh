@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- runs build-llvm.sh, a macOS-only script, with every tool it calls faked
+# platform: macOS-only -- runs build-llvm.sh with every tool it calls faked, uname too for its Linux host
 # usage: sh tests/build-llvm-mode-test.sh
 #   build-llvm.sh must take llvm-project as GitHub's tarball of LLVM_SHA through shipyard's
 #   fetch_pinned_source.sh, verified by LLVM_TARBALL_SHA256, check the release pin with curl, apply
@@ -12,7 +12,10 @@
 #   asks xcrun or runs a Command Line Tools ld (cross mode keeps Apple's tools: D7). A warm llvm-build is kept
 #   while its options and llvm-project's commit are the same, and removed and configured afresh, never in
 #   place, when either differs. A tarball pin that does not match fails before anything is
-#   configured, naming the pin to refresh. Nothing is built: every tool is a fake that records its arguments.
+#   configured, naming the pin to refresh. On a Linux host (a faked uname) the swift.org Linux seed's clang and
+#   clang++ compile (fetch-linux-seed.sh), the cmake on PATH configures and installs, and ldd reads lld's
+#   libraries. On every host LLVMConfig.cmake's lit path is emptied.
+#   Nothing is built: every tool is a fake that records its arguments.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -24,6 +27,7 @@ T="$(CDPATH='' cd -P -- "$T" && pwd -P)"
 R="$T/repo"; mkdir -p "$R/patches"
 cp "$REPO/build-llvm.sh" "$REPO/lib.sh" "$REPO/pins.env" "$REPO/msc.sh" "$R/"
 cp -R "$REPO/patches/llvm" "$R/patches/"
+printf '#!/bin/sh\necho "fetch-linux-seed $*" >> "%s/log"\necho "%s/seed/usr"\n' "$T" "$T" > "$R/fetch-linux-seed.sh"
 REAL_SHIPYARD="$(. "$REPO/msc.sh" 2>/dev/null && echo "$SHIPYARD")" || { echo "no shipyard -- skipping"; exit 77; }
 mkdir -p "$T/bin" "$T/shipyard" "$T/clang22n/bin"
 cp "$REAL_SHIPYARD/mavericks_fetch.sh" "$T/shipyard/"   # shipyard_curl, for check_release_pin
@@ -32,7 +36,8 @@ cat > "$T/shipyard/fetch_pinned_source.sh" <<F
 #!/bin/sh
 echo "fetch_pinned_source \$*" >> "$T/log"
 [ "\$3" = "\${FAKE_GOOD_SHA256:-$LLVM_TARBALL_SHA256}" ] || exit 1
-rm -rf "\$4"; mkdir -p "\$4/llvm/lib/CAS" "\$4/llvm/cmake/modules" "\$4/lld/MachO" "\$4/compiler-rt/cmake/Modules"
+rm -rf "\$4"; mkdir -p "\$4/llvm/lib/CAS" "\$4/llvm/cmake/modules" "\$4/lld/MachO" "\$4/compiler-rt/cmake/Modules" "\$4/llvm/lib/TargetParser/Unix"
+: > "\$4/llvm/lib/TargetParser/Unix/Host.inc"
 : > "\$4/llvm/lib/CAS/OnDiskCommon.cpp"; : > "\$4/llvm/cmake/modules/AddLLVM.cmake"
 : > "\$4/lld/MachO/InputFiles.cpp"; : > "\$4/compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake"
 : > "\$4/compiler-rt/cmake/base-config-ix.cmake"
@@ -61,6 +66,7 @@ case "$(basename "$p")" in
   0003-*) echo "swiftlang's fork refuses every Apple-platform input" >> lld/MachO/InputFiles.cpp ;;
   0004-*) echo 'Mavergreen: extra flags for the Darwin builtins' >> compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake ;;
   0005-*) echo 'Mavergreen: a configure that names the macOS SDK' >> compiler-rt/cmake/base-config-ix.cmake ;;
+  0006-*) echo '#if defined(__APPLE__) // Mavergreen: a uname release is a Darwin version only on a Darwin host' >> llvm/lib/TargetParser/Unix/Host.inc ;;
 esac
 F
 # shipyard-cmake: a configure records its arguments and leaves a cache; an install lays out what step 4 edits.
@@ -79,6 +85,11 @@ fi
 [ ! -e llvm-build/CMakeFiles ] || echo "configured over a CMakeFiles" >> "$T/log"
 mkdir -p llvm-build; printf 'CMAKE_COMMAND:INTERNAL=%s\n' "$T/bin/shipyard-cmake" > llvm-build/CMakeCache.txt; : > llvm-build/build.ninja
 F
+# On Linux the cmake on PATH configures and installs; it records itself as cmake.
+sed 's/echo "shipyard-cmake"/echo "cmake"/' "$T/bin/shipyard-cmake" > "$T/bin/cmake"
+printf '#!/bin/sh\nif [ -n "${FAKE_UNAME:-}" ] && [ "$1" = -s ]; then echo "$FAKE_UNAME"; else exec /usr/bin/uname "$@"; fi\n' > "$T/bin/uname"
+# ldd, Linux's reader of what lld loads; FAKE_LDD_PKG puts a pkgsrc library among them.
+printf '#!/bin/sh\necho "ldd $*" >> "%s/log"\necho "\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6"\n[ -z "${FAKE_LDD_PKG:-}" ] || echo "\tlibz.so.1 => /opt/pkg/lib/libz.so.1"\n' "$T" > "$T/bin/ldd"
 cat > "$T/bin/ninja" <<'F'
 #!/bin/sh
 echo "ninja $*" >> "$FAKE_LOG"
@@ -111,6 +122,8 @@ both() {
   done
   if grep -q "^git " "$T/$1.log"; then fail "$1 ran git: $(grep "^git " "$T/$1.log")"; fi
   grep -q '^OK: relocatable LLVM build-support tree' "$T/$1.out" || fail "$1 did not finish OK: $(cat "$T/$1.out")"
+  grep -qxF 'set(LLVM_DEFAULT_EXTERNAL_LIT "")' "$T/root/swift/out/llvm/lib/cmake/llvm/LLVMConfig.cmake" \
+    || fail "$1: LLVMConfig.cmake keeps its lit path: $(cat "$T/root/swift/out/llvm/lib/cmake/llvm/LLVMConfig.cmake")"
 }
 . "$REPO/lib.sh"   # -> LLVM_REPO_URL
 
@@ -171,6 +184,22 @@ grep -qxF "source llvm-project $LLVM_REPO_URL $LLVM_SHA $LLVM_TARBALL_SHA256" "$
  KEEP_ROOT=1 run moved native) || fail "the native build over another commit's llvm-build failed: $(cat "$T/moved.out")"
 [ ! -e "$LB/kept.o" ] || fail "moved: kept an llvm-build built from another commit's source"
 lacks moved "configured over"
+
+echo "-- linux (a Linux uname): the seed's clang, the cmake on PATH, ldd; no otool, no shipyard-cmake"
+(export FAKE_UNAME=Linux; run linux cross) || fail "the linux build failed: $(cat "$T/linux.out")"
+both linux
+has linux "fetch-linux-seed <T>/root/swift/work/linux-seed"
+has linux "  -DCMAKE_C_COMPILER=<T>/seed/usr/bin/clang"
+has linux "  -DCMAKE_CXX_COMPILER=<T>/seed/usr/bin/clang++"
+has linux "ldd llvm-build/bin/lld"
+has linux "cmake"
+lacks linux "shipyard-cmake"
+lacks linux "otool"
+lacks linux "CMAKE_LIBTOOL"
+lacks linux "clang22n"
+lacks linux "=/usr/bin/clang"
+if (export FAKE_UNAME=Linux FAKE_LDD_PKG=1; run linuxpkg cross); then fail "linux: passed an lld that loads a library from /opt/pkg"; fi
+grep -q 'links a library from /opt/pkg' "$T/linuxpkg.out" || fail "linuxpkg: $(cat "$T/linuxpkg.out")"
 
 echo "-- a tarball pin that does not match: refused before anything is configured, naming the pin"
 if (FAKE_GOOD_SHA256=another run stale cross); then fail "built with a stale LLVM_TARBALL_SHA256"; fi

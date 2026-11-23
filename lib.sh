@@ -361,6 +361,17 @@ host_inputs_stamp() {
   done
 }
 
+# shipyard_cmake <arg>... -- runs the cmake that configures and installs this repo's builds: shipyard-cmake,
+# the family's pinned CMake, on a Mac (and OS X 10.9), and the host's own cmake on Linux.
+# platform: shipyard-cmake exists to give Macs one pinned CMake; on Linux the family uses the host's own
+#           cmake by design, and shipyard installs no launcher there.
+shipyard_cmake() {
+  case "$(uname -s)" in
+    Linux) cmake "$@" ;;
+    *) shipyard-cmake "$@" ;;
+  esac
+}
+
 # reuse_build_dir <dir> <stamp> -- keeps <dir> when its mavergreen-inputs.stamp holds exactly <stamp>;
 # otherwise removes it, saying so (a dir with no stamp was built from inputs nobody recorded), so it is
 # configured and built afresh. <stamp> is what the build cannot see change in a reused dir: the host
@@ -604,18 +615,23 @@ toolchain_host_select() {
   esac
 }
 
-# compiler_patches x86_64|arm64 <dir> -- the patches in <dir> (patches/compiler) that host's compiler
+# compiler_patches x86_64|arm64|linux <dir> -- the patches in <dir> (patches/compiler) that host's compiler
 # takes, one path per line, in order. 0002 is x86_64's alone: it gives the native swift-frontend the
 # rpath @loader_path/../lib/swift/macosx, the bundled 10.9 runtime it runs on there. The cross
 # package's lib/swift/macosx holds that same x86_64 stdlib, which an arm64 frontend cannot load; it
-# runs on the OS's /usr/lib/swift, upstream's default without 0002. Every other patch is both hosts'.
-# Returns 2 for any other host, and 1 when <dir> holds no patch for it.
+# runs on the OS's /usr/lib/swift, upstream's default without 0002. 0006 is linux's alone (the compiler
+# build-toolchain.sh --host linux builds, which ships in no pkg): it lets the compiler configure without a
+# stdlib on a Linux host, and touches nothing a Darwin host configures. linux takes arm64's set and 0006.
+# Every other patch is every host's. Returns 2 for any other host, and 1 when <dir> holds no patch for it.
 compiler_patches() {
-  ( toolchain_host_select "$1" ) || return 2   # validates only: the caller's TH_* stay as they were
+  case "$1" in
+    linux) ;;
+    *) ( toolchain_host_select "$1" ) || return 2 ;;   # validates only: the caller's TH_* stay as they were
+  esac
   _cp_n=0
   for _cp_p in "$2"/*.patch; do
     [ -f "$_cp_p" ] || continue
-    case "$1:${_cp_p##*/}" in arm64:0002-*) continue ;; esac
+    case "$1:${_cp_p##*/}" in arm64:0002-*|linux:0002-*|x86_64:0006-*|arm64:0006-*) continue ;; esac
     printf '%s\n' "$_cp_p"; _cp_n=$((_cp_n + 1))
   done
   [ "$_cp_n" -gt 0 ] || { echo "compiler_patches: no $1 patches in $2" >&2; return 1; }

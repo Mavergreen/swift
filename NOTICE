@@ -457,7 +457,10 @@ license), built from the same source; LLVM's license ships beside them as
 share/doc/LICENSE-LLVM.txt. Of those patches, 0004 changes only compiler-rt's
 build: it passes extra compiler flags to the Darwin builtins (whose build
 otherwise drops them), so that the archive, and the runtime that links part of
-it, carry no path from the machine that built them.
+it, carry no path from the machine that built them. 0006 changes only an LLVM
+built on a host other than Apple's (the Linux-hosted compiler below): there, a
+macOS default target no longer takes its version from the host's uname. The
+toolchain packages' clang and lld, built for Apple hosts, are unchanged by it.
 
 swift-frontend is modified: it is built with the patches in ./patches/compiler
 (full diffs there; patches/compiler/0003-AUDIT.md explains 0003 site by site):
@@ -481,6 +484,9 @@ swift-frontend is modified: it is built with the patches in ./patches/compiler
         to #isolation is evaluated at each call, in the caller's isolation, as
         upstream's #isolation macro is; the toolchains' compiler, built without
         swift-syntax, had evaluated it in the callee, where it is nil.
+  0006  the C++ interop modulemap copies depend on the stdlib target only where
+        one exists — so the compiler configures without a stdlib on a Linux
+        host. Only the Linux-hosted compiler takes it; it ships in no package.
 
 The cross toolchain package (swift-toolchain-cross-*.pkg) contains the same
 components under the same licenses, built from the same sources and patches
