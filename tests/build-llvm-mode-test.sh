@@ -15,7 +15,8 @@
 #   configured, naming the pin to refresh. On a Linux host (a faked uname) the swift.org Linux seed's clang and
 #   clang++ compile (fetch-linux-seed.sh), the cmake on PATH configures and installs, and ldd reads lld's
 #   libraries; native mode there is refused before anything is fetched. On every host LLVMConfig.cmake's
-#   lit path is emptied.
+#   lit path is emptied. On every host an llvm-project where patch 0007 left no stable sort of a coroutine
+#   frame's allocas is refused before anything is configured.
 #   Nothing is built: every tool is a fake that records its arguments.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,13 +33,13 @@ printf '#!/bin/sh\necho "fetch-linux-seed $*" >> "%s/log"\necho "%s/seed/usr"\n'
 REAL_SHIPYARD="$(. "$REPO/msc.sh" 2>/dev/null && echo "$SHIPYARD")" || { echo "no shipyard -- skipping"; exit 77; }
 mkdir -p "$T/bin" "$T/shipyard" "$T/clang22n/bin"
 cp "$REAL_SHIPYARD/mavericks_fetch.sh" "$T/shipyard/"   # shipyard_curl, for check_release_pin
-# shipyard: the tarball fetcher lays out the five files patches/llvm touch, and stamps the tree.
+# shipyard: the tarball fetcher lays out the files patches/llvm touch, and stamps the tree.
 cat > "$T/shipyard/fetch_pinned_source.sh" <<F
 #!/bin/sh
 echo "fetch_pinned_source \$*" >> "$T/log"
 [ "\$3" = "\${FAKE_GOOD_SHA256:-$LLVM_TARBALL_SHA256}" ] || exit 1
-rm -rf "\$4"; mkdir -p "\$4/llvm/lib/CAS" "\$4/llvm/cmake/modules" "\$4/lld/MachO" "\$4/compiler-rt/cmake/Modules" "\$4/llvm/lib/TargetParser/Unix"
-: > "\$4/llvm/lib/TargetParser/Unix/Host.inc"
+rm -rf "\$4"; mkdir -p "\$4/llvm/lib/CAS" "\$4/llvm/cmake/modules" "\$4/lld/MachO" "\$4/compiler-rt/cmake/Modules" "\$4/llvm/lib/TargetParser/Unix" "\$4/llvm/lib/Transforms/Coroutines"
+: > "\$4/llvm/lib/TargetParser/Unix/Host.inc"; : > "\$4/llvm/lib/Transforms/Coroutines/CoroFrame.cpp"
 : > "\$4/llvm/lib/CAS/OnDiskCommon.cpp"; : > "\$4/llvm/cmake/modules/AddLLVM.cmake"
 : > "\$4/lld/MachO/InputFiles.cpp"; : > "\$4/compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake"
 : > "\$4/compiler-rt/cmake/base-config-ix.cmake"
@@ -53,7 +54,8 @@ while [ \$# -gt 0 ]; do case "\$1" in -o) o="\$2"; shift 2 ;; -*) shift ;; *) u=
 echo "curl \$u" >> "$T/log"
 { printf '001e# service=git-upload-pack\\n0000'; printf '003d%s refs/tags/%s\\n0000' "$LLVM_SHA" "$LLVM_TAG"; } > "\$o"
 F
-# patch: a dry run applies; a real one writes the marker build-llvm.sh greps for that patch.
+# patch: a dry run applies; a real one writes the marker build-llvm.sh greps for that patch, except for the
+# patch FAKE_NO_MARKER names.
 cat > "$T/bin/patch" <<'F'
 #!/bin/sh
 p=""; dry=0
@@ -61,6 +63,7 @@ for a in "$@"; do case "$a" in --dry-run) dry=1 ;; esac; done
 while [ $# -gt 0 ]; do case "$1" in -i) p="$2"; shift 2 ;; *) shift ;; esac; done
 echo "patch $(basename "$p") dry=$dry" >> "$FAKE_LOG"
 [ "$dry" = 1 ] && exit 0
+case "$(basename "$p")" in "${FAKE_NO_MARKER:-none}"-*) exit 0 ;; esac
 case "$(basename "$p")" in
   0001-*) echo 'absent before macOS 10.10' >> llvm/lib/CAS/OnDiskCommon.cpp ;;
   0002-*) echo 'LLVM_LINKER_IS_LLD AND NOT APPLE' >> llvm/cmake/modules/AddLLVM.cmake ;;
@@ -68,6 +71,7 @@ case "$(basename "$p")" in
   0004-*) echo 'Mavergreen: extra flags for the Darwin builtins' >> compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake ;;
   0005-*) echo 'Mavergreen: a configure that names the macOS SDK' >> compiler-rt/cmake/base-config-ix.cmake ;;
   0006-*) echo '#if defined(__APPLE__) // Mavergreen: a uname release is a Darwin version only on a Darwin host' >> llvm/lib/TargetParser/Unix/Host.inc ;;
+  0007-*) echo '  llvm::stable_sort(FrameData.Allocas, [&](const auto &Iter1, const auto &Iter2) {' >> llvm/lib/Transforms/Coroutines/CoroFrame.cpp ;;
 esac
 F
 # shipyard-cmake: a configure records its arguments and leaves a cache; an install lays out what step 4 edits.
@@ -208,6 +212,13 @@ grep -qx 'FAIL: on Linux the mode is cross' "$T/linuxnative.out" || fail "linuxn
 lacks linuxnative "fetch_pinned_source"
 lacks linuxnative "fetch-linux-seed"
 lacks linuxnative "cmake"
+
+echo "-- an llvm-project where patch 0007 left no stable sort of a coroutine frame's allocas: refused, on every host"
+for h in cross:Darwin native:Darwin cross:Linux; do
+  if (export FAKE_NO_MARKER=0007 FAKE_UNAME="${h#*:}"; run no0007 "${h%:*}"); then fail "$h: built from an llvm-project without patch 0007"; fi
+  grep -qx 'FAIL: llvm patch 0007 not applied' "$T/no0007.out" || fail "no0007 ($h): $(cat "$T/no0007.out")"
+  lacks no0007 "cmake"
+done
 
 echo "-- a tarball pin that does not match: refused before anything is configured, naming the pin"
 if (FAKE_GOOD_SHA256=another run stale cross); then fail "built with a stale LLVM_TARBALL_SHA256"; fi

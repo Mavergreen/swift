@@ -91,7 +91,9 @@ fi
 NATIVE="$W/llvm-build"; TC="$W/toolchain/usr"
 # What the host must already hold (earlier stages' work, the host swiftc) is checked first, before anything
 # is fetched or configured.
-grep -q "swiftlang's fork refuses every Apple-platform input" llvm-project/lld/MachO/InputFiles.cpp \
+# platform: llvm patch 0007 is every host's compiler's: without it a coroutine frame's layout is the host C++ library's.
+{ grep -q "swiftlang's fork refuses every Apple-platform input" llvm-project/lld/MachO/InputFiles.cpp \
+  && grep -qF 'llvm::stable_sort(FrameData.Allocas' llvm-project/llvm/lib/Transforms/Coroutines/CoroFrame.cpp; } \
   || { echo "FAIL: llvm-project lacks patches/llvm -- run ./build-llvm.sh"; exit 1; }
 # Each build dir below is kept only while the source trees it compiles are the ones it was built from
 # (lib.sh's source_stamp and reuse_build_dir), with the same patches: a tarball's files carry its commit's

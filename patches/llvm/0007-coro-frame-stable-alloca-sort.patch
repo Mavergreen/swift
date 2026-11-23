@@ -1,0 +1,27 @@
+Mavergreen's own, not yet upstream: CoroSplit orders a coroutine frame's allocas by a stable sort, so
+the frame's layout depends on the IR alone, not on the C++ library the compiler was built against.
+
+Why: FrameTypeBuilder::addFieldForAllocas sorts the frame's allocas by descending size, then merges
+allocas whose lifetimes do not overlap into shared slots in that order. The comparator breaks no ties,
+and llvm::sort is std::sort unless LLVM_ENABLE_EXPENSIVE_CHECKS is on, so allocas of equal size came out
+in whatever order the host's standard library left them: libstdc++ insertion-sorts 16 elements or fewer,
+libc++ fewer still, and libc++ releases differ among themselves. The same IR then gave a different frame
+layout, and different code, from compilers built on different hosts; a coroutine with twelve frame
+allocas, three of them one size, was enough. llvm::stable_sort keeps equal-size allocas in their
+original order. Allocas of different sizes are ordered as before, and at -O0, where frames are not
+optimized, the sort does not run.
+
+llvm-project main (as of 2026-11-23) still sorts with llvm::sort here.
+
+diff --git llvm/lib/Transforms/Coroutines/CoroFrame.cpp llvm/lib/Transforms/Coroutines/CoroFrame.cpp
+--- llvm/lib/Transforms/Coroutines/CoroFrame.cpp
++++ llvm/lib/Transforms/Coroutines/CoroFrame.cpp
+@@ -405,7 +405,7 @@
+   // priority to merge, which can save more space potentially. Also each
+   // AllocaSet would be ordered. So we can get the largest Alloca in one
+   // AllocaSet easily.
+-  sort(FrameData.Allocas, [&](const auto &Iter1, const auto &Iter2) {
++  llvm::stable_sort(FrameData.Allocas, [&](const auto &Iter1, const auto &Iter2) {
+     return GetAllocaSize(Iter1) > GetAllocaSize(Iter2);
+   });
+   for (const auto &A : FrameData.Allocas) {

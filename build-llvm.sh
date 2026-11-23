@@ -46,6 +46,7 @@ grep -q 'LLVM_LINKER_IS_LLD AND NOT APPLE' llvm-project/llvm/cmake/modules/AddLL
 grep -q "swiftlang's fork refuses every Apple-platform input" llvm-project/lld/MachO/InputFiles.cpp || { echo "FAIL: llvm patch 0003 not applied"; exit 1; }
 grep -q 'Mavergreen: extra flags for the Darwin builtins' llvm-project/compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake || { echo "FAIL: llvm patch 0004 not applied"; exit 1; }
 grep -q 'Mavergreen: a uname release is a Darwin version only on a Darwin host' llvm-project/llvm/lib/TargetParser/Unix/Host.inc || { echo "FAIL: llvm patch 0006 not applied"; exit 1; }
+grep -qF 'llvm::stable_sort(FrameData.Allocas' llvm-project/llvm/lib/Transforms/Coroutines/CoroFrame.cpp || { echo "FAIL: llvm patch 0007 not applied"; exit 1; }
 
 echo "==> 2. configure + build TableGen and lld (libswiftCore does not link LLVM; lld links it)"
 # spec: 2026-09-13 shipyard CMake flag day -- the .cmake files installed in step 3 ARE the shipped

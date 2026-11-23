@@ -16,7 +16,8 @@
 #   checkout, configures for an arm64 / macOS 11.0 host against the 11.3 SDK with no native helpers and no
 #   -runtime-compatibility-version, pins the same clang defaults, and its check refuses a frontend that
 #   does not run on the OS's /usr/lib/swift. A missing host swiftc, either host's, is refused before
-#   anything is configured. Any other host is refused before anything runs. Both hosts take cmark and the
+#   anything is configured, as is, on every host, an llvm-project without llvm patch 0007's stable sort of a
+#   coroutine frame's allocas. Any other host is refused before anything runs. Both hosts take cmark and the
 #   compiler's swift as GitHub's tarballs of their pinned commits through shipyard's fetch_pinned_source.sh,
 #   check cmark's release pin with curl, patch with patch, and never run git; force LLVM's version stamp to
 #   LLVM_SHA and its repository, turn Swift's off, and look for no git, LibEdit, LibXml2 or pkg-config.
@@ -187,6 +188,8 @@ for f in llvm-build/bin/llvm-tblgen toolchain/usr/bin/swiftc; do printf '#!/bin/
 # Native mode's default host toolchain, where no toolchain is installed: every run that names none says so.
 SWIFT_INSTALLED_TOOLCHAIN="$T/installed"; export SWIFT_INSTALLED_TOOLCHAIN
 echo "swiftlang's fork refuses every Apple-platform input" > "$W/llvm-project/lld/MachO/InputFiles.cpp"
+CORO="$W/llvm-project/llvm/lib/Transforms/Coroutines/CoroFrame.cpp"; mkdir -p "${CORO%/*}"
+echo '  llvm::stable_sort(FrameData.Allocas, [&](const auto &Iter1, const auto &Iter2) {' > "$CORO"
 LLVM_SOURCE="$LLVM_REPO_URL $LLVM_SHA $LLVM_TARBALL_SHA256"   # build-llvm.sh's extraction
 echo "$LLVM_SOURCE" > "$W/llvm-project/.mavergreen-source"
 run() {  # run <log-name> <mode> [build-toolchain.sh args] -- a fresh checkout state and log each time
@@ -322,6 +325,17 @@ if run nosource cross; then fail "built from an llvm-project no build-llvm.sh ex
 mv "$T/llvm-source.away" "$W/llvm-project/.mavergreen-source"
 grep -q 'llvm-project is no source tree build-llvm.sh extracted -- run ./build-llvm.sh' "$T/nosource.out" || fail "nosource: $(cat "$T/nosource.out")"
 lacks nosource "shipyard-cmake"
+
+echo "-- an llvm-project without llvm patch 0007 (a coroutine frame's allocas in a stable order): every host refuses it"
+cp "$CORO" "$T/coro.away"
+echo '  sort(FrameData.Allocas, [&](const auto &Iter1, const auto &Iter2) {' > "$CORO"
+for h in x86_64 arm64 linux; do
+  u=Darwin; [ "$h" = linux ] && u=Linux
+  if (export FAKE_UNAME=$u; run no0007 cross --host $h); then fail "$h: built from an llvm-project without patch 0007"; fi
+  grep -q 'FAIL: llvm-project lacks patches/llvm -- run ./build-llvm.sh' "$T/no0007.out" || fail "no0007 ($h): $(cat "$T/no0007.out")"
+  lacks no0007 "cmake"
+done
+mv "$T/coro.away" "$CORO"
 
 echo "-- x86_64, cross, no host toolchain named: refused (CI never builds with an earlier release)"
 unset SWIFT_HOST_TOOLCHAIN

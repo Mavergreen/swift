@@ -461,6 +461,9 @@ it, carry no path from the machine that built them. 0006 changes only an LLVM
 built on a host other than Apple's (the Linux-hosted compiler below): there, a
 macOS default target no longer takes its version from the host's uname. The
 toolchain packages' clang and lld, built for Apple hosts, are unchanged by it.
+0007 changes every host's compiler: it orders an optimized coroutine frame's
+variables of equal size as the code declares them, where the C++ library the
+compiler was built with had decided, so every compiler lays out the same frame.
 
 swift-frontend is modified: it is built with the patches in ./patches/compiler
 (full diffs there; patches/compiler/0003-AUDIT.md explains 0003 site by site):

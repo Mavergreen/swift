@@ -252,8 +252,10 @@ ones that need compiler patch 0003 and upstream's concurrency tests included; th
 the `-g` ones, and a prefix without one is refused (restage it with `build-toolchain.sh --host linux`).
 Without `SWIFT_HOST_TOOLCHAIN` it refuses to run on Linux. Its `SWIFTC=` mode rewrites rpaths there with
 clang22's `llvm-install-name-tool` (`CLANG22_PREFIX`) or `INSTALL_NAME_TOOL`. No Linux-built bundle has run on
-10.9 yet. Its bytes are not a Mac-built bundle's: with the same inputs and paths, `-O` builds of async code
-lay out their coroutine frames differently by host, which is under investigation. vm-test's
+10.9 yet. With the same inputs and paths, `-O` builds of async code once laid out their coroutine frames
+differently by host, by the order the C++ library that built the compiler sorts in; llvm patch 0007 makes
+every host's compiler lay them out alike (`tests/coro-frame-order-test.sh`), and a Linux-built bundle has
+not been compared byte for byte with a Mac-built one since. vm-test's
 `bundle_mode: prebuilt` is for gating such a bundle against a runtime pkg, for iteration only; a release is
 always gated by the bundle compiled in the guest (`compile`).
 
