@@ -1,12 +1,12 @@
 #!/bin/sh
 # platform: host-agnostic
 # usage: sh scripts/equivalence-warnings.sh A B
-#   Compares two builds of one pkg (release.yml's collect: build-cross's runtime pkg, A, and the Linux runtime
-#   job's, B) with shipyard's build-equivalence.sh, against this repo's INGREDIENTS.md entries, and prints its
+#   Compares two builds of one pkg (release.yml's equivalence job: build-cross's runtime pkg, A, and the Linux
+#   runtime job's, B) with shipyard's build-equivalence.sh, against this repo's INGREDIENTS.md entries, and prints its
 #   report. Each unexcused difference and each unused entry becomes a GitHub ::warning::, as does a comparison it
 #   could not make. Exits 0 whatever it found: until the Linux runtime has matched the Mac's with only declared
 #   differences, a difference is reported, not a reason to stop a release. Blocking is a direct call of
-#   build-equivalence.sh in its place.
+#   build-equivalence.sh in its place, and publish needing the equivalence job.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 [ $# -eq 2 ] || { echo "usage: equivalence-warnings.sh A B" >&2; exit 2; }

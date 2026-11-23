@@ -3,7 +3,8 @@
 # usage: sh tests/equivalence-warnings-test.sh
 #   scripts/equivalence-warnings.sh A B runs shipyard's build-equivalence.sh --repo <this repo> A B, prints its report,
 #   and turns each unexcused difference and each unused entry into a GitHub ::warning::, and a comparison it could
-#   not make (exit 2) into one more; it exits 0 whatever build-equivalence.sh said, since collect only warns for now.
+#   not make (exit 2) into one more; it exits 0 whatever build-equivalence.sh said, since release.yml's equivalence
+#   job only warns for now.
 #   build-equivalence.sh is faked here: its output lines are "<level>TAB<path>TAB<excusing glob or ->", detail lines
 #   indented under an interface line, and "unused TAB - TAB <glob>" (build-equivalence.sh's own usage), and an
 #   exit 1 with no such line still becomes a warning.
@@ -23,7 +24,7 @@ fake() { printf '#!/bin/sh\necho "$*" > "%s/args"\ncat "%s/out"\necho "build-equ
 
 fake 1
 rc=0; SHIPYARD_SCRIPTS="$T/sy" sh "$S" a.pkg b.pkg > "$T/got" 2>&1 || rc=$?
-[ "$rc" -eq 0 ] || fail "it exited $rc on differences; collect only warns"
+[ "$rc" -eq 0 ] || fail "it exited $rc on differences; the equivalence job only warns"
 [ "$(cat "$T/args")" = "--repo $REPO a.pkg b.pkg" ] || fail "build-equivalence.sh got '$(cat "$T/args")', not --repo <repo> A B"
 grep -qx '::warning::build-equivalence: bytes lib/a.dylib' "$T/got" || fail "no warning for the bytes difference: $(cat "$T/got")"
 grep -qx '::warning::build-equivalence: interface lib/b.dylib' "$T/got" || fail "no warning for the interface difference"

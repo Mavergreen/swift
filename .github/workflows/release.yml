@@ -6,14 +6,15 @@ name: release
 # own Sparkle updater, sign all three, and attach the .pkgs + signed appcasts to one GitHub Release. Tags
 # ARE the version -- no `v` prefix; see VERSION.
 #
-# Six jobs: `version` resolves the one version every job labels its pkgs with; `build-cross` builds the
+# Nine jobs: `version` resolves the one version every job labels its pkgs with; `build-cross` builds the
 # cross toolchain, its Swift half compiled by the swift.org compiler (CI's one seed), then the stdlib --
 # built once, by that cross toolchain -- and the runtime pkg; `build` then builds the native toolchain,
 # its Swift half compiled by build-cross's toolchain, and stages build-cross's stdlib and builtins in it;
 # `collect` checks that both toolchains carry those same bytes, signs, renders the feeds and runs
-# conformance over all three pkgs; `scan` and `publish` follow it. `linux-runtime` builds the same commit's
-# runtime on Linux (linux-build.yml), and `equivalence` compares its pkg with build-cross's, warning of each
-# difference; publish does not wait for either. CI never builds with an earlier
+# conformance over all three pkgs; `scan` and `publish` follow it, and publish also waits for `vm-test`, the
+# acceptance on 10.9 (RELEASE GATING, below). `linux-runtime` builds the same commit's runtime on Linux
+# (linux-build.yml), and `equivalence` compares its pkg with build-cross's, warning of each difference; publish
+# does not wait for either. CI never builds with an earlier
 # release; OS X 10.9 rebuilds the native toolchain with the previous release (self-host.sh), and the
 # two must be the same bytes (docs/superpowers/specs/2026-09-25-t4-self-hosting-design.md).
 #
