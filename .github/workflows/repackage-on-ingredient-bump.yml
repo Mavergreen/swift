@@ -1,6 +1,7 @@
 name: repackage-on-ingredient-bump
 
-# Every pin lives in pins.env; the runtime patches live under patches/. SWIFT_VERSION is the OWN
+# Every pin lives in pins.env (components/clang22/version repeats CLANG22_VERSION, moved with it in one
+# Renovate branch); the runtime patches live under patches/. SWIFT_VERSION is the OWN
 # upstream and is declared by key: a Swift bump is a new-upstream release (N=1), auto-cut by
 # release.yml on the push to main. Without the key declaration it would publish twice -- once from
 # the push, once from a dispatched N+1 repackage. Every other pin, and every patch, changes what ships

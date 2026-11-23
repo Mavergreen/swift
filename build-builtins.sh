@@ -11,7 +11,7 @@
 #   native (OS X 10.9, self-host.sh): its NATIVE toolchain (CLANG22_PREFIX, default
 #     /usr/local/mavergreen/clang22);
 #   a Linux host builds as cross mode does, with clang22's Linux archive (fetch-clang22.sh there).
-#   All: that toolchain's llvm-libtool-darwin and llvm-lipo make the archive, and its llvm-nm, llvm-lipo
+#   All: that toolchain's llvm-libtool-darwin (on Linux its llvm-ar, below) and llvm-lipo make the archive, and its llvm-nm, llvm-lipo
 #   and llvm-ar read it back, so the archive is the same bytes on every host (Apple's libtool differs
 #   between them); the compat guard reads it with its llvm-lipo, llvm-otool, llvm-nm and
 #   llvm-strings, never the Command Line Tools', which OS X 10.9 has only as stubs without them.

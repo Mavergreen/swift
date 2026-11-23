@@ -126,12 +126,12 @@ grep -qx "    branches: \['renovate/\*\*'\]" "$W" || fail "pins-bot.yml does not
 grep -qx 'permissions: {}' "$W" || fail "pins-bot.yml grants a default permission"
 awk '/^  pins:$/ { j = "pins" } /^  push:$/ { j = "push" } j { print j ": " $0 }' "$W" > "$T/jobs"
 grep -qx 'pins:       contents: read' "$T/jobs" || fail "the pins job's permissions: $(grep '^pins:' "$T/jobs" | grep -A2 permissions)"
-if grep '^pins:' "$T/jobs" | grep -q 'write\|git push\|gh workflow'; then fail "the pins job can write"; fi
-if grep '^push:' "$T/jobs" | grep -q 'pin-source-tarballs\|curl\|install@'; then fail "the push job touches upstream's tarballs"; fi
+if grep '^pins:' "$T/jobs" | grep -Eq 'write|git push|gh workflow'; then fail "the pins job can write"; fi
+if grep '^push:' "$T/jobs" | grep -Eq 'pin-source-tarballs|curl|install@'; then fail "the push job touches upstream's tarballs"; fi
 # The push job's GITHUB_TOKEN reads only; it writes with the pins-bot App's token, minted for contents alone, and
 # pushes with it (the checkout's persisted credentials), so the push itself starts release.yml: no dispatch.
 [ "$(grep -A1 '^push:     permissions:$' "$T/jobs" | tail -1)" = 'push:       contents: read' ] \
-  && ! grep '^push:' "$T/jobs" | grep -q 'contents: write$\|actions: write' || fail "the push job's GITHUB_TOKEN permissions"
+  && ! grep '^push:' "$T/jobs" | grep -Eq '(^|[^-])contents: write$|actions: write' || fail "the push job's GITHUB_TOKEN permissions"
 grep -qx 'push:         uses: actions/create-github-app-token@v3' "$T/jobs" \
   && grep -qx 'push:           client-id: ${{ vars.PINS_BOT_CLIENT_ID }}' "$T/jobs" \
   && grep -qx 'push:           private-key: ${{ secrets.PINS_BOT_PRIVATE_KEY }}' "$T/jobs" \

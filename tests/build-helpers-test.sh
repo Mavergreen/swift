@@ -298,7 +298,8 @@ echo "-- fetch-clang22.sh on Linux: shipyard's fetch_clang22.sh, given the repo'
 R="$T/fc22"; mkdir -p "$R/components/clang22" "$T/fc22-shipyard" "$T/fc22bin"
 cp "$REPO/fetch-clang22.sh" "$REPO/pins.env" "$REPO/msc.sh" "$R/"
 cp "$REPO/components/clang22/version" "$R/components/clang22/version"
-printf '#!/bin/sh\necho "fetch_clang22.sh $*" >> "%s/fc22.log"\necho "%s"\n' "$T" "$C" > "$T/fc22-shipyard/fetch_clang22.sh"
+# v1.0.822's fetch_clang22.sh installs the products: prefix with install-products.sh: it names it.
+printf '#!/bin/sh\n# install-products.sh\necho "fetch_clang22.sh $*" >> "%s/fc22.log"\necho "%s"\n' "$T" "$C" > "$T/fc22-shipyard/fetch_clang22.sh"
 : > "$T/fc22-shipyard/install-products.sh"
 printf '#!/bin/sh\necho "pkgutil $*" >> "%s/fc22.log"\nexit 1\n' "$T" > "$T/fc22bin/pkgutil"; chmod +x "$T/fc22bin/pkgutil"
 fc22() { ( PATH="$T/fc22bin:$T/unamebin:$PATH"; FAKE_UNAME=Linux SHIPYARD_SCRIPTS="$T/fc22-shipyard"; export FAKE_UNAME SHIPYARD_SCRIPTS
@@ -312,8 +313,11 @@ echo 22.1.8-mavericks.1 > "$R/components/clang22/version"
 if fc22; then fail "accepted a components/clang22/version that is not CLANG22_VERSION"; fi
 grep -q "22.1.8-mavericks.1" "$T/err" && grep -q "$CLANG22_VERSION" "$T/err" || fail "did not name both versions: $(cat "$T/err")"
 cp "$REPO/components/clang22/version" "$R/components/clang22/version"
-rm "$T/fc22-shipyard/install-products.sh"
+# An older fetch_clang22.sh beside a newer install-products.sh (a partial checkout) is still refused.
+printf '#!/bin/sh\necho "fetch_clang22.sh $*" >> "%s/fc22.log"\necho "%s"\n' "$T" "$C" > "$T/fc22-shipyard/fetch_clang22.sh"
+: > "$T/fc22.log"
 if fc22; then fail "used a shipyard whose fetch_clang22.sh predates the products: prefix"; fi
+[ ! -s "$T/fc22.log" ] || fail "ran the old fetch_clang22.sh: $(cat "$T/fc22.log")"
 grep -q 'shipyard' "$T/err" || fail "did not name shipyard: $(cat "$T/err")"
 if grep -q '^pkgutil' "$T/fc22.log"; then fail "ran pkgutil on Linux: $(grep '^pkgutil' "$T/fc22.log")"; fi
 echo "PASS"

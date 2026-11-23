@@ -4,7 +4,8 @@
 #   lib.sh's pkg_extract_product must lay out, from a product archive shaped like this repo's pkgs (the
 #   family's base component first, then the product's, with an updater under Library/), exactly the
 #   product's /usr/local/mavergreen/<product> tree, its links and modes kept, replacing what the dir
-#   held; and refuse an archive no component of which installs that product, or more than one does.
+#   held; and refuse an archive no component of which installs that product, or more than one does, or
+#   one carrying an AppleDouble ._* member (which ditto folded into xattrs and cpio writes as a file).
 #   It reads the archive with shipyard's stevedore (fetch_stevedore.sh), on a Mac and on Linux alike,
 #   never with pkgutil or ditto: here a stevedore on PATH (the pinned one, which STEVEDORE names) logs
 #   each call, and a pkgutil, ditto and lsbom on PATH fail, logging theirs. The fixtures are made with
@@ -80,6 +81,19 @@ grep -q 'it is \$HOME' "$T/err" || fail "did not say \$HOME: $(cat "$T/err")"
 [ -f "$T/home/keep/f" ] || fail "removed \$HOME's files"
 if pkg_extract_product "$T/product.pkg" swift-toolchain / > /dev/null 2> "$T/err"; then fail "accepted / as the dir"; fi
 grep -q "refusing out-dir" "$T/err" || fail "did not refuse /: $(cat "$T/err")"
+
+echo "-- refused: a component carrying an AppleDouble member (pkgbuild on a macOS 27 host), which ditto folded away"
+mkdir -p "$T/ad/usr/local/mavergreen/swift-toolchain/bin"; echo swiftc > "$T/ad/usr/local/mavergreen/swift-toolchain/bin/swiftc"
+printf '\000\005\026\007' > "$T/ad/usr/local/mavergreen/swift-toolchain/bin/._x"
+# stevedore leaves ._* files out of a payload, so the fixture's Payload is written with cpio and the
+# component re-wrapped around it with stevedore's xar.
+component appledouble "$T/ad"
+"$REAL" expand "$T/appledouble.pkg" "$T/ad.x" > /dev/null || fail "stevedore expand appledouble"
+( cd "$T/ad" && find . | cpio -o -H odc 2> /dev/null ) | gzip -n > "$T/ad.payload" || fail "cpio the AppleDouble payload"
+"$REAL" xar --mtime 1700000000 --out "$T/withad.pkg" none Bom "$T/ad.x/Bom" none PackageInfo "$T/ad.x/PackageInfo" \
+  none Payload "$T/ad.payload" > /dev/null || fail "stevedore xar withad"
+if pkg_extract_product "$T/withad.pkg" swift-toolchain "$T/out7" > /dev/null 2> "$T/err"; then fail "extracted a pkg with an AppleDouble member"; fi
+grep -q 'AppleDouble member usr/local/mavergreen/swift-toolchain/bin/._x' "$T/err" || fail "did not name the AppleDouble member: $(cat "$T/err")"
 
 echo "-- refused: an archive stevedore cannot read, and no shipyard to find stevedore with"
 echo 'not a pkg' > "$T/junk.pkg"

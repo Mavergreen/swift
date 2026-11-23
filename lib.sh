@@ -975,7 +975,7 @@ TCEOF
 # family's base component) is left out. shipyard's stevedore (fetch_stevedore.sh) expands the archive and
 # gzip and cpio unpack each payload, as shipyard's fetch_product_pkg.sh does, so it runs on a modern Mac,
 # on OS X 10.9 and on Linux alike. Needs $SHIPYARD (msc.sh). Fails when no component installs that
-# prefix, or more than one does. <dir> is rm -rf'd first, so it is refused when relative, when it is
+# prefix, or more than one does, or a component carries an AppleDouble ._* member. <dir> is rm -rf'd first, so it is refused when relative, when it is
 # $HOME, and when scripts/outdir.sh's refuse_root_outdir (which the caller has sourced) refuses it: / by
 # any name.
 pkg_extract_product() {
@@ -998,6 +998,9 @@ pkg_extract_product() {
     _pe_n=$((_pe_n + 1)); _pe_t="$3.x/c$_pe_n"
     mkdir -p "$_pe_t" && ( cd "$_pe_t" && gzip -dc "$_pe_p" | cpio -id --quiet ) \
       || { echo "pkg_extract_product: could not extract $_pe_p" >&2; return 1; }
+    # platform: pkgbuild on a macOS 27 host writes AppleDouble ._* members for files carrying
+    #           com.apple.provenance; ditto folded them into xattrs, cpio writes them as files.
+    _pe_ad="$(find "$_pe_t" -name '._*' | head -1)"; [ -z "$_pe_ad" ] || { echo "pkg_extract_product: $1 carries AppleDouble member ${_pe_ad#$_pe_t/} (a pkgbuild on a macOS 27 host); build it with stevedore" >&2; return 1; }
     if [ -d "$_pe_t/usr/local/mavergreen/$2" ]; then
       [ -z "$_pe_hit" ] || { echo "pkg_extract_product: more than one component of $1 installs /usr/local/mavergreen/$2" >&2; return 1; }
       _pe_hit="$_pe_t"

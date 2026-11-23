@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS and Linux -- otool (llvm-otool on 10.9) and shipyard-cmake on a modern Mac and on OS X 10.9; ldd and the host's cmake on Linux
+# platform: host-agnostic -- otool (llvm-otool on 10.9) and shipyard-cmake on a modern Mac and on OS X 10.9; ldd and the host's cmake on Linux
 # build-llvm.sh — build a RELOCATABLE LLVM build-support tree for the Swift stdlib build, and the lld
 # that links the runtime.
 #

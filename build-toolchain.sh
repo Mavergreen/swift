@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS -- a modern arm64 Mac (cross: xcrun, dyld_info) or OS X 10.9 (native: clang22's llvm-otool), per MAVERICKS_MODE; and Linux for --host linux alone
+# platform: host-agnostic -- a modern arm64 Mac (cross: xcrun, dyld_info) or OS X 10.9 (native: clang22's llvm-otool), per MAVERICKS_MODE; and Linux for --host linux alone
 # build-toolchain.sh [--host x86_64|arm64|linux] — build a Swift toolchain: a Swift compiler, lld and clang that
 # target OS X 10.9 (x86_64) by default.
 #   --host x86_64 (the default): the NATIVE toolchain, which RUNS on OS X 10.9 (x86_64). One recipe, two
@@ -423,7 +423,8 @@ ninja -C "$S" -j "$JOBS" swift-frontend
 # platform: OS X 10.9 has no dyld_info (nor, without the Command Line Tools, an xcrun to find one); there
 #           lib.sh's readers fall back to OTOOL, clang22's llvm-otool.
 DI=""
-if [ "$MODE" = cross ]; then DI="$(xcrun -f dyld_info 2>/dev/null || :)"; fi
+# platform: guarded macOS-only call -- --host linux is the only host on Linux (checked above), so a cross build of any other host is a Mac
+if [ "$MODE" = cross ] && [ "$HOST" != linux ]; then DI="$(xcrun -f dyld_info 2>/dev/null || :)"; fi
 case "$HOST" in
 x86_64)
   echo "==> 6. check: minOS and SDK $DEPLOYMENT, 10.9-safe imports, the frontend's own rpath"
