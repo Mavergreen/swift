@@ -36,8 +36,8 @@
 # Env: MAVERICKS_BUILD_ROOT (build root, see lib.sh), SWIFT_WORK (sources and build trees, default
 #   $SWIFT_BUILD/work), SWIFT_RUNTIME_OUT (the staged payload, default $SWIFT_BUILD/payload/runtime),
 #   SWIFT_SELFTEST_SUPPORT_OUT (the self-test's support, default $SWIFT_BUILD/payload/selftest-support),
-#   MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_HOST_TOOLCHAIN_VERSION (the release of a host toolchain no
-#   pkg installed, a copy; see lib.sh's host_toolchain_release), SWIFT_BUILTINS (a libclang_rt.osx.a to
+#   MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_HOST_TOOLCHAIN_VERSION (the release of a host toolchain
+#   prefix with no mavergreen.plist: a stage, or a partial copy; see lib.sh's host_toolchain_release), SWIFT_BUILTINS (a libclang_rt.osx.a to
 #   link instead of the mode's own), NM (native mode's nm), CLANG22_PREFIX, MAVERICKS_SDK_CACHE
 #   (fetch_sdk.sh's cache), MAVERICKS_SOURCE_CACHE (fetch_pinned_source.sh's).
 # Host: cmake (shipyard-cmake on a Mac, lib.sh's shipyard_cmake), ninja, python3 (gyb), curl, patch, tar. No git

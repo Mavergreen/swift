@@ -310,8 +310,9 @@ native_host_shim() {
 # by another release's compiler fail far from the cause, or build a runtime CI never builds. The release
 # is the one the manifest of the pkg that installed <prefix> names, <prefix>/mavergreen.plist (its version
 # and identifier, which are that pkg's version and id), so the cross toolchain's is read as the native
-# one's is. A copy that no pkg installed has no manifest: SWIFT_HOST_TOOLCHAIN_VERSION then declares its
-# release, held to the same rule, and where there is a manifest it must agree with it.
+# one's is. A prefix with no mavergreen.plist (a stage, or a partial copy; a whole copy of an installed
+# prefix carries its manifest) has SWIFT_HOST_TOOLCHAIN_VERSION declare its release, held to the same
+# rule, and where there is a manifest it must agree with it.
 # platform: the manifest reads the same on every host; a pkg receipt (pkgutil) exists only on a Mac.
 host_toolchain_release() {
   _hr_v=""; _hr_id=""; _hr_m="$1/mavergreen.plist"

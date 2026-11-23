@@ -36,7 +36,7 @@ H="$T/tc"; mkdir -p "$H/bin" "$H/lib/swift/macosx" "$H/lib/clang/21/include" "$H
 : > "$H/bin/swift-frontend"; : > "$H/bin/clang"; : > "$H/bin/ld64.lld"; : > "$H/lib/clang/21/lib/darwin/libclang_rt.osx.a"
 printf '#!/bin/sh\necho "pkgutil $*" >> "%s/pkgutil-args"\nexit 1\n' "$T" > "$T/fakebin/pkgutil"
 chmod +x "$T/fakebin/pkgutil"
-receipt() {  # $1 = the version the prefix's mavergreen.plist names, or nothing for no pkg (no manifest)
+manifest() {  # $1 = the version the prefix's mavergreen.plist names, or nothing for no pkg (no manifest)
   rm -f "$H/mavergreen.plist"
   [ -z "${1:-}" ] || printf '%s\n' '<plist version="1.0">' '<dict>' '  <key>identifier</key>' '  <string>dev.mavergreen.swift-toolchain</string>' \
     '  <key>version</key>' "  <string>$1</string>" '</dict>' '</plist>' > "$H/mavergreen.plist"
@@ -49,8 +49,8 @@ build() {  # runs build.sh's native mode; its output in $T/out
 }
 went_past_step_1() { grep -q "FAIL: no $T/no-nm" "$T/out"; }
 
-echo "-- a receipt of this checkout's Swift: printed, and step 1 goes on"
-receipt "$SWIFT_VERSION-mavericks.7"
+echo "-- a manifest of this checkout's Swift: printed, and step 1 goes on"
+manifest "$SWIFT_VERSION-mavericks.7"
 if build; then fail "build.sh succeeded with a fake toolchain: $(cat "$T/out")"; fi
 grep -qxF "    host toolchain $H: release $SWIFT_VERSION-mavericks.7 (pkg dev.mavergreen.swift-toolchain)" "$T/out" \
   || fail "did not print the release: $(cat "$T/out")"
@@ -58,29 +58,29 @@ went_past_step_1 || fail "stopped before the check after the release's: $(cat "$
 if grep -q 'CMAKE_OSX_ARCHITECTURES' "$T/out"; then fail "native mode passes CMAKE_OSX_ARCHITECTURES: $(cat "$T/out")"; fi
 [ ! -e "$T/pkgutil-args" ] || fail "asked pkgutil: $(cat "$T/pkgutil-args")"
 
-echo "-- a receipt of another Swift: refused in step 1"
-receipt "0.0.1-mavericks.1"
+echo "-- a manifest of another Swift: refused in step 1"
+manifest "0.0.1-mavericks.1"
 if build; then fail "build.sh succeeded with a fake toolchain: $(cat "$T/out")"; fi
 grep -q "FAIL: the host toolchain at $H is release 0.0.1-mavericks.1" "$T/out" || fail "did not refuse 0.0.1: $(cat "$T/out")"
 if went_past_step_1; then fail "went on past a toolchain of another Swift: $(cat "$T/out")"; fi
 
-echo "-- no receipt: refused, unless SWIFT_HOST_TOOLCHAIN_VERSION declares this checkout's Swift"
-receipt ""
+echo "-- no manifest (mavergreen.plist): refused, unless SWIFT_HOST_TOOLCHAIN_VERSION declares this checkout's Swift"
+manifest ""
 if build; then fail "build.sh succeeded with a fake toolchain: $(cat "$T/out")"; fi
 grep -q 'SWIFT_HOST_TOOLCHAIN_VERSION' "$T/out" || fail "did not name the override: $(cat "$T/out")"
-if went_past_step_1; then fail "went on past a toolchain with no receipt: $(cat "$T/out")"; fi
+if went_past_step_1; then fail "went on past a toolchain with no manifest: $(cat "$T/out")"; fi
 if ( export SWIFT_HOST_TOOLCHAIN_VERSION="$SWIFT_VERSION-mavericks.7"; build ); then fail "build.sh succeeded with a fake toolchain"; fi
 grep -q "release $SWIFT_VERSION-mavericks.7 (declared" "$T/out" || fail "did not print the declared release: $(cat "$T/out")"
 went_past_step_1 || fail "stopped at a declared release of this checkout's Swift: $(cat "$T/out")"
 
-echo "-- cross mode with SWIFT_HOST_TOOLCHAIN: that toolchain, its receipt checked, never the swift.org pkg"
+echo "-- cross mode with SWIFT_HOST_TOOLCHAIN: that toolchain, its manifest checked, never the swift.org pkg"
 build_cross() {  # build.sh's cross mode; $1 names the host toolchain, or nothing for none
   ( export PATH="$T/fakebin:$PATH" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=cross
     unset SWIFT_WORK SWIFT_BUILTINS NM SWIFT_HOST_TOOLCHAIN
     if [ -n "$1" ]; then export SWIFT_HOST_TOOLCHAIN="$1"; fi
     sh "$REPO/build.sh" ) > "$T/out" 2>&1
 }
-receipt ""
+manifest ""
 if ( export SWIFT_HOST_TOOLCHAIN_VERSION="$SWIFT_VERSION-mavericks.9"; build_cross "$H" ); then fail "build.sh succeeded with a fake toolchain: $(cat "$T/out")"; fi
 grep -qxF "    host toolchain $H: release $SWIFT_VERSION-mavericks.9 (declared by SWIFT_HOST_TOOLCHAIN_VERSION)" "$T/out" \
   || fail "cross mode did not take the named toolchain: $(cat "$T/out")"
@@ -89,7 +89,7 @@ if grep -q 'swift.org toolchain' "$T/out"; then fail "cross mode looked for the 
 grep -qxF "    cmake architectures: -DCMAKE_OSX_ARCHITECTURES=x86_64 (a named host toolchain's clang is x86_64 only)" "$T/out" \
   || fail "cross mode with a named toolchain did not pass CMAKE_OSX_ARCHITECTURES: $(cat "$T/out")"
 if build_cross "$H"; then fail "build.sh succeeded with a fake toolchain"; fi
-grep -q 'SWIFT_HOST_TOOLCHAIN_VERSION' "$T/out" || fail "cross mode took a receipt-less toolchain without a declared release: $(cat "$T/out")"
+grep -q 'SWIFT_HOST_TOOLCHAIN_VERSION' "$T/out" || fail "cross mode took a manifest-less toolchain without a declared release: $(cat "$T/out")"
 if build_cross ""; then fail "build.sh succeeded with no swift.org pkg"; fi
 if grep -q 'CMAKE_OSX_ARCHITECTURES' "$T/out"; then fail "cross mode without a host toolchain passes CMAKE_OSX_ARCHITECTURES"; fi
 grep -q "FAIL: no swift.org toolchain at $R/swift/cache/" "$T/out" || fail "cross mode without a host toolchain: $(cat "$T/out")"
@@ -215,7 +215,7 @@ F
 printf '#!/bin/sh\nexit 3\n' > "$T/fakebin/ninja"
 for c in git xcrun; do printf '#!/bin/sh\necho "%s $*" >> "%s/log"\nexit 1\n' "$c" "$T" > "$T/fakebin/$c"; done
 chmod +x "$T/shipyard/"* "$T/fakebin/"*
-receipt "$SWIFT_VERSION-mavericks.9"
+manifest "$SWIFT_VERSION-mavericks.9"
 build_native() {  # build.sh's native mode past step 1, everything faked; ninja stops it after the configure
   : > "$T/log"
   if ( export PATH="$T/fakebin:$PATH" FAKE_LOG="$T/log" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=native \

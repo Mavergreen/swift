@@ -217,9 +217,34 @@ sh scripts/stage-toolchain.sh --stdlib "$S/payload/toolchain-cross/$X/lib/swift"
 ```
 
 `build.sh` holds a host toolchain to this checkout's Swift: `SWIFT_HOST_TOOLCHAIN_VERSION` declares the
-release of one no package installed. The 10.9 toolchain cannot run on a modern Mac (its compiler loads
+release of a prefix with no `mavergreen.plist` (a stage, or a partial copy). The 10.9 toolchain cannot run on a modern Mac (its compiler loads
 its own 10.9 runtime beside the OS's, and crashes), so it is tested on 10.9, and CI runs only a
 translated smoke of it (`tests/toolchain-smoke-test.sh`).
+
+## Building the runtime on Linux
+
+An x86_64 Linux host (Ubuntu 24.04) builds the same runtime payload as a Mac's cross mode. It needs:
+
+- `uuid-dev` and `pkg-config` (the Linux-hosted compiler finds libuuid through them), `cmake`, `ninja`,
+  `python3`, `curl`, `patch` and `tar`;
+- shipyard v1.0.822 or later, with `SHIPYARD_SCRIPTS` naming its `scripts` directory: its
+  `fetch_clang22.sh` supplies mavericks-clang-22's Linux archive, at the release
+  `components/clang22/version` pins (`fetch-clang22.sh` refuses an older shipyard).
+
+```sh
+./build-llvm.sh                       # LLVM build support and ld64.lld, with the swift.org Linux seed's clang
+./build-builtins.sh                   # compiler-rt's builtins, with clang22's Linux archive
+./build-toolchain.sh --host linux     # the Linux-hosted compiler, staged as a prefix with those builtins
+P="${SWIFT_WORK:-$MAVERICKS_BUILD_ROOT/swift/work}/toolchain-linux"
+V="$(. ./pins.env && echo "$SWIFT_VERSION")-local"    # the release a prefix with no mavergreen.plist declares
+SWIFT_HOST_TOOLCHAIN="$P" SWIFT_HOST_TOOLCHAIN_VERSION="$V" ./build.sh
+```
+
+`build-builtins.sh` comes before `build-toolchain.sh --host linux`, whose prefix carries its archive (without
+it, the prefix is staged without builtins and says so). On Linux `build.sh` runs in cross mode alone and
+refuses to run without `SWIFT_HOST_TOOLCHAIN`: the swift.org seed branch needs `pkgutil` and `ditto`. It
+reads Mach-O with clang22's `llvm-otool`, `llvm-nm` and `llvm-strings`, and stages the payload in
+`$MAVERICKS_BUILD_ROOT/swift/payload/runtime`, as on a Mac. The Linux-hosted compiler ships in no package.
 
 ## A Swift bump
 
