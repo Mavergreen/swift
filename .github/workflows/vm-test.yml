@@ -1,0 +1,199 @@
+name: vm-test
+
+# Acceptance on Mac OS X 10.9 (Mavergreen/mavericks-vm: a 10.9.5 guest without the Command Line Tools), in one of
+# two bundle modes.
+#
+# compile, release.yml's vm-test, every push's and tag's, the release gate: the previous release's runtime and
+# native toolchain pkgs install there, then the run's (swift-cross and swift-native) over them (an upgrade, as a
+# user's is), the family install checks, the installed swiftc builds the self-test bundle on 10.9 itself
+# (make-selftest.sh's SWIFTC= mode), and the bundle's gate runs against the installed runtime: 500x plus 10x under
+# Guard Malloc, at -O and -Onone, after a --loads run (each test once, every libswift* read from where it must load
+# from), and upstream's own tests (build-cross's selftest-support) at 20x plus 1x under Guard Malloc. Then the
+# native toolchain's smoke runs, natively, its load commands read with mavericks-clang-22's llvm-otool and llvm-nm
+# (10.9's are Command Line Tools stubs), installed, with the Longboat its pkg requires, before the self-test is
+# built: the gate checks upstream's tests' output with FileCheck, which only clang22 ships.
+#
+# prebuilt, linux-runtime.yml's, for iteration and never a release: a runtime pkg and the self-test bundle built
+# beside it, in the caller's own run (the artifact prebuilt_artifact names), alone: libcxx22 and that runtime
+# install, its receipt and the family install are checked, the runtime's updater launches once, Longboat, its 10.9
+# SDK and clang22 (FileCheck) install, and the bundle's --loads runs, then its gate. No macOS job, no previous
+# release: nothing compiles in the guest, and no toolchain installs or smokes.
+
+on:
+  workflow_call:
+    inputs:
+      bundle_mode:
+        description: "compile (the run's pkgs, the bundle built in the 10.9 guest; the release gate) or prebuilt (prebuilt_artifact's runtime pkg and bundle; never publishes)"
+        type: string
+        required: true
+      version:
+        description: "The version the run's pkgs carry; their receipts are held to it"
+        type: string
+        required: true
+      publish:
+        description: "'true' when the calling run publishes: then only compile gates it"
+        type: string
+        default: 'false'
+      prebuilt_artifact:
+        description: "prebuilt: the caller's run's artifact holding a swift-runtime-*.pkg and swift-runtime-selftest.tar.gz"
+        type: string
+        default: ''
+    secrets:
+      MAVERICKS_VM_KEY:
+        required: true
+
+jobs:
+  vm-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 335   # sized in INGREDIENTS ("Every Swift bump merges on green"): 334 binaries to compile and gate, about 168 min at worst
+    permissions:
+      contents: read
+      packages: write
+    env:
+      BUNDLE_MODE: ${{ inputs.bundle_mode }}
+    steps:
+      - name: Check the bundle mode
+        env:
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -eu
+          case "$BUNDLE_MODE" in compile|prebuilt) ;; *) echo "::error::bundle_mode is compile or prebuilt, not '$BUNDLE_MODE'"; exit 1 ;; esac
+          [ "$BUNDLE_MODE" = compile ] || [ "$PUBLISH" != true ] || { echo "::error::a release is gated by the bundle compiled on 10.9 (bundle_mode compile), never a prebuilt one"; exit 1; }
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - name: Download build-cross's runtime pkg and selftest-support
+        if: env.BUNDLE_MODE == 'compile'
+        uses: actions/download-artifact@v8
+        with: { name: swift-cross, path: dist }
+      - name: Download build's native toolchain pkg
+        if: env.BUNDLE_MODE == 'compile'
+        uses: actions/download-artifact@v8
+        with: { name: swift-native, path: dist }
+      # The runtime links libcxx22's libc++ and its pkg requires libcxx22 at pins.env's CLANG22_VERSION or later:
+      # that release's pkg, checked against its own SHA256SUMS, installs first. Its native clang22 pkg, from the
+      # same release, supplies the smoke's Mach-O readers.
+      - name: Fetch libcxx22 and mavericks-clang-22 at the pinned clang22 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          v="$(sed -n 's/^CLANG22_VERSION="\([^"]*\)".*/\1/p' pins.env)"
+          [ -n "$v" ] || { echo "::error::no CLANG22_VERSION in pins.env"; exit 1; }
+          mkdir -p libcxx clang22
+          ( cd libcxx && gh release download "$v" -R Mavergreen/clang-22 -p "libcxx22-$v.pkg" -p SHA256SUMS &&
+            grep " libcxx22-$v.pkg\$" SHA256SUMS | sha256sum -c - )
+          ( cd clang22 && gh release download "$v" -R Mavergreen/clang-22 -p "mavericks-clang-22-native-$v.pkg" -p SHA256SUMS &&
+            grep " mavericks-clang-22-native-$v.pkg\$" SHA256SUMS | sha256sum -c - )
+      # mavericks-clang-22's pkg refuses to install without Longboat, and points the user at its latest release.
+      - name: Fetch Longboat's latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          lb="$(gh release view -R Mavergreen/longboat --json tagName --jq .tagName)"
+          [ -n "$lb" ] || { echo "::error::no Longboat release"; exit 1; }
+          mkdir -p longboat && cd longboat
+          gh release download "$lb" -R Mavergreen/longboat -p "longboat-$lb.pkg" -p SHA256SUMS
+          grep " longboat-$lb.pkg\$" SHA256SUMS | sha256sum -c -
+      # A user upgrades: the latest release's pkgs install first, this run's over them.
+      - name: Fetch the previous release's runtime and native toolchain pkgs
+        if: env.BUNDLE_MODE == 'compile'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          prev="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          [ -n "$prev" ] || { echo "::error::no previous release to upgrade from"; exit 1; }
+          mkdir -p prev && cd prev
+          gh release download "$prev" -R "$GITHUB_REPOSITORY" -p "swift-runtime-$prev.pkg" -p "swift-toolchain-$prev.pkg" -p SHA256SUMS
+          grep -E " swift-(runtime|toolchain)-$prev\.pkg\$" SHA256SUMS | sha256sum -c -
+      # The caller's own run's artifact: the bundle and the pkg were built from this commit, beside each other.
+      - name: Fetch the prebuilt runtime pkg and self-test bundle
+        if: env.BUNDLE_MODE == 'prebuilt'
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.prebuilt_artifact }}
+          path: dist
+      - name: Install the pkgs, build the self-test with the installed swiftc, and gate it, on Mac OS X 10.9
+        if: env.BUNDLE_MODE == 'compile'
+        uses: Mavergreen/mavericks-vm@v1
+        env:
+          SWIFT_FULL_VERSION: ${{ inputs.version }}
+        with:
+          image-key: ${{ secrets.MAVERICKS_VM_KEY }}
+          envs: SWIFT_FULL_VERSION
+          copyback: false
+          run: |
+            set -eu
+            sw_vers
+            if [ -e /Library/Developer/CommandLineTools ]; then echo "this guest has the Command Line Tools"; else echo "this guest has no Command Line Tools"; fi
+            sudo -n true || { echo "the guest's user cannot sudo without a password, and installer needs root"; exit 1; }
+            # installer says only "an error"; the reason (a preinstall's refusal, say) is in install.log.
+            install() { for p in "$@"; do [ -f "$p" ] || { echo "no $p"; exit 1; }
+              sudo installer -pkg "$p" -target / || { tail -40 /var/log/install.log; exit 1; }; done; }
+            install libcxx/libcxx22-*.pkg prev/swift-runtime-*.pkg prev/swift-toolchain-[0-9]*.pkg
+            echo "upgrading from: $(/usr/local/mavergreen/bin/swiftc -version 2>&1 | head -1)"
+            install dist/swift-runtime-*.pkg dist/swift-toolchain-[0-9]*.pkg
+            for id in dev.mavergreen.swift-runtime dev.mavergreen.swift-toolchain; do
+              got="$(pkgutil --pkg-info "$id" | sed -n 's/^version: //p')"
+              [ "$got" = "$SWIFT_FULL_VERSION" ] || { echo "$id is $got after the upgrade, not $SWIFT_FULL_VERSION"; exit 1; }
+            done
+            /usr/local/bin/mavergreen check
+            /usr/local/mavergreen/bin/swiftc -version
+            # spec: INGREDIENTS.md "Every Swift bump merges on green, the real-10.9 gate included" -- FileCheck (clang22's) checks the gate's output, so clang22 and Longboat go in before the self-test is built.
+            install longboat/longboat-[0-9]*.pkg
+            # platform: mavericks-clang-22's preinstall refuses without Longboat's 10.9 SDK (dev.mavergreen.longboat.sdk109) installed.
+            sudo /usr/local/mavergreen/bin/longboat sdk install 10.9
+            install clang22/mavericks-clang-22-native-*.pkg
+            # Upstream's tests too (dist/selftest-support, build-cross's). Their support modules are binary
+            # .swiftmodule files, which only the compiler that wrote them reads: build-cross's cross toolchain,
+            # this release's Swift, as the native swiftc installed above is.
+            SWIFTC=/usr/local/mavergreen/bin/swiftc SELFTEST_SUPPORT="$PWD/dist/selftest-support" MAVERICKS_BUILD_ROOT="$HOME/mm-build" DIST="$PWD/gate" sh make-selftest.sh
+            ( cd gate && tar -xzf swift-runtime-selftest.tar.gz && sh swift-runtime-selftest/run-selftest.sh --loads &&
+              sh swift-runtime-selftest/run-selftest.sh --gate )
+            rc=0; MAVERICKS_BUILD_ROOT="$HOME/mm-smoke" sh tests/toolchain-smoke-test.sh || rc=$?
+            [ "$rc" -ne 77 ] || { echo "the native toolchain smoke SKIPPED on 10.9"; exit 1; }
+            exit "$rc"
+      - name: Install the runtime pkg and gate the prebuilt self-test bundle, on Mac OS X 10.9
+        if: env.BUNDLE_MODE == 'prebuilt'
+        uses: Mavergreen/mavericks-vm@v1
+        env:
+          SWIFT_FULL_VERSION: ${{ inputs.version }}
+        with:
+          image-key: ${{ secrets.MAVERICKS_VM_KEY }}
+          envs: SWIFT_FULL_VERSION
+          copyback: false
+          run: |
+            set -eu
+            sw_vers
+            if [ -e /Library/Developer/CommandLineTools ]; then echo "this guest has the Command Line Tools"; else echo "this guest has no Command Line Tools"; fi
+            sudo -n true || { echo "the guest's user cannot sudo without a password, and installer needs root"; exit 1; }
+            # installer says only "an error"; the reason (a preinstall's refusal, say) is in install.log.
+            install() { for p in "$@"; do [ -f "$p" ] || { echo "no $p"; exit 1; }
+              sudo installer -pkg "$p" -target / || { tail -40 /var/log/install.log; exit 1; }; done; }
+            [ -f dist/swift-runtime-selftest.tar.gz ] || { echo "no prebuilt bundle at dist/swift-runtime-selftest.tar.gz"; exit 1; }
+            install libcxx/libcxx22-*.pkg dist/swift-runtime-*.pkg
+            got="$(pkgutil --pkg-info dev.mavergreen.swift-runtime | sed -n 's/^version: //p')"
+            [ "$got" = "$SWIFT_FULL_VERSION" ] || { echo "dev.mavergreen.swift-runtime is $got, not $SWIFT_FULL_VERSION"; exit 1; }
+            /usr/local/bin/mavergreen check
+            # platform: dyld binds every import of the runtime's updater at launch (DYLD_BIND_AT_LAUNCH), so one
+            #           launch shows a symbol 10.9 lacks: dyld prints "dyld: ..." and stops the process (SIGTRAP, 133).
+            loc="$(pkgutil --pkg-info dev.mavergreen.swift-runtime | sed -n 's/^location: //p')"
+            rel="$(pkgutil --files dev.mavergreen.swift-runtime | grep 'swift-runtime-updater\.app/Contents/MacOS/swift-runtime-updater$' | head -1)"
+            u="/${loc:+${loc#/}/}$rel"; u="$(printf '%s\n' "$u" | sed 's|//*|/|g')"
+            [ -n "$rel" ] && [ -x "$u" ] || { echo "no swift-runtime-updater in the runtime's receipt ($u)"; exit 1; }
+            DYLD_BIND_AT_LAUNCH=1 "$u" --background > updater.log 2>&1 &
+            pid=$!; sleep 10; kill "$pid" 2>/dev/null || :; rc=0; wait "$pid" || rc=$?
+            cat updater.log
+            ! grep -q '^dyld: ' updater.log && [ "$rc" -ne 133 ] || { echo "the runtime's updater does not load on 10.9 (exit $rc)"; exit 1; }
+            echo "the runtime's updater launched (exit $rc after 10 s)"
+            # spec: INGREDIENTS.md "Every Swift bump merges on green, the real-10.9 gate included" -- FileCheck (clang22's) checks the gate's output.
+            install longboat/longboat-[0-9]*.pkg
+            # platform: mavericks-clang-22's preinstall refuses without Longboat's 10.9 SDK (dev.mavergreen.longboat.sdk109) installed.
+            sudo /usr/local/mavergreen/bin/longboat sdk install 10.9
+            install clang22/mavericks-clang-22-native-*.pkg
+            # spec: tests/run-selftest.sh's --loads -- a bundle built elsewhere must load every libswift* from this runtime, or not be gated.
+            mkdir gate
+            ( cd gate && tar -xzf ../dist/swift-runtime-selftest.tar.gz &&
+              sh swift-runtime-selftest/run-selftest.sh --loads &&
+              sh swift-runtime-selftest/run-selftest.sh --gate )

@@ -255,16 +255,26 @@ clang22's `llvm-install-name-tool` (`CLANG22_PREFIX`) or `INSTALL_NAME_TOOL`. No
 10.9 yet. With the same inputs and paths, `-O` builds of async code once laid out their coroutine frames
 differently by host, by the order the C++ library that built the compiler sorts in; llvm patch 0007 makes
 every host's compiler lay them out alike (`tests/coro-frame-order-test.sh`), and a Linux-built bundle has
-not been compared byte for byte with a Mac-built one since. vm-test's
+not been compared byte for byte with a Mac-built one since. vm-test.yml's
 `bundle_mode: prebuilt` is for gating such a bundle against a runtime pkg, for iteration only; a release is
 always gated by the bundle compiled in the guest (`compile`).
 
-The runtime pkg builds on Linux as on a Mac. Its updater is built by the lines of release.yml's
-"Build swift-runtime-updater.app" step, clang22's on either host; Linux has no `shipyard-cmake`, so `cmake` with
+The runtime pkg builds on Linux as on a Mac. Its updater is built by `scripts/build-runtime-updater.sh`, which
+release.yml's build-cross runs too, clang22's on either host; Linux has no `shipyard-cmake`, so `cmake` with
 `-DMavericksShipyard_DIR` naming the shipyard checkout stands in. Then `REQUIRE_UPDATER=1 ./package.sh`.
 shipyard's `build_component_pkg.sh` and `set_install_floor.sh` build the pkg, so the same payload, updater and
 `SOURCE_DATE_EPOCH` give the same bytes on both hosts. A pkg installs each mode as staged, so `stage-runtime.sh`
 stages under umask 022, and `package.sh` refuses a group- or world-writable entry.
+
+### In CI
+
+`.github/workflows/linux-runtime.yml` does all of this on every push and pull request, on Linux runners only
+(`linux-build.yml`), and gates the pkg and bundle it built on 10.9 (`vm-test.yml`, prebuilt). release.yml calls
+`linux-build.yml` too, at the run's version, and collect compares its runtime pkg with build-cross's
+(`scripts/equivalence-warnings.sh`: warnings, never a failure). The Linux-hosted compiler is cached under a key
+`scripts/compiler-cache-inputs.sh` computes from every file its build reads (`COMPILER_BUILD` in
+`linux-build.yml` names the scripts), so only a change to one of them rebuilds it: cold, in three jobs
+(`build-toolchain.sh --stop-after llvm` ends the second), because the whole build is longer than one job may run.
 
 ## A Swift bump
 

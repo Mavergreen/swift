@@ -1,6 +1,6 @@
 #!/bin/sh
 # platform: host-agnostic -- a modern arm64 Mac (cross: xcrun, dyld_info) or OS X 10.9 (native: clang22's llvm-otool), per MAVERICKS_MODE; and Linux for --host linux alone
-# build-toolchain.sh [--host x86_64|arm64|linux] — build a Swift toolchain: a Swift compiler, lld and clang that
+# build-toolchain.sh [--host x86_64|arm64|linux] [--stop-after llvm] — build a Swift toolchain: a Swift compiler, lld and clang that
 # target OS X 10.9 (x86_64) by default.
 #   --host x86_64 (the default): the NATIVE toolchain, which RUNS on OS X 10.9 (x86_64). One recipe, two
 #     modes (MAVERICKS_MODE, else shipyard's mavericks_mode.sh), the same bytes from both:
@@ -38,18 +38,23 @@
 # SHA-256s and patched with the OS's patch; no git runs, and LLVM's, clang's and lld's version stamps are
 # forced to LLVM_SHA and its repository (Swift's own, which reaches no shipped byte, is off). Run after build-llvm.sh (and, for arm64, mirror-toolchain.sh and build.sh;
 # for linux, build-builtins.sh, whose archive the prefix carries).
+# --stop-after llvm stops once step 1's LLVM, clang, lld and dsymutil are built; run again without it, over the same
+# build root, to build the rest.
 # STAGE_HOST=<host> scripts/stage-toolchain.sh lays the results out as that toolchain's pkg payload.
 # MAVERICKS_USE_CCACHE=1 compiles through ccache (CI sets it). Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, JOBS,
 # MAVERICKS_USE_CCACHE, MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_INSTALLED_TOOLCHAIN (native mode's default
 # host toolchain, /usr/local/mavergreen/swift-toolchain unless set), CLANG22_PREFIX, MAVERICKS_SDK_CACHE,
 # MAVERICKS_SOURCE_CACHE.
 set -eu
-HOST=x86_64
+HOST=x86_64; STOP_AFTER=""
+USAGE="usage: build-toolchain.sh [--host x86_64|arm64|linux] [--stop-after llvm]"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --host) [ $# -ge 2 ] || { echo "usage: build-toolchain.sh [--host x86_64|arm64|linux]" >&2; exit 2; }
+    --host) [ $# -ge 2 ] || { echo "$USAGE" >&2; exit 2; }
             HOST="$2"; shift 2 ;;
-    *) echo "usage: build-toolchain.sh [--host x86_64|arm64|linux]" >&2; exit 2 ;;
+    --stop-after) [ "${2:-}" = llvm ] || { echo "$USAGE" >&2; exit 2; }
+            STOP_AFTER="$2"; shift 2 ;;
+    *) echo "$USAGE" >&2; exit 2 ;;
   esac
 done
 case "$(uname -s):$HOST" in
@@ -247,6 +252,12 @@ linux)
 esac
 printf '%s\n' "$LLVM_SRC" > "$L/mavergreen-inputs.stamp"
 ninja -C "$L" -j "$JOBS" llvm-libraries clang-libraries clang-resource-headers lld clang dsymutil
+# spec: linux-build.yml's compiler-llvm job -- a cold Linux build is longer than one CI job may run, so CI builds
+#       LLVM in one job and the rest in the next, which runs this again without --stop-after over the same dirs.
+if [ "$STOP_AFTER" = llvm ]; then
+  echo "OK: LLVM, clang, lld and dsymutil for the $HOST host at $L; build-toolchain.sh without --stop-after finishes the compiler"
+  exit 0
+fi
 
 echo "==> 2. swift-cmark"
 check_release_pin swift-cmark "$CMARK_SWIFT_RELEASE" "$CMARK_TAG" "$CMARK_SHA" "$CMARK_REPO_URL"

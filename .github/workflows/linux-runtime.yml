@@ -1,0 +1,40 @@
+name: linux-runtime
+
+# Every push and pull request: the runtime built on Linux, with no macOS runner (linux-build.yml: the Linux-hosted
+# compiler, cached by what its build reads, then build.sh, the pkg and the self-test bundle), and gated on
+# Mac OS X 10.9 (vm-test.yml, prebuilt: that pkg and that bundle, from this run, installed and run in
+# Mavergreen/mavericks-vm's guest). It never publishes: its pkg carries <SWIFT_VERSION>-dev.<run id>.
+# Cold (a compiler-input change), about 7 to 8 h of three compiler jobs before the runtime; warm, the runtime alone.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+# Never cancelled: a cold compiler build lost to a newer push would only start again; keyed per ref.
+concurrency:
+  group: linux-runtime-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    uses: ./.github/workflows/linux-build.yml
+    with:
+      selftest: true
+
+  vm-test:
+    needs: [build]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/vm-test.yml
+    with:
+      bundle_mode: prebuilt
+      version: ${{ needs.build.outputs.version }}
+      publish: 'false'
+      prebuilt_artifact: swift-linux
+    secrets:
+      MAVERICKS_VM_KEY: ${{ secrets.MAVERICKS_VM_KEY }}

@@ -32,7 +32,8 @@
 #   no Dispatch, pkg-config looked for (uuid-dev is required first), lld with --gc-sections; it stages the
 #   prefix build.sh takes as SWIFT_HOST_TOOLCHAIN, with the seed's libswiftCore.so and its own dsymutil, and refuses a clang whose
 #   default triple (read without its cfgs), or a swift-frontend whose default target, is not
-#   x86_64-apple-macosx10.9; its OK line says when it has no builtins. --host linux on Darwin, and any other host on Linux, is
+#   x86_64-apple-macosx10.9; its OK line says when it has no builtins; --stop-after llvm builds LLVM, clang, lld and
+#   dsymutil and stops, saying so, and any other --stop-after is refused before anything runs. --host linux on Darwin, and any other host on Linux, is
 #   refused before anything runs.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -506,6 +507,22 @@ if (export FAKE_UNAME=Linux FAKE_NO_UUID=1; run linuxnouuid cross --host linux);
 grep -q 'FAIL: .*uuid-dev' "$T/linuxnouuid.out" || fail "linuxnouuid: $(cat "$T/linuxnouuid.out")"
 lacks linuxnouuid "cmake"
 lacks linuxnouuid "fetch-linux-seed"
+
+echo "   --stop-after llvm: LLVM, clang, lld and dsymutil, then nothing more (CI's compiler-llvm job)"
+rm -rf "$W/toolchain-linux"
+(export FAKE_UNAME=Linux; run linuxstop cross --host linux --stop-after llvm) || fail "--stop-after llvm failed: $(cat "$T/linuxstop.out")"
+has linuxstop "  <T>/w/llvm-linux"
+lacks linuxstop "cmark"
+lacks linuxstop "swift-linux"
+lacks linuxstop "fetch_pinned_source"
+[ ! -e "$W/toolchain-linux" ] || fail "--stop-after llvm staged a prefix"
+grep -qx "OK: LLVM, clang, lld and dsymutil for the linux host at $W/llvm-linux; build-toolchain.sh without --stop-after finishes the compiler" "$T/linuxstop.out" \
+  || fail "--stop-after llvm did not say where it stopped: $(cat "$T/linuxstop.out")"
+for bad in "--stop-after swift" "--stop-after"; do
+  rc=0; (export FAKE_UNAME=Linux; run linuxbadstop cross --host linux $bad) || rc=$?
+  [ "$rc" -eq 2 ] || fail "'$bad': exit $rc, not 2: $(cat "$T/linuxbadstop.out")"
+  [ ! -s "$T/linuxbadstop.log" ] || fail "'$bad' ran [$(head -1 "$T/linuxbadstop.log")] before refusing"
+done
 
 echo "-- --host linux on Darwin, and any other host on Linux, is refused before anything runs"
 rc=0; run linuxmac cross --host linux || rc=$?
