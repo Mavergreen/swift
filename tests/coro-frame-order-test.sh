@@ -10,22 +10,29 @@
 #   The stdlib is <prefix>/lib/swift where it holds macosx/Swift.swiftmodule (a toolchain pkg's), else
 #   build.sh's stdlib-build ($MAVERICKS_BUILD_ROOT/swift/work/stdlib-build/lib/swift), else
 #   CORO_RESOURCE_DIR; the SDK is shipyard's fetch_sdk.sh's 10.9 SDK, or CORO_SDK.
-#   SKIPs (77) with no such compiler or stdlib, or a compiler this host cannot run.
+#   SKIPs (77) with no such compiler or stdlib, or a compiler this host cannot run; with
+#   CORO_FRAME_ORDER_REQUIRED=1 (release.yml's build job, on the same run's cross toolchain) each of those
+#   fails instead. It is host-agnostic all the same: the script runs on any host, and what it needs is a
+#   compiler and stdlib, not an OS, so a host without them skips it like any test whose input is absent.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
+skip() {
+  [ "${CORO_FRAME_ORDER_REQUIRED:-0}" != 1 ] || fail "$* (CORO_FRAME_ORDER_REQUIRED=1)"
+  echo "$* -- skipping"; exit 77
+}
 . "$REPO/lib.sh"     # -> $SWIFT_BUILD
 P="${SWIFT_HOST_TOOLCHAIN:-}"
-[ -n "$P" ] && [ -x "$P/bin/swift-frontend" ] || { echo "no SWIFT_HOST_TOOLCHAIN with bin/swift-frontend -- skipping"; exit 77; }
+[ -n "$P" ] && [ -x "$P/bin/swift-frontend" ] || skip "no SWIFT_HOST_TOOLCHAIN with bin/swift-frontend"
 FE="$P/bin/swift-frontend"
-"$FE" -version >/dev/null 2>&1 || { echo "$FE does not run on this host -- skipping"; exit 77; }
+"$FE" -version >/dev/null 2>&1 || skip "$FE does not run on this host"
 RES="${CORO_RESOURCE_DIR:-}"
 if [ -z "$RES" ]; then
   for r in "$P/lib/swift" "$SWIFT_BUILD/work/stdlib-build/lib/swift"; do
     [ -d "$r/macosx/Swift.swiftmodule" ] && { RES="$r"; break; }
   done
 fi
-[ -n "$RES" ] && [ -d "$RES/macosx/Swift.swiftmodule" ] || { echo "no macOS stdlib for $P (set CORO_RESOURCE_DIR) -- skipping"; exit 77; }
+[ -n "$RES" ] && [ -d "$RES/macosx/Swift.swiftmodule" ] || skip "no macOS stdlib for $P (set CORO_RESOURCE_DIR)"
 SDK="${CORO_SDK:-}"
 if [ -z "$SDK" ]; then
   . "$REPO/msc.sh"   # -> $SHIPYARD (fetch_sdk.sh)

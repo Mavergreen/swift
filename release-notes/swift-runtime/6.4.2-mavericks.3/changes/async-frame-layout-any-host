@@ -1,1 +1,1 @@
-Optimized async code now compiles to the same machine code whichever system built the toolchain's compiler.
+Optimized async code now compiles identically whichever system built the toolchain's compiler.

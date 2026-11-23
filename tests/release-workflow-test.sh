@@ -8,7 +8,9 @@
 #   break it, and must refuse it. Its guard steps (build-cross's and build's) must guard the payload's
 #   builtins archive and its Recaulk archive (lib/recaulk/librecaulk.a, linked whole) by name. build-cross builds
 #   the runtime's updater with clang22 (fetch-clang22.sh's), never Apple's /usr/bin/clang, and still fails when
-#   that updater links a Swift runtime library.
+#   that updater links a Swift runtime library. build runs tests/coro-frame-order-test.sh, with
+#   CORO_FRAME_ORDER_REQUIRED=1, after the step that unpacks the same run's cross toolchain and sets
+#   SWIFT_HOST_TOOLCHAIN.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d "${TMPDIR:-/tmp}/release-workflow-test.XXXXXX")"
@@ -73,6 +75,25 @@ upd_mutant() {
 }
 upd_mutant "an updater built by Apple's clang" 's|-DCMAKE_OBJC_COMPILER="$CL/bin/clang"|-DCMAKE_OBJC_COMPILER=/usr/bin/clang|'
 upd_mutant "an updater whose Swift link is not checked" "/! grep -q 'libswift' .*updater links/d"
+
+# The coroutine frame reproducer runs in build, on the same run's cross toolchain once its step has set
+# SWIFT_HOST_TOOLCHAIN, required: a skip there (no compiler, no stdlib) must fail the step.
+coro() {
+  awk '/^  build:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" > "$T/cjob"
+  u="$(grep -n '^      - name: Unpack the same run.s cross toolchain$' "$T/cjob" | cut -d: -f1)"
+  c="$(grep -n '^          CORO_FRAME_ORDER_REQUIRED=1 sh tests/coro-frame-order-test\.sh$' "$T/cjob" | cut -d: -f1)"
+  [ -n "$c" ] || { echo "build does not run tests/coro-frame-order-test.sh with CORO_FRAME_ORDER_REQUIRED=1"; return 1; }
+  [ -n "$u" ] && [ "$u" -lt "$c" ] || { echo "build runs the coroutine frame test before the cross toolchain sets SWIFT_HOST_TOOLCHAIN"; return 1; }
+}
+coro "$W" > "$T/why" || fail "release.yml: $(cat "$T/why")"
+coro_mutant() {
+  sed "$2" "$W" > "$T/mutant.yml"
+  if coro "$T/mutant.yml" > "$T/why"; then fail "accepted $1"; fi
+  echo "  refused $1: $(cat "$T/why")"
+}
+coro_mutant "a coroutine frame test that may skip" 's/CORO_FRAME_ORDER_REQUIRED=1 sh tests/sh tests/'
+coro_mutant "a build without the coroutine frame test" '/coro-frame-order-test/d'
+coro_mutant "a coroutine frame test with no cross toolchain before it" '/^      - name: Unpack the same run.s cross toolchain$/d'
 
 mutant() {
   sed "$2" "$W" > "$T/mutant.yml"

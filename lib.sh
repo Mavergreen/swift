@@ -190,9 +190,10 @@ recaulk_importer_layout() {
     && cp "$2" "$4/Dispatch.modulemap" && echo "$3" > "$4/VERSION"
 }
 
-# patch_source <dir> <patch>... -- applies each <patch> (an absolute path, -p0 paths as patches/ holds
-# them) to the source tree <dir>, in order, with the OS's patch: OS X 10.9's GNU patch 2.5.8 and a modern
-# Mac's BSD patch 2.0 write the same bytes. Each is first tried with --dry-run, so one that does not
+# patch_source <dir> <patch>... -- applies each <patch> (an absolute path) to the source tree <dir>, in order,
+# at -p1 when its first --- path starts a/ (a patch shared byte for byte with a product that applies with
+# shipyard's apply_patches.sh, -p1) and otherwise at -p0, as patches/ holds the rest, with the OS's patch:
+# OS X 10.9's GNU patch 2.5.8 and a modern Mac's BSD patch 2.0 write the same bytes. Each is first tried with --dry-run, so one that does not
 # apply fails, naming itself, before it changes anything; -N refuses one already applied instead of
 # offering to reverse it; -F 0 refuses a hunk whose context has drifted, as `git apply` did (an offset is
 # still accepted, as it was, except that GNU patch then holds a hunk with less context before than after
@@ -205,11 +206,12 @@ patch_source() {
   [ -d "$_ps_dir" ] || { echo "FAIL: no source tree at $_ps_dir to patch" >&2; return 1; }
   for _ps_p in "$@"; do
     case "$_ps_p" in /*) ;; *) echo "FAIL: patch_source: '$_ps_p' is not an absolute path" >&2; return 1 ;; esac
+    case "$(awk '/^--- / { print $2; exit }' "$_ps_p")" in a/*) _ps_l=-p1 ;; *) _ps_l=-p0 ;; esac
     # platform: GNU patch 2.5.8 (OS X 10.9) reads -V none as a version-control name, not "no backups",
     #           and leaves file.~1~ at an offset; --no-backup-if-mismatch is honoured by it and by BSD 2.0.
-    _ps_out="$(cd "$_ps_dir" && patch -p0 -N -F 0 --no-backup-if-mismatch --dry-run -i "$_ps_p" < /dev/null 2>&1)" || {
+    _ps_out="$(cd "$_ps_dir" && patch "$_ps_l" -N -F 0 --no-backup-if-mismatch --dry-run -i "$_ps_p" < /dev/null 2>&1)" || {
       printf '%s\n' "$_ps_out" >&2; echo "FAIL: patch did not apply: $_ps_p" >&2; return 1; }
-    ( cd "$_ps_dir" && patch -p0 -N -F 0 --no-backup-if-mismatch -s -i "$_ps_p" < /dev/null ) || { echo "FAIL: patch did not apply: $_ps_p" >&2; return 1; }
+    ( cd "$_ps_dir" && patch "$_ps_l" -N -F 0 --no-backup-if-mismatch -s -i "$_ps_p" < /dev/null ) || { echo "FAIL: patch did not apply: $_ps_p" >&2; return 1; }
     _ps_s="$(shasum -a 256 < "$_ps_p" | awk '{ print $1 }')"
     [ "${#_ps_s}" -eq 64 ] || { echo "FAIL: patch_source: could not hash $_ps_p" >&2; return 1; }
     printf '%s %s\n' "${_ps_p##*/}" "$_ps_s" >> "$_ps_dir/.mavergreen-patches"

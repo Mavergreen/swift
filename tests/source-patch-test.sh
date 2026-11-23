@@ -2,8 +2,9 @@
 # platform: host-agnostic
 # usage: sh tests/source-patch-test.sh
 #   The sources come as tarballs and are patched with the OS's patch, never git (OS X 10.9 has none without
-#   the Command Line Tools). patch_source must apply each patch in order with this host's own patch (GNU
-#   2.5.8 on 10.9, BSD 2.0 on a modern Mac), leave no backup (.orig, or GNU's .~1~) beside a file a hunk
+#   the Command Line Tools). patch_source must apply each patch in order, at -p1 when its first --- path
+#   starts a/ (a patch shared with a product that applies with -p1) and at -p0 otherwise, with this host's
+#   own patch (GNU 2.5.8 on 10.9, BSD 2.0 on a modern Mac), leave no backup (.orig, or GNU's .~1~) beside a file a hunk
 #   reached at an offset, refuse a patch that does not apply before it changes anything, refuse a hunk
 #   that applies only with fuzz (git apply refused those), refuse one already applied rather than offer
 #   to reverse it, and refuse a tree a patch left a .rej, .orig or ~ backup in. fetch_source must hand shipyard's
@@ -55,6 +56,20 @@ cat > "$T/bad.patch" <<'P'
 +DOS
  tres
 P
+# p1.patch is shaped as one shared with a product that applies patches with -p1 (shipyard's
+# apply_patches.sh): prose before the diff, and a/ and b/ before each path.
+cat > "$T/p1.patch" <<'P'
+A prose header, which patch passes over.
+
+diff --git a/sub/b.txt b/sub/b.txt
+--- a/sub/b.txt
++++ b/sub/b.txt
+@@ -1,3 +1,3 @@
+ alpha
+ beta
+-gamma
++GAMMA
+P
 # fuzz.patch's first and last context lines have drifted: patch's default fuzz would apply it anyway.
 cat > "$T/fuzz.patch" <<'P'
 --- sub/b.txt
@@ -71,6 +86,16 @@ tree
 patch_source "$T/src" "$T/1-a.patch" "$T/2-b.patch" > "$T/out" 2>&1 || fail "patch_source failed: $(cat "$T/out")"
 [ "$(sed -n 5p "$T/src/a.txt")" = TWO ] || fail "1-a.patch did not apply: $(cat "$T/src/a.txt")"
 [ "$(sed -n 2p "$T/src/sub/b.txt")" = BETA ] || fail "2-b.patch did not apply: $(cat "$T/src/sub/b.txt")"
+[ -z "$(cd "$T/src" && find . -name '*.orig' -o -name '*.rej' -o -name '*~')" ] || fail "left $(cd "$T/src" && find . -name '*.orig' -o -name '*.rej' -o -name '*~')"
+
+echo "-- patch_source: a patch whose first --- path starts a/ is applied at -p1, beside -p0 ones, and recorded"
+tree
+patch_source "$T/src" "$T/1-a.patch" "$T/p1.patch" > "$T/out" 2>&1 || fail "patch_source failed on p1.patch: $(cat "$T/out")"
+[ "$(sed -n 5p "$T/src/a.txt")" = TWO ] || fail "1-a.patch did not apply beside p1.patch: $(cat "$T/src/a.txt")"
+[ "$(sed -n 3p "$T/src/sub/b.txt")" = GAMMA ] || fail "p1.patch did not apply: $(cat "$T/src/sub/b.txt")"
+[ ! -e "$T/src/a" ] && [ ! -e "$T/src/b" ] || fail "p1.patch was applied at -p0: $(ls "$T/src")"
+[ "$(awk '{ print $1 }' "$T/src/.mavergreen-patches")" = "$(printf '1-a.patch\np1.patch')" ] \
+  || fail "recorded: $(cat "$T/src/.mavergreen-patches")"
 [ -z "$(cd "$T/src" && find . -name '*.orig' -o -name '*.rej' -o -name '*~')" ] || fail "left $(cd "$T/src" && find . -name '*.orig' -o -name '*.rej' -o -name '*~')"
 
 echo "-- patch_source: one that does not apply fails, naming it, and changes nothing"

@@ -437,6 +437,12 @@ jobs:
           "$X/bin/swift-frontend" -version
           echo "SWIFT_HOST_TOOLCHAIN=$X" >> "$GITHUB_ENV"
 
+      # llvm patch 0007: the cross toolchain lays out an optimized async function's frame in the order the
+      # IR alone decides. Required here, so a missing compiler or stdlib fails the step rather than skips it.
+      - name: Coroutine frame layout of the same run's cross toolchain
+        run: |
+          CORO_FRAME_ORDER_REQUIRED=1 sh tests/coro-frame-order-test.sh
+
       - name: Disk before the toolchain build
         run: df -h "$RUNNER_TEMP" | tail -1
 
