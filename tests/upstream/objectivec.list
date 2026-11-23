@@ -2,92 +2,93 @@
 # Every candidate scripts/upstream-tests.py's survey finds in the pinned tree (a test with a RUN: line that
 # the objectivec classifier picks) appears once: `include <path>`, built by make-selftest.sh with its
 # compile-line and run by run-selftest.sh --gate, or `exclude <path> -- <reason>`, a reason a reviewer
-# can check against the test (it imports Foundation, which no 10.9 pkg ships; it needs a library this
-# release does not ship; its RUN: line is one compile-line refuses, quoted as it says; upstream disables
-# it; it is a Concurrency test, which tests/upstream/concurrency.list decides, so it is built once; or it
-# failed on 10.9, with the failure). build.sh's step 5b checks this list against the tree, so a
+# can check against the test (it does not compile against the 10.9 SDK, with the error; it needs a library
+# or test support this release does not ship or build; its RUN: line is one compile-line refuses, quoted
+# as it says; upstream disables it; it is a Concurrency test, which tests/upstream/concurrency.list
+# decides, so it is built once; it is a Darwin test too, which tests/upstream/darwin.list includes, so it
+# is built once; or it failed on 10.9, with the failure). build.sh's step 5b checks this list against the tree, so a
 # Swift bump that adds a test, or gives an included one a RUN: form, compiler flag or REQUIRES:/UNSUPPORTED:
 # the script does not know, stops the build until the list is reviewed (a changed source does not; the gate runs it).
 exclude test/Concurrency/Runtime/actor_dynamic_subclass.swift -- a Concurrency test: tests/upstream/concurrency.list decides it
 exclude test/Concurrency/Runtime/actor_init_abi.swift -- a Concurrency test: tests/upstream/concurrency.list decides it
 exclude test/Concurrency/Runtime/async_task_executor_nsobject.swift -- a Concurrency test: tests/upstream/concurrency.list decides it
 exclude test/Concurrency/Runtime/objc_async.swift -- a Concurrency test: tests/upstream/concurrency.list decides it
-exclude test/stdlib/ArrayBridge.swift.gyb -- imports Foundation, which no 10.9 pkg ships
+exclude test/stdlib/ArrayBridge.swift.gyb -- RUN uses %target-clang
 include test/stdlib/AutoreleasingUnsafeMutablePointer.swift
 exclude test/stdlib/AutoreleasingUnsafeMutablePointerDiagnostics.swift -- RUN uses %target-typecheck-verify-swift
 exclude test/stdlib/AutoreleasingUnsafeMutablePointerDiagnostics_warning.swift -- RUN uses %target-typecheck-verify-swift
-exclude test/stdlib/BridgeEquatableToObjC.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/BridgeIdAsAny.swift.gyb -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/BridgeNonVerbatim.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/BridgeStorage.swift -- imports Foundation, which no 10.9 pkg ships
+include test/stdlib/BridgeEquatableToObjC.swift
+include test/stdlib/BridgeIdAsAny.swift.gyb
+exclude test/stdlib/BridgeNonVerbatim.swift -- needs StdlibUnittestFoundationExtras, test support this release does not build (line 28, "no such module 'StdlibUnittestFoundationExtras'")
+exclude test/stdlib/BridgeStorage.swift -- failed on 10.9: "Fatal error: Unexpectedly untagged pointer for string "foo"" (line 92), as 10.9's Foundation makes no tagged-pointer NSString (OS X 10.10 brought them) and the test expects NSString(format: "foo") to be one
 include test/stdlib/Bridgeable.swift
-exclude test/stdlib/BridgedArrayNonContiguous.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/BridgedObjectDebuggerSupport.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/Bundle.swift -- imports Foundation, which no 10.9 pkg ships
+exclude test/stdlib/BridgedArrayNonContiguous.swift -- does not compile against the 10.9 SDK, which has no nullability: NSArray(objects:count:) takes UnsafePointer<AnyObject?> there (line 32, "cannot convert value of type 'UnsafePointer<AnyObject>' to expected argument type 'UnsafePointer<AnyObject?>'")
+include test/stdlib/BridgedObjectDebuggerSupport.swift
+include test/stdlib/Bundle.swift
 exclude test/stdlib/CharacterRecognizer.swift -- RUN hands the test arguments (%S/Inputs/)
-exclude test/stdlib/CodableEnumUnavailableElement.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/CodableMultifile.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/CodableTests.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/DarwinAPI.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/DictionaryCompactMapValues.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/EmptyCollectionSingletonRealization.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/ErrorBridged.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/Foundation_NewGenericAPIs.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/KVO.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/KVOKeyPaths.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/KeyPathObjC.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/KeyValuePairs.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/NSArrayAPI.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/NSDictionary.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/NSEnumeratorAPI.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/NSError.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/NSItemProvider.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/NSKeyedArchival.swift -- imports Foundation, which no 10.9 pkg ships
+exclude test/stdlib/CodableEnumUnavailableElement.swift -- RUN uses -Xfrontend -unavailable-decl-optimization=complete, which no included test is known to need
+exclude test/stdlib/CodableMultifile.swift -- RUN runs cp
+exclude test/stdlib/CodableTests.swift -- does not compile against 10.9's Foundation: it codes types 10.9 lacks, PersonNameComponents (line 36, "cannot find type 'PersonNameComponents' in scope") and Measurement, Dimension and UnitLength (lines 764-788), and CGRect.null (line 365, "type 'CGRect' has no member 'null'"), as the 10.9 headers name CGRectNull with no Swift member name
+exclude test/stdlib/DarwinAPI.swift -- a Darwin test too: tests/upstream/darwin.list includes it, so it is built once
+include test/stdlib/DictionaryCompactMapValues.swift
+include test/stdlib/EmptyCollectionSingletonRealization.swift
+exclude test/stdlib/ErrorBridged.swift -- RUN uses %target-ptrsize
+exclude test/stdlib/Foundation_NewGenericAPIs.swift -- RUN uses %target-typecheck-verify-swift, and runs no executable
+exclude test/stdlib/KVO.swift -- does not compile against the 10.9 SDK: its observeValue(forKeyPath:of:change:context:) (line 56) takes [NSKeyValueChangeKey: Any]?, where the SDK view's -observeValueForKeyPath:... takes an untyped NSDictionary ("method does not override any method from its superclass"), and NSString.h there marks no initializer NS_DESIGNATED_INITIALIZER, so Target (line 38), which overrides only some, does not inherit the overlay's required init(stringLiteral:) ("'required' initializer 'init(stringLiteral:)' must be provided by subclass of 'NSString'")
+exclude test/stdlib/KVOKeyPaths.swift -- RUN redirects the test's input or output (> %t/output.txt)
+include test/stdlib/KeyPathObjC.swift
+include test/stdlib/KeyValuePairs.swift
+include test/stdlib/NSArrayAPI.swift
+include test/stdlib/NSDictionary.swift
+exclude test/stdlib/NSEnumeratorAPI.swift -- does not compile against the 10.9 SDK, which has no nullability: NSDictionary().keyEnumerator() is NSEnumerator! there (line 15, "value of optional type 'NSEnumerator?' must be unwrapped to a value of type 'NSEnumerator'")
+exclude test/stdlib/NSError.swift -- RUN's %target-build-swift writes no %t executable
+exclude test/stdlib/NSItemProvider.swift -- does not compile against 10.9's Foundation, which has no NSItemProvider (OS X 10.10) (line 22, "cannot find 'NSItemProvider' in scope")
+exclude test/stdlib/NSKeyedArchival.swift -- does not compile against 10.9's Foundation: NSKeyedArchiver(forWritingWith:) is optional there, as the SDK has no nullability (line 39, "value of optional type 'NSKeyedArchiver?' must be unwrapped"), and decodingFailurePolicy (OS X 10.11, line 50), decodeDecodable and decodeTopLevelDecodable (line 91, "value of type 'NSKeyedUnarchiver' has no member 'decodeDecodable'") and unarchivedObject (macOS 10.13, line 173) are not there
 exclude test/stdlib/NSObject-hashing.swift -- RUN uses %target-swift-frontend
-exclude test/stdlib/NSObject.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/NSSetAPI.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/NSSlowString.swift -- imports Foundation, which no 10.9 pkg ships
+include test/stdlib/NSObject.swift
+exclude test/stdlib/NSSetAPI.swift -- does not compile against the 10.9 SDK, which has no nullability: NSIndexSet(indexesIn:) is optional there (line 111, "value of optional type 'NSIndexSet?' must be unwrapped to a value of type 'NSIndexSet'")
+exclude test/stdlib/NSSlowString.swift -- RUN uses %target-clang
 exclude test/stdlib/NSSlowTaggedLocalizedString.swift -- upstream disables it (REQUIRES: rdar100559801)
-exclude test/stdlib/NSValueBridging.swift.gyb -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/NewString.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/Nil.swift -- imports Foundation, which no 10.9 pkg ships
+exclude test/stdlib/NSValueBridging.swift.gyb -- needs StdlibUnittestFoundationExtras, test support this release does not build (line 23, "no such module 'StdlibUnittestFoundationExtras'")
+exclude test/stdlib/NewString.swift -- failed on 10.9: NSStringFromClass returns String! in the 10.9 SDK, which has no nullability, so repr (line 18) prints Optional("__NSCFString")@0x... where FileCheck wants __NSCFString@... (line 84, "CHECK-NEXT: expected string not found in input")
+include test/stdlib/Nil.swift
 include test/stdlib/NoFoundation.swift
 exclude test/stdlib/ObjCEvilClassInitialization.swift -- RUN uses %target-clang
-exclude test/stdlib/OptionalBridge.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/ParseFloat64-bridging.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/Reflection_objc.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/RuntimeObjC.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/SIMD.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/SetTrapsObjC.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/Span/BridgedStringUTF8ViewSpanTests.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/StringBridge.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/StringDiagnostics.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/SwiftObjectNSObject.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/SwiftValueNSObject.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/TestNSNumberBridging.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/TestScanner.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/URLSession.swift -- imports Foundation, which no 10.9 pkg ships
+include test/stdlib/OptionalBridge.swift
+include test/stdlib/ParseFloat64-bridging.swift
+exclude test/stdlib/Reflection_objc.swift -- RUN uses %empty-directory(%t/cache)
+exclude test/stdlib/RuntimeObjC.swift -- RUN uses %target-clang
+include test/stdlib/SIMD.swift
+include test/stdlib/SetTrapsObjC.swift
+include test/stdlib/Span/BridgedStringUTF8ViewSpanTests.swift
+exclude test/stdlib/StringBridge.swift -- RUN runs cp
+exclude test/stdlib/StringDiagnostics.swift -- RUN uses %target-typecheck-verify-swift, and runs no executable
+exclude test/stdlib/SwiftObjectNSObject.swift -- RUN uses %target-clang
+exclude test/stdlib/SwiftValueNSObject.swift -- upstream disables it (REQUIRES: rdar127008956)
+exclude test/stdlib/TestNSNumberBridging.swift -- RUN uses %target-clang
+exclude test/stdlib/TestScanner.swift -- RUN uses %target-clang
+exclude test/stdlib/URLSession.swift -- RUN uses %target-swift-frontend
 exclude test/stdlib/dlopen_race.swift -- RUN compiles more than the test file (%S/Inputs/dlopen_race_dylib.swift)
-exclude test/stdlib/objc-array-slice.swift -- imports Foundation, which no 10.9 pkg ships
-exclude validation-test/stdlib/ArrayBridging.swift -- imports Foundation, which no 10.9 pkg ships
-exclude validation-test/stdlib/ArrayTrapsObjC.swift -- imports Foundation, which no 10.9 pkg ships
-exclude validation-test/stdlib/ArraysObjc.swift.gyb -- imports Foundation, which no 10.9 pkg ships
-exclude validation-test/stdlib/CoreGraphics-execute.swift -- imports Foundation, which no 10.9 pkg ships
+include test/stdlib/objc-array-slice.swift
+exclude validation-test/stdlib/ArrayBridging.swift -- upstream disables it (REQUIRES: rdar88637598)
+exclude validation-test/stdlib/ArrayTrapsObjC.swift -- RUN has more than one executable step (it builds and runs the test at -Onone and at -O)
+exclude validation-test/stdlib/ArraysObjc.swift.gyb -- upstream disables it (REQUIRES: rdar88581116)
+exclude validation-test/stdlib/CoreGraphics-execute.swift -- does not compile against the 10.9 SDK: its CGEvent enums are plain UInt32 typedefs there (line 75, "type 'CGEventMouseSubtype' (aka 'UInt32') has no member 'defaultType'"), it names CGRectNull and CGRectInfinite with no Swift member name (line 364, "type 'CGRect' has no member 'null'"), and it has no nullability (line 282, "value of optional type 'CFDictionary?' must be unwrapped")
 exclude validation-test/stdlib/CoreGraphics-verifyOnly.swift -- RUN uses %target-typecheck-verify-swift
-exclude validation-test/stdlib/Data.swift -- imports Foundation, which no 10.9 pkg ships
-exclude validation-test/stdlib/DictionaryBridging.swift -- imports Foundation, which no 10.9 pkg ships
-exclude validation-test/stdlib/DictionaryTrapsObjC.swift -- imports Foundation, which no 10.9 pkg ships
-exclude validation-test/stdlib/ErrorProtocol.swift -- imports Foundation, which no 10.9 pkg ships
-exclude validation-test/stdlib/HashingPrototype.swift -- imports Foundation, which no 10.9 pkg ships
-exclude validation-test/stdlib/NSDecimalNumberBridging.swift.gyb -- imports Foundation, which no 10.9 pkg ships
-exclude validation-test/stdlib/NSStringBridging.swift.gyb -- imports Foundation, which no 10.9 pkg ships
+exclude validation-test/stdlib/Data.swift -- needs StdlibCollectionUnittest, test support this release does not build (line 6, "no such module 'StdlibCollectionUnittest'")
+exclude validation-test/stdlib/DictionaryBridging.swift -- RUN uses %target-clang
+include validation-test/stdlib/DictionaryTrapsObjC.swift
+include validation-test/stdlib/ErrorProtocol.swift
+include validation-test/stdlib/HashingPrototype.swift
+include validation-test/stdlib/NSDecimalNumberBridging.swift.gyb
+include validation-test/stdlib/NSStringBridging.swift.gyb
 exclude validation-test/stdlib/ObjectiveC.swift -- does not compile against the 10.9 SDK, which declares -hash a method: `override var hash` (line 26) overrides nothing (overlay patch 0001's reason)
 exclude validation-test/stdlib/ObjectiveC_without_Foundation.swift -- does not compile against the 10.9 SDK, which has no nullability: NSObject() is NSObject!, so `var anNSObject` is NSObject? and not CVarArg (line 36)
-exclude validation-test/stdlib/StringGraphemeBreaking.swift -- imports Foundation, which no 10.9 pkg ships
+exclude validation-test/stdlib/StringGraphemeBreaking.swift -- RUN hands the test arguments (%S/Inputs/)
 exclude validation-test/stdlib/StringNormalization.swift -- RUN uses %target-clang
-exclude validation-test/stdlib/StringWordBreaking.swift -- imports Foundation, which no 10.9 pkg ships
-exclude validation-test/stdlib/SwiftNativeNSBase.swift -- imports Foundation, which no 10.9 pkg ships
+exclude validation-test/stdlib/StringWordBreaking.swift -- RUN hands the test arguments (%S/Inputs/)
+exclude validation-test/stdlib/SwiftNativeNSBase.swift -- RUN uses %target-clang
 exclude validation-test/stdlib/UnicodeScalarProperties.swift -- REQUIRES: long_test does not hold on 10.9
-exclude validation-test/stdlib/UnicodeUTFEncoders.swift -- imports Foundation, which no 10.9 pkg ships
+include validation-test/stdlib/UnicodeUTFEncoders.swift
 include validation-test/stdlib/UnicodeWordRecognizer.swift
-exclude validation-test/stdlib/ValidationNSNumberBridging.swift -- imports Foundation, which no 10.9 pkg ships
+include validation-test/stdlib/ValidationNSNumberBridging.swift

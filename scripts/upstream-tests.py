@@ -218,7 +218,8 @@ def translate(words, abi):
 
 
 # lit's feature set for this gate (10.9 x86_64, a stdlib built -O with reflection, the Extern feature and
-# Concurrency on, on an OS with libdispatch; a compiler that knows the upcoming feature
+# Concurrency on, on an OS with libdispatch; foundation, which lit's Darwin configuration always sets and which
+# holds here as the runtime ships the Foundation overlay; a compiler that knows the upcoming feature
 # NonisolatedNonsendingByDefault, as lit.swift-features.cfg.inc adds every upcoming feature, and is built
 # without asserts): REQUIRES/UNSUPPORTED expressions are evaluated against it. A name it does not list is
 # false. The gate runs the tests against the runtime it installs, not against an OS's runtime or an older
@@ -226,7 +227,7 @@ def translate(words, abi):
 # back_deployment_runtime, back_deploy_concurrency and use_os_stdlib are false and concurrency_runtime true.
 FEATURES = {"executable_test", "objc_interop", "OS=macosx", "VENDOR=apple", "CPU=x86_64", "optimized_stdlib",
             "reflection", "swift_feature_Extern", "stress_test", "concurrency", "concurrency_runtime",
-            "libdispatch", "swift_feature_NonisolatedNonsendingByDefault"}
+            "libdispatch", "foundation", "swift_feature_NonisolatedNonsendingByDefault"}
 
 
 def lit_eval(expr, true_names, what):

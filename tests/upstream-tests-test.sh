@@ -102,6 +102,7 @@ t test/stdlib/ReqUnknown.swift '// RUN: %target-run-simple-swift' '// REQUIRES: 
 t test/stdlib/UnsMac.swift '// RUN: %target-run-simple-swift' '// UNSUPPORTED: OS=macosx' 'import Swift'
 t test/stdlib/UnsNeg.swift '// RUN: %target-run-simple-swift' '// UNSUPPORTED: !freestanding' 'import Swift'
 t test/stdlib/UnsBack.swift '// RUN: %target-run-simple-swift' '// UNSUPPORTED: back_deployment_runtime' 'import Swift'
+t test/stdlib/ReqFoundation.swift '// RUN: %target-run-simple-swift' '// REQUIRES: foundation' 'import Swift'
 t test/stdlib/ReqComma.swift '// RUN: %target-run-simple-swift' '// REQUIRES: concurrency, asserts' 'import Swift'
 t test/stdlib/UnsComma.swift '// RUN: %target-run-simple-swift' '// UNSUPPORTED: OS=linux-gnu, OS=macosx' 'import Swift'
 t test/stdlib/VerifyRun.swift '// RUN: %target-typecheck-verify-swift -strict-concurrency=complete -disable-availability-checking' \
@@ -227,6 +228,9 @@ cl test/stdlib/Continued.swift '-parse-as-library
 main'
 # lit's default configuration: back_deployment_runtime is false, as the gate runs the just-built runtime.
 cl test/stdlib/UnsBack.swift '-module-name
+main'
+# lit's Darwin configuration: foundation holds, as the runtime ships the Foundation overlay.
+cl test/stdlib/ReqFoundation.swift '-module-name
 main'
 cl test/stdlib/ConcReq.swift '-module-name
 main'

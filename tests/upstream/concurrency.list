@@ -5,8 +5,7 @@
 # -strict-concurrency=complete and NonisolatedNonsendingByDefault), and run by run-selftest.sh --gate, or
 # `exclude <path> -- <reason>`, a reason a reviewer can check against the test (its RUN: line or a
 # REQUIRES:/UNSUPPORTED: is one compile-line refuses, quoted as it says; it uses a Dispatch API this
-# release's Dispatch overlay lacks, named; it imports Foundation, which no 10.9 pkg ships; it does not
-# compile for 10.9, with the error; or it failed on 10.9, with the failure). Tests that are also Darwin or ObjectiveC candidates are
+# release's Dispatch overlay lacks, named; it does not compile for 10.9, with the error; or it failed on 10.9, with the failure). Tests that are also Darwin or ObjectiveC candidates are
 # decided here; those lists point here. build.sh's step 5b checks this list against the tree, so a Swift
 # bump that adds a test, or gives an included one a RUN: form, compiler flag or REQUIRES:/UNSUPPORTED: the
 # script does not know, stops the build until the list is reviewed (a changed source does not; the gate runs it).
@@ -24,7 +23,7 @@ exclude test/Concurrency/Runtime/actor_assume_executor.swift -- RUN runs env
 include test/Concurrency/Runtime/actor_counters.swift
 exclude test/Concurrency/Runtime/actor_counters_freestanding.swift -- REQUIRES: freestanding does not hold on 10.9
 exclude test/Concurrency/Runtime/actor_deinit_escaping_self.swift -- RUN uses %target-future-triple
-exclude test/Concurrency/Runtime/actor_detach.swift -- REQUIRES: foundation does not hold on 10.9
+include test/Concurrency/Runtime/actor_detach.swift
 exclude test/Concurrency/Runtime/actor_dynamic_subclass.swift -- does not compile against the 10.9 SDK, which has no nullability annotations: line 32, "value of optional type 'Foo?' must be unwrapped to refer to member 'doit'"
 include test/Concurrency/Runtime/actor_init.swift
 exclude test/Concurrency/Runtime/actor_init_abi.swift -- RUN uses %target-build-swift-dylib
@@ -51,7 +50,7 @@ exclude test/Concurrency/Runtime/async_task_executor_and_serial_executor_nonisol
 exclude test/Concurrency/Runtime/async_task_executor_and_serial_executor_nonisolated_async_func_swift6.swift -- RUN runs env
 include test/Concurrency/Runtime/async_task_executor_default_actor_funcs.swift
 include test/Concurrency/Runtime/async_task_executor_nonisolated_async_func.swift
-exclude test/Concurrency/Runtime/async_task_executor_nsobject.swift -- imports Foundation, which no 10.9 pkg ships
+exclude test/Concurrency/Runtime/async_task_executor_nsobject.swift -- does not compile on 10.9: it uses DispatchTime.advanced(by:) (line 48), which this release's Dispatch overlay lacks ("value of type 'DispatchTime' has no member 'advanced'")
 include test/Concurrency/Runtime/async_task_executor_structured_concurrency.swift
 include test/Concurrency/Runtime/async_task_executor_unstructured_task_ownership.swift
 include test/Concurrency/Runtime/async_task_executor_withExecutor.swift
@@ -144,7 +143,7 @@ include test/Concurrency/Runtime/startImmediately_order.swift
 include test/Concurrency/Runtime/startOnMainActor.swift
 include test/Concurrency/Runtime/task_creation.swift
 include test/Concurrency/Runtime/task_destruction.swift
-exclude test/Concurrency/Runtime/task_immediate_mainactor_isolation.swift -- REQUIRES: foundation does not hold on 10.9
+include test/Concurrency/Runtime/task_immediate_mainactor_isolation.swift
 include test/Concurrency/Runtime/taskgroup_cancelAll_cancellationHandler.swift
 exclude test/Concurrency/Runtime/unspecified_is_main_actor.swift -- REQUIRES: asserts does not hold on 10.9
 exclude test/stdlib/CaseIterableTests.swift -- RUN hands the test arguments (%t)

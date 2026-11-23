@@ -2,10 +2,10 @@
 # Every candidate scripts/upstream-tests.py's survey finds in the pinned tree (a test with a RUN: line that
 # the darwin classifier picks) appears once: `include <path>`, built by make-selftest.sh with its
 # compile-line and run by run-selftest.sh --gate, or `exclude <path> -- <reason>`, a reason a reviewer
-# can check against the test (it imports Foundation, which no 10.9 pkg ships; it needs a library this
-# release does not ship; its RUN: line is one compile-line refuses, quoted as it says; upstream disables
-# it; it is a Concurrency test, which tests/upstream/concurrency.list decides, so it is built once; or it
-# failed on 10.9, with the failure). build.sh's step 5b checks this list against the tree, so a
+# can check against the test (it does not compile against the 10.9 SDK, with the error; it needs a library
+# or test support this release does not ship or build; its RUN: line is one compile-line refuses, quoted
+# as it says; upstream disables it; it is a Concurrency test, which tests/upstream/concurrency.list
+# decides, so it is built once; or it failed on 10.9, with the failure). build.sh's step 5b checks this list against the tree, so a
 # Swift bump that adds a test, or gives an included one a RUN: form, compiler flag or REQUIRES:/UNSUPPORTED:
 # the script does not know, stops the build until the list is reviewed (a changed source does not; the gate runs it).
 exclude test/Concurrency/Runtime/actor_assert_precondition_executor_checkIsolated_dispatch_dispatchMain_swift_6_mode.swift -- a Concurrency test: tests/upstream/concurrency.list decides it
@@ -26,8 +26,8 @@ exclude test/Concurrency/Runtime/exclusivity.swift -- a Concurrency test: tests/
 exclude test/Concurrency/Runtime/exclusivity_custom_executors.swift -- a Concurrency test: tests/upstream/concurrency.list decides it
 exclude test/Concurrency/Runtime/executor_deinit3.swift -- a Concurrency test: tests/upstream/concurrency.list decides it
 exclude test/Concurrency/Runtime/startImmediately.swift -- a Concurrency test: tests/upstream/concurrency.list decides it
-exclude test/stdlib/DarwinAPI.swift -- imports Foundation, which no 10.9 pkg ships
-exclude test/stdlib/ErrorBridged.swift -- imports Foundation, which no 10.9 pkg ships
+include test/stdlib/DarwinAPI.swift
+exclude test/stdlib/ErrorBridged.swift -- RUN uses %target-ptrsize
 exclude test/stdlib/FloatConstants.swift -- RUN uses %target-typecheck-verify-swift
 include test/stdlib/FloatingPoint.swift.gyb
 exclude test/stdlib/FloatingPointDiagnostics.swift -- RUN uses %target-typecheck-verify-swift
@@ -45,8 +45,8 @@ exclude test/stdlib/dlopen_race.swift -- RUN compiles more than the test file (%
 exclude test/stdlib/mmap.swift -- RUN hands the test arguments (%t)
 exclude test/stdlib/tgmath.swift.gyb -- upstream disables it (REQUIRES: rdar94452524)
 include test/stdlib/tgmath_optimized.swift
-exclude validation-test/stdlib/ArraysObjc.swift.gyb -- imports Foundation, which no 10.9 pkg ships
+exclude validation-test/stdlib/ArraysObjc.swift.gyb -- upstream disables it (REQUIRES: rdar88581116)
 exclude validation-test/stdlib/Glibc.swift -- REQUIRES: OS=linux-gnu does not hold on 10.9
 include validation-test/stdlib/POSIXErrorCode.swift
-exclude validation-test/stdlib/String.swift -- imports Foundation, which no 10.9 pkg ships
+exclude validation-test/stdlib/String.swift -- RUN uses %target-clang
 include validation-test/stdlib/StringSlicesConcurrentAppend.swift
