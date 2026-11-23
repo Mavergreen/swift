@@ -3,7 +3,7 @@
 #          Lays out, under <work-dir>, a fake of every build output scripts/stage-toolchain.sh reads for
 #          that toolchain host (default x86_64): build.sh's stdlib-build, build-toolchain.sh's swift-x86
 #          and llvm-x86 (arm64: swift-arm64 and llvm-arm64), build-builtins.sh's builtins-x86, the
-#          llvm-project checkout, overlays/src/apinotes (overlay-sources.sh's patched Dispatch.apinotes); each file holds its own relative path. Called for both hosts, the two
+#          llvm-project checkout, overlays/src/apinotes (overlay-sources.sh's Dispatch.apinotes, Foundation.apinotes and CoreGraphics.apinotes); each file holds its own relative path. Called for both hosts, the two
 #          share the rest. And <work-dir>/recaulk, a Recaulk prefix as fetch-recaulk.sh prints one, at
 #          $REPO/pins.env's RECAULK_VERSION, with its include/recaulk/dispatch/dispatch.h and pthread/qos.h (the caller sets REPO). Run stage-toolchain.sh over it with
 #          SWIFT_WORK=<work-dir> and --recaulk <work-dir>/recaulk. Shared, so a test
@@ -20,19 +20,24 @@ fake_toolchain_build() {
     "$_fw/$_fl/lib/clang/21/include" "$_fw/stdlib-build/lib/swift/macosx/x86_64" \
     "$_fw/stdlib-build/lib/swift/macosx/Swift.swiftmodule" "$_fw/stdlib-build/lib/swift/macosx/SwiftOnoneSupport.swiftmodule" \
     "$_fw/stdlib-build/lib/swift/macosx/Darwin.swiftmodule" "$_fw/stdlib-build/lib/swift/macosx/ObjectiveC.swiftmodule" \
-    "$_fw/stdlib-build/lib/swift/macosx/Dispatch.swiftmodule" \
+    "$_fw/stdlib-build/lib/swift/macosx/Dispatch.swiftmodule" "$_fw/stdlib-build/lib/swift/macosx/CoreFoundation.swiftmodule" \
+    "$_fw/stdlib-build/lib/swift/macosx/CoreGraphics.swiftmodule" "$_fw/stdlib-build/lib/swift/macosx/Foundation.swiftmodule" \
     "$_fw/stdlib-build/lib/swift/macosx/_Concurrency.swiftmodule" "$_fw/stdlib-build/lib/swift/macosx/_Builtin_float.swiftmodule" \
     "$_fw/stdlib-build/lib/swift/shims" "$_fw/llvm-project/llvm" "$_fw/builtins-x86/lib/darwin"
   for _ff in $_fs/bin/swift-frontend $_fl/bin/lld $_fl/bin/clang $_fl/bin/dsymutil $_fl/lib/clang/21/include/stdint.h \
     stdlib-build/lib/swift/macosx/x86_64/libswiftCore.dylib stdlib-build/lib/swift/macosx/x86_64/libswiftSwiftOnoneSupport.dylib \
     stdlib-build/lib/swift/macosx/x86_64/libswiftDarwin.dylib stdlib-build/lib/swift/macosx/x86_64/libswiftObjectiveC.dylib \
-    stdlib-build/lib/swift/macosx/x86_64/libswiftDispatch.dylib \
+    stdlib-build/lib/swift/macosx/x86_64/libswiftDispatch.dylib stdlib-build/lib/swift/macosx/x86_64/libswiftCoreFoundation.dylib \
+    stdlib-build/lib/swift/macosx/x86_64/libswiftCoreGraphics.dylib stdlib-build/lib/swift/macosx/x86_64/libswiftFoundation.dylib \
     stdlib-build/lib/swift/macosx/x86_64/libswift_Concurrency.dylib stdlib-build/lib/swift/macosx/x86_64/libswift_Builtin_float.dylib \
     stdlib-build/lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule \
     stdlib-build/lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule \
     stdlib-build/lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule \
     stdlib-build/lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule \
     stdlib-build/lib/swift/macosx/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule \
+    stdlib-build/lib/swift/macosx/CoreFoundation.swiftmodule/x86_64-apple-macos.swiftmodule \
+    stdlib-build/lib/swift/macosx/CoreGraphics.swiftmodule/x86_64-apple-macos.swiftmodule \
+    stdlib-build/lib/swift/macosx/Foundation.swiftmodule/x86_64-apple-macos.swiftmodule \
     stdlib-build/lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule \
     stdlib-build/lib/swift/macosx/SwiftOnoneSupport.swiftmodule/x86_64-apple-macos.swiftmodule \
     stdlib-build/lib/swift/macosx/layouts-x86_64.yaml stdlib-build/lib/swift/shims/module.modulemap \
@@ -41,7 +46,7 @@ fake_toolchain_build() {
     $_fs/share/swift/diagnostics/generated llvm-project/llvm/LICENSE.TXT \
     builtins-x86/lib/darwin/libclang_rt.osx.a recaulk/lib/librecaulk.a recaulk/share/recaulk/notices.tsv \
     recaulk/include/recaulk/dispatch/dispatch.h recaulk/include/recaulk/pthread/qos.h \
-    overlays/src/apinotes/Dispatch.apinotes; do
+    overlays/src/apinotes/Dispatch.apinotes overlays/src/apinotes/Foundation.apinotes overlays/src/apinotes/CoreGraphics.apinotes; do
     mkdir -p "$(dirname "$_fw/$_ff")"; echo "$_ff" > "$_fw/$_ff"
   done
   fake_recaulk_plist "$(sed -n 's/^RECAULK_VERSION="\([^"]*\)".*/\1/p' "$REPO/pins.env")" > "$_fw/recaulk/mavergreen.plist"

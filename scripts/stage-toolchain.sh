@@ -4,8 +4,8 @@
 #          Lays out a toolchain .pkg's payload under <out-dir>/usr/local/mavergreen/<product> from this
 #          build: build-toolchain.sh --host $STAGE_HOST's lld, clang and clang's headers, and its compiler
 #          and helper outputs (--frontend: the swift build dir holding bin/swift-frontend and
-#          share/swift, default $SWIFT_WORK/<host's swift dir>); the stdlib, and the Darwin, ObjectiveC and Dispatch
-#          overlays' and _Concurrency's modules and dylibs beside it (_Concurrency's with _Builtin_float's module, whose
+#          share/swift, default $SWIFT_WORK/<host's swift dir>); the stdlib, and the Darwin, ObjectiveC, Dispatch,
+#          CoreFoundation, CoreGraphics and Foundation overlays' and _Concurrency's modules and dylibs beside it (_Concurrency's with _Builtin_float's module, whose
 #          dylib ships nowhere) (--stdlib: a stdlib build's lib/swift, default build.sh's $SWIFT_WORK/stdlib-build/lib/swift, or a staged toolchain's
 #          lib/swift: CI's build job takes the cross toolchain pkg's, self-host.sh a stage's); compiler-rt's
 #          builtins (--builtins, default build-builtins.sh's archive), where that clang looks for them;
@@ -14,8 +14,9 @@
 #          RECAULK_VERSION (the ld wrapper links that archive into every program swiftc links); its
 #          include/recaulk/dispatch/dispatch.h and pthread/qos.h, with toolchain/Dispatch.modulemap and the same
 #          VERSION, in lib/swift/recaulk-importer (what the swiftc wrapper's VFS overlay shows the clang
-#          importer, instead of the SDK's Dispatch module map alone); Dispatch.apinotes, overlay-sources.sh's
-#          patched copy ($SWIFT_WORK/overlays/src/apinotes, or the staged toolchain --stdlib names), in lib/swift/apinotes,
+#          importer, instead of the SDK's Dispatch module map alone); Dispatch.apinotes, Foundation.apinotes and
+#          CoreGraphics.apinotes, overlay-sources.sh's patched copies ($SWIFT_WORK/overlays/src/apinotes, or the
+#          staged toolchain --stdlib names), in lib/swift/apinotes,
 #          the resource dir's apinotes the driver reads without a flag (skipped with the overlays under --overlays-optional);
 #          the swiftc and ld wrappers; shipyard's SDK fetcher and the two scripts it sources; clang's
 #          clang.cfg and clang++.cfg. STAGE_HOST x86_64 (the default) is the native toolchain,
@@ -63,20 +64,23 @@ done
 # A stdlib build keeps its dylibs in macosx/x86_64/, a staged toolchain in macosx/ (lib.sh).
 LAYOUT="$(stdlib_layout "$STDLIB")" || { echo "stage-toolchain: $STDLIB is no stdlib -- run build.sh, or name one with --stdlib" >&2; exit 1; }
 if [ "$LAYOUT" = build ]; then DYLIBS="$STDLIB/macosx/x86_64"; else DYLIBS="$STDLIB/macosx"; fi
-# Dispatch.apinotes: overlay-sources.sh's patched copy in a build root; a staged toolchain's own beside its stdlib.
-APINOTES=""
+# The overlays' API notes: overlay-sources.sh's patched copies in a build root; a staged toolchain's own beside its
+# stdlib. Each is wanted, as its overlay is; --overlays-optional stages those it finds.
 if [ "$LAYOUT" = build ]; then _an="$W/overlays/src/apinotes"; else _an="$STDLIB/apinotes"; fi
-if [ -f "$_an/Dispatch.apinotes" ]; then APINOTES="$_an"
-elif [ -n "$OVERLAYS_OPTIONAL" ]; then echo "stage-toolchain: no $_an/Dispatch.apinotes; --overlays-optional stages without" >&2
-else echo "stage-toolchain: no $_an/Dispatch.apinotes -- run build.sh" >&2; exit 1; fi
-# The Darwin, ObjectiveC and Dispatch overlays (step 5b of build.sh) and _Concurrency (step 5): a module and a dylib each, in the
+APINOTES=""
+for _a in Dispatch Foundation CoreGraphics; do
+  if [ -f "$_an/$_a.apinotes" ]; then APINOTES="$APINOTES $_an/$_a.apinotes"
+  elif [ -n "$OVERLAYS_OPTIONAL" ]; then echo "stage-toolchain: no $_an/$_a.apinotes; --overlays-optional stages without" >&2
+  else echo "stage-toolchain: no $_an/$_a.apinotes -- run build.sh" >&2; exit 1; fi
+done
+# The Darwin, ObjectiveC, Dispatch, CoreFoundation, CoreGraphics and Foundation overlays (step 5b of build.sh) and _Concurrency (step 5): a module and a dylib each, in the
 # same two places, and _Concurrency's _Builtin_float module beside it, with no dylib (it re-exports symbols
 # libswiftDarwin defines, so nothing links it). Each is wanted whole. --overlays-optional stages those it finds
 # and skips the rest: self-host.sh's pre toolchain, whose stdlib (a seed's from before the overlays, 6.4.1-mavericks.8
 # say) only makes the stage's compiler run, since build.sh compiles the overlays against the stdlib it builds. A
 # toolchain that ships or is compared never passes it.
 MODULES=""; LIBS_STAGED=""
-for o in Darwin ObjectiveC Dispatch _Concurrency _Builtin_float; do
+for o in Darwin ObjectiveC Dispatch CoreFoundation CoreGraphics Foundation _Concurrency _Builtin_float; do
   case "$o" in
     _Builtin_float) lib="" ;;
     _Concurrency) lib="libswift_Concurrency.dylib" ;;
@@ -142,7 +146,8 @@ cp "$RECAULK/share/recaulk/notices.tsv" "$P/lib/recaulk/notices.tsv"
 echo "$RK_V" > "$P/lib/recaulk/VERSION"
 recaulk_importer_layout "$RECAULK" "$HERE/toolchain/Dispatch.modulemap" "$RK_V" "$P/lib/swift/recaulk-importer" \
   || { echo "stage-toolchain: could not lay out $P/lib/swift/recaulk-importer" >&2; exit 1; }
-if [ -n "$APINOTES" ]; then mkdir -p "$P/lib/swift/apinotes" && cp "$APINOTES/Dispatch.apinotes" "$P/lib/swift/apinotes/"; fi
+# shellcheck disable=SC2086  # space-free paths: lib.sh refuses a build root with whitespace
+if [ -n "$APINOTES" ]; then mkdir -p "$P/lib/swift/apinotes" && cp $APINOTES "$P/lib/swift/apinotes/"; fi
 cp "$SB/share/swift/compatibility-symbols" "$P/share/swift/"
 for f in "$SB"/share/swift/diagnostics/*.db "$SB"/share/swift/diagnostics/*.strings \
          "$SB"/share/swift/diagnostics/*.yaml; do

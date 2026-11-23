@@ -27,7 +27,7 @@ for lib in libswiftCore libswiftSwiftOnoneSupport; do
 done
 # The overlays record the 10.9 SDK, as the real build's do: INGREDIENTS.md exempts only Core and OnoneSupport, so
 # conformance below fails if an overlay ever needs an sdk-pin deviation.
-for lib in libswiftDarwin libswiftObjectiveC libswiftDispatch; do
+for lib in libswiftDarwin libswiftObjectiveC libswiftDispatch libswiftCoreFoundation libswiftCoreGraphics libswiftFoundation; do
   cc -dynamiclib -arch x86_64 -mmacosx-version-min=10.9 -Wl,-platform_version,macos,10.9,10.9 \
     -install_name "@rpath/$lib.dylib" -o "$T/built/$lib.dylib" "$T/f.c"
 done
@@ -39,8 +39,8 @@ for lib in libswift_Concurrency libswift_Builtin_float; do
     -o "$T/built/$lib.dylib" "$T/f.c"
 done
 
-echo "-- staging refuses a build missing any of the six dylibs, naming it"
-for gone in libswiftSwiftOnoneSupport libswiftDarwin libswiftObjectiveC libswiftDispatch libswift_Concurrency; do
+echo "-- staging refuses a build missing any of the nine dylibs, naming it"
+for gone in libswiftSwiftOnoneSupport libswiftDarwin libswiftObjectiveC libswiftDispatch libswiftCoreFoundation libswiftCoreGraphics libswiftFoundation libswift_Concurrency; do
   rm -rf "$T/partial"; mkdir -p "$T/partial"; cp "$T"/built/*.dylib "$T/partial/"; rm "$T/partial/$gone.dylib"
   if sh scripts/stage-runtime.sh "$T/partial" "$T/out-partial" LICENSE NOTICE 2> "$T/partial.err"; then
     fail "stage-runtime.sh succeeded without $gone.dylib"
@@ -94,6 +94,7 @@ sh scripts/stage-runtime.sh "$T/built" "$T/out" LICENSE NOTICE
 got="$(cd "$T/out" && find usr LICENSE.txt Library 2>/dev/null | sort)"
 want="$(printf '%s\n' Library Library/keep usr usr/local usr/local/mavergreen "$P" "$P/lib" \
   "$P/lib/swift" "$P/lib/swift/libswiftCompatibilitySpan.dylib" "$P/lib/swift/libswiftCore.dylib" "$P/lib/swift/libswiftDarwin.dylib" \
+  "$P/lib/swift/libswiftCoreFoundation.dylib" "$P/lib/swift/libswiftCoreGraphics.dylib" "$P/lib/swift/libswiftFoundation.dylib" \
   "$P/lib/swift/libswiftDispatch.dylib" "$P/lib/swift/libswiftObjectiveC.dylib" "$P/lib/swift/libswiftSwiftOnoneSupport.dylib" "$P/lib/swift/libswift_Concurrency.dylib" \
   "$P/share" "$P/share/doc" "$P/share/doc/LICENSE.txt" "$P/share/doc/NOTICE" | sort)"
 [ "$got" = "$want" ] || fail "staged tree is
@@ -140,6 +141,7 @@ payload_of() { lsbom -s "$comp/Bom" | grep -v '/\._' | sort; }
 outside_of() { _i=0; while _v="$(/usr/libexec/PlistBuddy -c "Print :outside:$_i" "$1" 2>/dev/null)"; do echo "$_v"; _i=$((_i + 1)); done; }
 want_payload="$(printf '%s\n' . ./usr ./usr/local ./usr/local/mavergreen "./$P" "./$P/lib" "./$P/lib/swift" \
   "./$P/lib/swift/libswiftCompatibilitySpan.dylib" "./$P/lib/swift/libswiftCore.dylib" "./$P/lib/swift/libswiftDarwin.dylib" \
+  "./$P/lib/swift/libswiftCoreFoundation.dylib" "./$P/lib/swift/libswiftCoreGraphics.dylib" "./$P/lib/swift/libswiftFoundation.dylib" \
   "./$P/lib/swift/libswiftDispatch.dylib" "./$P/lib/swift/libswiftObjectiveC.dylib" "./$P/lib/swift/libswiftSwiftOnoneSupport.dylib" "./$P/lib/swift/libswift_Concurrency.dylib" \
   "./$P/share" "./$P/share/doc" "./$P/share/doc/LICENSE.txt" "./$P/share/doc/NOTICE" "./$P/mavergreen.plist" | sort)"
 

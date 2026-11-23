@@ -32,10 +32,12 @@
 #                             (a toolchain's lib/swift/recaulk-importer) and APINOTES=<dir> (its
 #                             lib/swift/apinotes) give this compiler's importer what the toolchain's swiftc
 #                             gives it, as build-module.sh's options of those names do: the VFS overlay of
-#                             Recaulk's dispatch declarations, written to a temporary directory, and
-#                             Dispatch.apinotes. Unset, each is what build.sh left under the build root
-#                             ($WORK/overlays/recaulk-importer, $WORK/overlays/src/apinotes: the Dispatch
-#                             overlay's own, patched), when there; the tests that import Dispatch need both.
+#                             Recaulk's dispatch declarations, written to a temporary directory, and the
+#                             overlays' API notes (Dispatch.apinotes, Foundation.apinotes and
+#                             CoreGraphics.apinotes). Unset, each is what build.sh left under the build root
+#                             ($WORK/overlays/recaulk-importer, $WORK/overlays/src/apinotes: the overlays'
+#                             own, patched), when there; the tests that import Dispatch need both, and so do
+#                             those that import Foundation, whose Swift names come from its API notes.
 #                             Each run's module cache is its own, as the importer's is keyed on neither.
 #            SWIFTC=<swiftc>  exactly `$SWIFTC -O|-Onone <file> -o <out>`: this repo's own toolchain,
 #                             on 10.9, whose defaults supply target, SDK and rpath. With SWIFT_RUNTIME_PREFIX
@@ -106,7 +108,7 @@ else
   VFSD="$(mktemp -d "${TMPDIR:-/tmp}/make-selftest-vfs.XXXXXX")"; trap 'rm -rf "$VFSD"' EXIT
   IMPFLAGS="-module-cache-path $VFSD/module-cache"
   # What build.sh left for the importer, where the variables are not set: its Dispatch overlay's Recaulk importer
-  # directory and its patched Dispatch.apinotes, the ones that overlay was built with.
+  # directory and the overlays' patched API notes (Dispatch's, Foundation's and CoreGraphics'), the ones they were built with.
   WORK="${SWIFT_WORK:-$SWIFT_BUILD/work}"
   [ -n "${RECAULK_IMPORTER:-}" ] || ! [ -d "$WORK/overlays/recaulk-importer" ] || RECAULK_IMPORTER="$WORK/overlays/recaulk-importer"
   [ -n "${APINOTES:-}" ] || ! [ -d "$WORK/overlays/src/apinotes" ] || APINOTES="$WORK/overlays/src/apinotes"

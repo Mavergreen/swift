@@ -262,6 +262,26 @@ grep -qxF -e "  -DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$R/swift/work/recaulk-concur
 # SwiftStdlib version is 10.9 there), and the shipped overlays' build_overlay never does.
 if awk '/^build_overlay\(\) \{/,/^}/' "$REPO/build.sh" | grep -q -e '--runtime-floor'; then fail "build_overlay passes --runtime-floor: a shipped module's availability would be 10.9"; fi
 awk '/^build_overlay\(\) \{/,/^}/' "$REPO/build.sh" | grep -q 'build-module.sh' || fail "no build_overlay calling build-module.sh in build.sh"
+# Step 5b builds the overlays in the order they import each other, Foundation's three after Dispatch: CoreFoundation,
+# CoreGraphics, then Foundation, which links 10.9's Foundation and CoreFoundation frameworks, as CoreGraphics links
+# ApplicationServices (10.9's CoreGraphics is inside it); Foundation's two Objective-C files go to its link; step 7
+# checks every one of them.
+ORDER="$(sed -n 's/^build_overlay \([A-Za-z]*\) .*/\1/p' "$REPO/build.sh" | tr '\n' ' ')"
+[ "$ORDER" = "Darwin ObjectiveC Dispatch CoreFoundation CoreGraphics Foundation " ] || fail "step 5b builds the overlays in the order: $ORDER"
+OV="$(awk '/^build_overlay Foundation /,/[^\\]$/' "$REPO/build.sh")"
+for w in '--flag -framework --flag Foundation' '--flag -framework --flag CoreFoundation' 'BundleLookup.mm.o' 'DataThunks.m.o'; do
+  printf '%s\n' "$OV" | grep -qe "$w" || fail "the Foundation overlay's build_overlay lacks $w: $OV"
+done
+awk '/^build_overlay CoreGraphics /,/[^\\]$/' "$REPO/build.sh" | grep -qe '--flag -framework --flag ApplicationServices' \
+  || fail "the CoreGraphics overlay does not link ApplicationServices"
+for f in BundleLookup.mm DataThunks.m; do
+  grep -q "^host_object .*/Foundation/$f\"" "$REPO/build.sh" || fail "step 5b does not compile $f with host_object"
+done
+sed -n '/^SHIPPED_DYLIBS=/p' "$REPO/build.sh" | grep -q ' \$FOUNDATION_DYLIBS"$' || fail "step 7's SHIPPED_DYLIBS lacks \$FOUNDATION_DYLIBS"
+for l in CoreFoundation CoreGraphics Foundation; do
+  sed -n '/^FOUNDATION_DYLIBS=/p' "$REPO/build.sh" | grep -q "/libswift$l\.dylib" || fail "step 7's FOUNDATION_DYLIBS lacks libswift$l.dylib"
+  grep -q "^RUNTIME_DYLIBS=.*libswift$l\.dylib" "$REPO/scripts/stage-runtime.sh" || fail "stage-runtime.sh's RUNTIME_DYLIBS lacks libswift$l.dylib"
+done
 if grep -q '^git \|^xcrun ' "$T/log"; then fail "ran $(grep '^git \|^xcrun ' "$T/log" | head -1)"; fi
 
 echo "-- step 5b's test support: with Concurrency when the host compiler declares a 10.9 async function; without"

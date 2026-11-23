@@ -3,8 +3,9 @@
 # build.sh — from-source build of the Swift runtime (libswiftCore + libswiftSwiftOnoneSupport) for
 # OS X 10.9 / x86_64, staged as the runtime .pkg's payload, and beside it, in the stdlib build's tree,
 # libswift_Concurrency (the runtime pkg's third dylib, with its _Builtin_float module) and the
-# Darwin, ObjectiveC and Dispatch overlays (libswiftDarwin, libswiftObjectiveC, libswiftDispatch and their
-# modules: swift-6.2's Platform and swift-5.4's ObjectiveC and Dispatch sources, pinned tarballs, compiled
+# Darwin, ObjectiveC, Dispatch, CoreFoundation, CoreGraphics and Foundation overlays (libswiftDarwin,
+# libswiftObjectiveC, libswiftDispatch, libswiftCoreFoundation, libswiftCoreGraphics, libswiftFoundation and their
+# modules: swift-6.2's Platform and swift-5.4's other overlay sources, pinned tarballs, compiled
 # against the 10.9 SDK by scripts/build-module.sh with the stdlib's flags). No Apple prebuilt runtime bytes ship.
 #
 # One recipe, two modes (MAVERICKS_MODE, else shipyard's mavericks_mode.sh), the same bytes from both.
@@ -351,7 +352,7 @@ if [ -n "$PY" ]; then echo "    gyb runs $PY: $("$PY" --version 2>&1 || :)"; els
 echo "==> 5. build libswiftCore (+ SwiftOnoneSupport, and _Concurrency)"
 ninja -C "$ROOT/stdlib-build" swiftCore-macosx-$ARCH swiftSwiftOnoneSupport-macosx-$ARCH swift_Concurrency-macosx-$ARCH
 
-echo "==> 5b. the Darwin, ObjectiveC and Dispatch overlays, beside libswiftCore (against the 10.9 SDK)"
+echo "==> 5b. the Darwin, ObjectiveC, Dispatch, CoreFoundation, CoreGraphics and Foundation overlays, beside libswiftCore (against the 10.9 SDK)"
 # spec: "The overlays" -- written into the stdlib build's tree beside Core (lib/swift/macosx/<M>.swiftmodule,
 #       macosx/x86_64/lib<swiftM>.dylib), so every later stage reads one tree. Compiled by the host
 #       compiler that built Core, against the stdlib just built (its Swift module and libswiftCore) and the
@@ -381,13 +382,12 @@ PYTHON="${PY:-python3}" sh "$HERE/scripts/overlay-sources.sh" "$ROOT/swift-6.2" 
 # spec: shipyard's materializer takes recipe ids, so lib.sh's recaulk_sdk_metadata_profile reads the profile's;
 #       when it takes PROFILE <name>, this name is what it is passed and that read goes.
 FOUNDATION_SDK_METADATA_PROFILE="swift-foundation"
-FSM="$FOUNDATION_SDK_METADATA_PROFILE"
-FOUNDATION_SDK_METADATA="$(recaulk_sdk_metadata_profile "$RECAULK_PREFIX/share/sdk-metadata/profiles.json" "$FSM")" \
-  || { echo "FAIL: Recaulk $RECAULK_VERSION has no sdk-metadata profile $FSM"; exit 1; }
+FOUNDATION_SDK_METADATA="$(recaulk_sdk_metadata_profile "$RECAULK_PREFIX/share/sdk-metadata/profiles.json" "$FOUNDATION_SDK_METADATA_PROFILE")" \
+  || { echo "FAIL: could not read the sdk-metadata profile $FOUNDATION_SDK_METADATA_PROFILE from Recaulk $RECAULK_VERSION's $RECAULK_PREFIX/share/sdk-metadata/profiles.json: no such file, not JSON, not schema 1, no such profile, or recipes that are not plain ids (above)"; exit 1; }
 # shellcheck disable=SC2086  # space-free recipe ids, which recaulk_sdk_metadata_profile holds them to
 recaulk_sdk_metadata_vfs "$SDK_OVERLAYS" "$RECAULK_PREFIX/share/sdk-metadata/recipes.json" "$ROOT/overlays/sdk-metadata" \
-  $FOUNDATION_SDK_METADATA || { echo "FAIL: could not materialize Recaulk's sdk-metadata profile $FSM"; exit 1; }
-echo "    Recaulk $RECAULK_VERSION sdk-metadata profile $FSM: $ROOT/overlays/sdk-metadata/overlay.json"
+  $FOUNDATION_SDK_METADATA || { echo "FAIL: could not materialize Recaulk's sdk-metadata profile $FOUNDATION_SDK_METADATA_PROFILE"; exit 1; }
+echo "    Recaulk $RECAULK_VERSION sdk-metadata profile $FOUNDATION_SDK_METADATA_PROFILE: $ROOT/overlays/sdk-metadata/overlay.json"
 # host_object <object> clang|clang++ <source> [<flag>...] -- <source> compiled by the host clang against the
 # 10.9 SDK, with the stdlib's threading package and the runtime's headers, the build root prefix-mapped.
 host_object() {
@@ -457,6 +457,34 @@ build_overlay Dispatch swiftDispatch --I "$D/shims" --recaulk-importer "$DISPATC
   --unexported "$RECAULK_DISPATCH_UNX" -- \
   "$D/Block.swift" "$D/Data.swift" "$D/Dispatch.swift" "$D/IO.swift" "$D/Private.swift" "$D/Queue.swift" \
   "$D/Source.swift" "$D/Time.swift"
+# spec: "The overlays" -- CoreFoundation, CoreGraphics and Foundation, in the order they import each other, each
+#       against the SDK view Foundation's sources need (the profile above, which also edits CoreFoundation's
+#       headers, so all three see one view) and Dispatch's importer and API notes (CoreFoundation's clang module
+#       imports Dispatch's); Foundation and CoreGraphics read their API notes from the same directory. Each
+#       links the 10.9 frameworks 5.4's CMake names (FRAMEWORK_DEPENDS); 10.9's CoreGraphics is inside
+#       ApplicationServices, which re-exports it. Foundation takes 5.4's flags (-sil-inline-generics,
+#       -sil-partial-specialization) and the shims of CoreFoundation's that its own shims include.
+FOUNDATION_VFS="$ROOT/overlays/sdk-metadata/overlay.json"
+# spec: "The overlays" -- Foundation's two Objective-C files, compiled as 5.4's CMake compiled them, without ARC:
+#       DataThunks.m defines __NSDataWriteToURL, which Data.write(to:) calls; BundleLookup.mm holds only an
+#       embedded-OS category, so it compiles to nothing for macOS, as it did in 5.4.
+host_object "$ROOT/overlays/obj/DataThunks.m.o" clang "$OVS/Foundation/DataThunks.m" -x objective-c
+host_object "$ROOT/overlays/obj/BundleLookup.mm.o" clang++ "$OVS/Foundation/BundleLookup.mm" -x objective-c++ -std=c++17 -fno-exceptions -fno-rtti
+build_overlay CoreFoundation swiftCoreFoundation --I "$OVS/CoreFoundation/shims" --recaulk-importer "$DISPATCH_IMPORTER" \
+  --apinotes "$OVS/apinotes" --flag -Xcc --flag -ivfsoverlay --flag -Xcc --flag "$FOUNDATION_VFS" \
+  --flag -framework --flag CoreFoundation -- "$OVS/CoreFoundation/CoreFoundation.swift"
+build_overlay CoreGraphics swiftCoreGraphics --recaulk-importer "$DISPATCH_IMPORTER" --apinotes "$OVS/apinotes" \
+  --flag -Xcc --flag -ivfsoverlay --flag -Xcc --flag "$FOUNDATION_VFS" --flag -framework --flag ApplicationServices -- \
+  "$OVS/CoreGraphics/CoreGraphics.swift" "$OVS/CoreGraphics/Private.swift" "$OVS/CoreGraphics/CGFloat.swift"
+# Every .swift overlay-sources.sh laid out for Foundation, in C collation, so the compile is the same on every host.
+FOUNDATION_SOURCES="$(cd "$OVS/Foundation" && printf '%s\n' ./*.swift | LC_ALL=C sort | sed "s|^\./|$OVS/Foundation/|")" \
+  || { echo "FAIL: could not list $OVS/Foundation's sources"; exit 1; }
+# shellcheck disable=SC2086  # the laid-out Foundation sources, space-free names (overlay-sources.sh's)
+build_overlay Foundation swiftFoundation --I "$OVS/CoreFoundation/shims" --I "$OVS/Foundation/shims" --recaulk-importer "$DISPATCH_IMPORTER" \
+  --apinotes "$OVS/apinotes" --flag -Xcc --flag -ivfsoverlay --flag -Xcc --flag "$FOUNDATION_VFS" \
+  --flag -Xllvm --flag -sil-inline-generics --flag -Xllvm --flag -sil-partial-specialization \
+  --flag -framework --flag Foundation --flag -framework --flag CoreFoundation \
+  --link "$ROOT/overlays/obj/DataThunks.m.o" --link "$ROOT/overlays/obj/BundleLookup.mm.o" -- $FOUNDATION_SOURCES
 
 # spec: "Upstream tests" -- upstream's own Darwin, ObjectiveC and Concurrency tests run on the 10.9 gate; most import
 #       StdlibUnittest: it, and the three modules it imports, are built here with build-module.sh, as their
@@ -562,12 +590,13 @@ PYTHON="${PY:-python3}" sh "$HERE/scripts/stage-selftest-support.sh" "$ROOT/stdl
   || { echo "FAIL: could not stage the self-test's support in $SELFTEST_SUPPORT_OUT"; exit 1; }
 
 echo "==> 7. self pre-flight (must show minOS 10.9 and NO os_unfair_lock)"
-# Every dylib that ships: the staged runtime's two, and the overlays and libswift_Concurrency, read from the
+# Every dylib that ships: the staged runtime's two, and the overlays (Foundation's three among them) and libswift_Concurrency, read from the
 # stdlib build's tree where steps 5 and 5b wrote them (space-free paths: lib.sh refuses a root with whitespace).
 DARWIN="$RES/macosx/$ARCH/libswiftDarwin.dylib"
 CONCURRENCY="$RES/macosx/$ARCH/libswift_Concurrency.dylib"
 DISPATCH="$RES/macosx/$ARCH/libswiftDispatch.dylib"
-SHIPPED_DYLIBS="$CORE $(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib $DARWIN $RES/macosx/$ARCH/libswiftObjectiveC.dylib $DISPATCH $CONCURRENCY"
+FOUNDATION_DYLIBS="$RES/macosx/$ARCH/libswiftCoreFoundation.dylib $RES/macosx/$ARCH/libswiftCoreGraphics.dylib $RES/macosx/$ARCH/libswiftFoundation.dylib"
+SHIPPED_DYLIBS="$CORE $(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib $DARWIN $RES/macosx/$ARCH/libswiftObjectiveC.dylib $DISPATCH $CONCURRENCY $FOUNDATION_DYLIBS"
 for lib in $SHIPPED_DYLIBS; do [ -f "$lib" ] || { echo "FAIL: no $lib to check"; exit 1; }; done
 # platform: dyld_info reads an x86_64 Mach-O natively on an arm64 host. `arch -x86_64 dyld_info`
 #           needs Rosetta AND an x86_64 slice in dyld_info, and Command Line Tools 27 ships it arm64-only.
@@ -626,10 +655,20 @@ recaulk_shadows_hidden() {
 }
 # shellcheck disable=SC2086  # space-free pairs
 recaulk_shadows_hidden "$DISPATCH" $RECAULK_DISPATCH_SHADOWS
+# spec: INGREDIENTS.md "Recaulk" -- the dylibs that link no Recaulk subset (libswiftSwiftOnoneSupport, libswiftObjectiveC
+#       and Foundation's three: every API they call is 10.9's, as the import check below holds them to) carry none
+#       of Recaulk's code: no ___recaulk_ symbol at all, defined or called.
+for lib in "$(dirname "$CORE")/libswiftSwiftOnoneSupport.dylib" "$RES/macosx/$ARCH/libswiftObjectiveC.dylib" $FOUNDATION_DYLIBS; do
+  _rn="$("${NM:-nm}" "$lib")" || { echo "FAIL: could not read $lib's symbols"; exit 1; }
+  [ -n "$_rn" ] || { echo "FAIL: read no symbols from $lib"; exit 1; }
+  if printf '%s\n' "$_rn" | grep -q ' ___recaulk_'; then
+    printf '%s\n' "$_rn" | grep ' ___recaulk_'; echo "FAIL: $lib links no Recaulk subset, yet holds Recaulk's symbols (listed above)"; exit 1
+  fi
+done
 # spec: INGREDIENTS.md "Recaulk" -- APSL 2.0 section 2.3 wants the "source is available" notice in the code
 #       itself and in the documentation. Recaulk embeds it in each Apple-derived member and lists it in
 #       share/recaulk/notices.tsv: every dylib that links a Recaulk subset (libswiftCore, libswiftDarwin,
-#       libswift_Concurrency and libswiftDispatch; the other two link none) must still carry the notice of each
+#       libswift_Concurrency and libswiftDispatch; the other five link none) must still carry the notice of each
 #       APSL member it links after our link (dead-stripping, -S, the unexported list), and NOTICE must carry it too
 #       (lib.sh's recaulk_notices).
 #       The tsv lists only APSL members, so a linked MacPorts mp-* member without a row passes only when
@@ -768,4 +807,4 @@ IMPORTS_SUP="$(DYLDINFO="$DYLDINFO" NM="${NM:-nm}" OTOOL="${OTOOL:-otool}" sh "$
   "$HERE/scripts/resources/weak-absent-on-10.9.txt" $SUPPORT_DYLIBS)" \
   || { printf '%s\n' "$IMPORTS_SUP"; echo "FAIL: a test-support library imports what OS X 10.9 lacks (listed above)"; exit 1; }
 printf '%s\n' "$IMPORTS_SUP"
-echo "OK: minOS $DEPLOYMENT; no os_unfair_lock; Recaulk's $RECAULK_RUNTIME_SYMBOLS (libswiftCore), $RECAULK_DARWIN_SYMBOLS (libswiftDarwin), $RECAULK_CONCURRENCY_SYMBOLS (libswift_Concurrency) and $RECAULK_DISPATCH_SYMBOLS (libswiftDispatch) defined and hidden; Recaulk's APSL notices in the code and NOTICE; no debug strings; no build paths; checked $(for lib in $SHIPPED_DYLIBS; do printf '%s ' "${lib##*/}"; done); staged in $OUT; no test support in it"
+echo "OK: minOS $DEPLOYMENT; no os_unfair_lock; Recaulk's $RECAULK_RUNTIME_SYMBOLS (libswiftCore), $RECAULK_DARWIN_SYMBOLS (libswiftDarwin), $RECAULK_CONCURRENCY_SYMBOLS (libswift_Concurrency) and $RECAULK_DISPATCH_SYMBOLS (libswiftDispatch) defined and hidden, none in the rest; Recaulk's APSL notices in the code and NOTICE; no debug strings; no build paths; checked $(for lib in $SHIPPED_DYLIBS; do printf '%s ' "${lib##*/}"; done); staged in $OUT; no test support in it"

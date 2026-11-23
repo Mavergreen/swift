@@ -11,6 +11,21 @@ set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 . "$REPO/lib.sh"
+# Static checks of build.sh first: they need no cmake, so they run where the reader's checks skip.
+echo "-- build.sh names the profile once, by one name, and copies no recipe id"
+[ "$(grep -c '^FOUNDATION_SDK_METADATA_PROFILE="swift-foundation"' "$REPO/build.sh")" -eq 1 ] \
+  || fail "build.sh does not set FOUNDATION_SDK_METADATA_PROFILE=\"swift-foundation\" exactly once"
+[ "$(grep -c 'swift-foundation' "$REPO/build.sh")" -eq 1 ] || fail "build.sh names swift-foundation more than once"
+grep -nE '(foundation|coregraphics|corefoundation|cf|cg)-[a-z0-9.-]*-v[0-9]+' "$REPO/build.sh" \
+  && fail "build.sh holds a recipe id of its own"
+grep -nE '(^|[^A-Za-z_])FSM([^A-Za-z_]|$)' "$REPO/build.sh" && fail "build.sh names the profile by an alias, FSM"
+echo "-- build.sh's failure to read the profile names the file and what is wrong with it, not only a missing profile"
+FL="$(grep -A1 'recaulk_sdk_metadata_profile "' "$REPO/build.sh" | grep 'FAIL:' || :)"
+[ -n "$FL" ] || fail "build.sh has no FAIL after reading the profile"
+printf '%s\n' "$FL" | grep -q 'profiles\.json' || fail "build.sh's FAIL does not name profiles.json: $FL"
+printf '%s\n' "$FL" | grep -q 'schema' || fail "build.sh's FAIL does not cover a profiles.json of another schema: $FL"
+printf '%s\n' "$FL" | grep -q 'has no sdk-metadata profile' && fail "build.sh's FAIL says only that the profile is missing: $FL"
+
 CMAKE="${CMAKE:-shipyard-cmake}"
 command -v "$CMAKE" >/dev/null 2>&1 || { echo "no $CMAKE -- skipping"; exit 77; }
 T="$(mktemp -d "${TMPDIR:-/tmp}/sdk-metadata-profile.XXXXXX")"
@@ -51,13 +66,6 @@ refuses "not JSON" 'schema: 1'
 echo "-- no profiles.json"
 rc=0; out="$(recaulk_sdk_metadata_profile "$T/none.json" p 2>/dev/null)" || rc=$?
 [ "$rc" -ne 0 ] && [ -z "$out" ] || fail "accepted a missing profiles.json"
-
-echo "-- build.sh names the profile once and copies no recipe id"
-[ "$(grep -c '^FOUNDATION_SDK_METADATA_PROFILE="swift-foundation"' "$REPO/build.sh")" -eq 1 ] \
-  || fail "build.sh does not set FOUNDATION_SDK_METADATA_PROFILE=\"swift-foundation\" exactly once"
-[ "$(grep -c 'swift-foundation' "$REPO/build.sh")" -eq 1 ] || fail "build.sh names swift-foundation more than once"
-grep -nE '(foundation|coregraphics|corefoundation|cf|cg)-[a-z0-9.-]*-v[0-9]+' "$REPO/build.sh" \
-  && fail "build.sh holds a recipe id of its own"
 
 for d in /usr/local/mavergreen/recaulk "$HOME/Library/Caches/mavergreen-recaulk/$(sed -n 's/^RECAULK_VERSION="\([^"]*\)".*/\1/p' "$REPO/pins.env")/recaulk"; do
   [ -f "$d/share/sdk-metadata/profiles.json" ] || continue
