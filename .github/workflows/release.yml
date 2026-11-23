@@ -721,11 +721,13 @@ jobs:
   # Is the compiler cached? Only a lookup: linux-runtime restores it.
   linux-compiler-probe:
     runs-on: ubuntu-latest
+    permissions: { contents: read }
     outputs:
       hit: ${{ steps.probe.outputs.cache-hit }}
       hash: ${{ steps.inputs.outputs.hash }}
     steps:
       - uses: actions/checkout@v7
+        with: { persist-credentials: false }
       - name: Install mavericks-shipyard
         uses: Mavergreen/shipyard/.github/actions/install@v1
       - name: Hash what the compiler's build reads
@@ -751,11 +753,13 @@ jobs:
     needs: [linux-compiler-probe]
     if: needs.linux-compiler-probe.outputs.hit != 'true'
     runs-on: ubuntu-latest
+    permissions: { contents: read }
     timeout-minutes: 355
     env:
       MAVERICKS_USE_CCACHE: "1"   # build-toolchain.sh launches its compilers through ccache
     steps:
       - uses: actions/checkout@v7
+        with: { persist-credentials: false }
       - name: The clang22 release components/clang22/version pins
         id: pins
         run: |
@@ -807,11 +811,13 @@ jobs:
     needs: [linux-compiler-probe, linux-compiler-tools]
     if: needs.linux-compiler-probe.outputs.hit != 'true'
     runs-on: ubuntu-latest
+    permissions: { contents: read }
     timeout-minutes: 355
     env:
       MAVERICKS_USE_CCACHE: "1"   # build-toolchain.sh launches its compilers through ccache
     steps:
       - uses: actions/checkout@v7
+        with: { persist-credentials: false }
       - name: Install mavericks-shipyard
         uses: Mavergreen/shipyard/.github/actions/install@v1
       # The probe's hash is the run's: a job whose shipyard hashes otherwise would build, or restore, a compiler the
@@ -877,11 +883,13 @@ jobs:
     needs: [linux-compiler-probe, linux-compiler-llvm]
     if: needs.linux-compiler-probe.outputs.hit != 'true'
     runs-on: ubuntu-latest
+    permissions: { contents: read }
     timeout-minutes: 355
     env:
       MAVERICKS_USE_CCACHE: "1"   # build-toolchain.sh launches its compilers through ccache
     steps:
       - uses: actions/checkout@v7
+        with: { persist-credentials: false }
       - name: Install mavericks-shipyard
         uses: Mavergreen/shipyard/.github/actions/install@v1
       - name: The Linux host's packages
@@ -959,11 +967,13 @@ jobs:
     needs: [version, linux-compiler-probe, linux-compiler-swift]
     if: ${{ !cancelled() && needs.version.result == 'success' && needs.linux-compiler-probe.result == 'success' && (needs.linux-compiler-probe.outputs.hit == 'true' || needs.linux-compiler-swift.result == 'success') }}
     runs-on: ubuntu-latest
+    permissions: { contents: read }
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: The clang22 release components/clang22/version pins
         id: pins
         run: |

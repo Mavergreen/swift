@@ -239,6 +239,16 @@ check_lb() {
   for j in linux-compiler-probe linux-compiler-tools linux-compiler-llvm linux-compiler-swift linux-runtime; do
     job "$1" "$j" | grep -qx '    runs-on: ubuntu-latest' || { echo "release.yml's $j does not run on ubuntu-latest"; return 1; }
   done
+  # The Linux jobs only read the repo: release.yml's own contents: write is never theirs, and no checkout leaves
+  # the token behind for a later step.
+  for j in linux-compiler-probe linux-compiler-tools linux-compiler-llvm linux-compiler-swift linux-runtime; do
+    job "$1" "$j" > "$T/perm"
+    awk '/^    permissions:/ { p = 1; sub(/^    permissions: */, ""); if ($0 != "") print; next } p && /^      / { sub(/^ +/, ""); print; next } p { exit }' "$T/perm" > "$T/perms"
+    [ "$(cat "$T/perms")" = '{ contents: read }' ] || [ "$(cat "$T/perms")" = 'contents: read' ] \
+      || { echo "release.yml's $j is not given contents: read alone (it would inherit the workflow's contents: write)"; return 1; }
+    awk '/uses: actions\/checkout@/ { c = 1; n++ } c && /persist-credentials: false/ { ok++; c = 0 } /^      - / && !/actions\/checkout@/ { c = 0 } END { exit !(n && n == ok) }' "$T/perm" \
+      || { echo "release.yml's $j checks out with persist-credentials left on"; return 1; }
+  done
   [ "$(grep -c '^  COMPILER_BUILD: ' "$1")" -eq 1 ] || { echo "release.yml does not name COMPILER_BUILD once, at the top"; return 1; }
   cb="$(sed -n 's/^  COMPILER_BUILD: *//p' "$1" | tr ' ' '\n' | grep . | LC_ALL=C sort)"
   for j in linux-compiler-probe linux-compiler-tools linux-compiler-llvm linux-compiler-swift linux-runtime; do
@@ -356,6 +366,10 @@ lb_mutant "build.sh runs on another compiler" 's|echo "SWIFT_HOST_TOOLCHAIN=$SWI
 lb_mutant "the bundle is built only when asked" 's|^      - name: Build the self-test bundle with the Linux-hosted compiler$|&\
         if: inputs.selftest|'
 lb_first "a compiler job may outrun GitHub's limit" '    timeout-minutes: 355' '    timeout-minutes: 400'
+lb_first "a Linux job may write the repo" '    permissions: { contents: read }' '    permissions: { contents: write }'
+lb_mutant "a Linux job inherits the workflow's permissions" '/^  linux-compiler-llvm:$/,/^  linux-compiler-swift:$/ { /^    permissions: { contents: read }$/d; }'
+lb_mutant "a Linux checkout keeps the token" '/^  linux-runtime:$/,/^  vm-test-prebuilt:$/ s/persist-credentials: false/persist-credentials: true/'
+lb_mutant "a Linux checkout says nothing of the token" '/^  linux-compiler-tools:$/,/^  linux-compiler-llvm:$/ s/^        with: { persist-credentials: false }$//'
 lb_mutant "the runtime job runs whatever the compiler did" "s/ || needs.linux-compiler-swift.result == 'success'//"
 
 # Same-run bundle: a download from another run must be checked for this commit and release.yml first.

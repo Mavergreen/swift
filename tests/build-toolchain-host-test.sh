@@ -508,7 +508,7 @@ grep -q 'FAIL: .*uuid-dev' "$T/linuxnouuid.out" || fail "linuxnouuid: $(cat "$T/
 lacks linuxnouuid "cmake"
 lacks linuxnouuid "fetch-linux-seed"
 
-echo "   --stop-after llvm: LLVM, clang, lld and dsymutil, then nothing more (CI's compiler-llvm job)"
+echo "   --stop-after llvm: LLVM, clang, lld and dsymutil, then nothing more (CI's linux-compiler-llvm job)"
 rm -rf "$W/toolchain-linux"
 (export FAKE_UNAME=Linux; run linuxstop cross --host linux --stop-after llvm) || fail "--stop-after llvm failed: $(cat "$T/linuxstop.out")"
 has linuxstop "  <T>/w/llvm-linux"
