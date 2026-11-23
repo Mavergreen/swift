@@ -152,9 +152,11 @@ done
 #            spellings, which spoil the prefix the importer strips;
 #       0020 nullability where the overlay relies on non-nil and 10.9's headers say nothing (NSScanner, NSString,
 #            NSMutableArray, NSIndexSet, NSData, NSCalendar block parameters), and NSTimeZone's two factories return
-#            NSTimeZone rather than id, so they import as initializers;
-#       0021 -[NSURL checkResourceIsReachableAndReturnError:] does not throw, as NS_SWIFT_NOTHROW has it later.
-#  0022 .. 0043 Foundation -- the shims and sources, for the 10.9 SDK, which predates much of what 5.4 calls. Where 5.4
+#            NSTimeZone rather than id, so they import as initializers; the NSCalendar and NSIndexSet blocks are NoEscape,
+#            as later SDKs' NS_NOESCAPE has them;
+#       0021 -[NSURL checkResourceIsReachableAndReturnError:] does not throw, as NS_SWIFT_NOTHROW has it later;
+#       0044 CGRectEdge, a plain C enum in 10.9, is a closed enum, as later SDKs' CF_CLOSED_ENUM has it.
+#  0022 .. 0043, 0045, 0046 Foundation -- the shims and sources, for the 10.9 SDK, which predates much of what 5.4 calls. Where 5.4
 #       names a later spelling of what 10.9 declares, it is renamed; where it names a class or method neither the 10.9
 #       SDK nor Recaulk declares, it is removed, its comment naming the Recaulk declaration that would restore it:
 #       0022 the shims' 10.9 spellings; 0023 no NSCoder top-level decoding (10.11); 0024 no undo registration with a
@@ -167,9 +169,11 @@ done
 #       URLCache directory initializer (10.15); 0039 no NSError user-info provider (10.11) or 10.15 keys;
 #       0040 NSValue and IndexPath use 10.9's getValue: and getIndexes:; 0041 Data names NSFoundationVersionNumber
 #       10.11's value; 0042 an NSObject -init result is typed, as 10.9's imports as init!(); 0043 NSKeyValueChange
-#       is 10.9's NS_OPTIONS, whose init(rawValue:) is not failable.
+#       is 10.9's NS_OPTIONS, whose init(rawValue:) is not failable; 0045 no URL resource values whose keys are 10.10
+#       to 10.13; 0046 the two Islamic calendars of 10.10 are named by their identifiers' values.
 OVERLAY_PATCHES="0001 0002 0003 0004 0005 0006 0008 0009 0010 0011 0012 0013 0014 0015 0016 0017 0018 0019 0020 0021
-  0022 0023 0024 0025 0026 0027 0028 0029 0030 0031 0032 0033 0034 0035 0036 0037 0038 0039 0040 0041 0042 0043"
+  0022 0023 0024 0025 0026 0027 0028 0029 0030 0031 0032 0033 0034 0035 0036 0037 0038 0039 0040 0041 0042 0043
+  0044 0045 0046"
 PATCHES_DIR="$HERE/patches/overlays"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $OVERLAY_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED" >&2
@@ -228,7 +232,7 @@ fmark 0018 apinotes/CoreGraphics.apinotes "Mavericks: 10.9 declares CGColorSpace
 fmark 0019 apinotes/Foundation.apinotes "Mavericks: 10.9's NSCalendarUnit also lists the" "foundation-apinotes-calendar-unit-names"
 fmark 0020 apinotes/Foundation.apinotes "Mavericks: 10.9's headers carry no nullability, so what the" "foundation-apinotes-what-the-overlay-needs-non-nil"
 fmark 0021 apinotes/Foundation.apinotes "Mavericks: not throwing, as later SDKs' NS_SWIFT_NOTHROW has" "foundation-apinotes-resource-reachability-does-not-throw"
-fmark 0022 stdlib/public/SwiftShims/NSCalendarShims.h "Mavericks: 10.9 types a calendar identifier NSString " "foundation-shims-use-the-10.9-spellings"
+fmark 0022 stdlib/public/SwiftShims/NSDataShims.h "Mavericks: the 10.9 SDK has no API_AVAILABLE" "foundation-shims-use-the-10.9-spellings"
 fmark 0023 stdlib/public/Darwin/Foundation/NSCoder.swift "Mavericks: no resolveError: NSCoderValueNotFoundError (10.11)" "foundation-no-nscoder-top-level-decoding"
 fmark 0024 stdlib/public/Darwin/Foundation/NSUndoManager.swift "Mavericks: no registerUndo(withTarget:handler:): it calls" "foundation-no-undo-registration-with-a-handler"
 fmark 0025 stdlib/public/Darwin/Foundation/CharacterSet.swift "Mavericks: each set is NSCharacterSet's (10.9), never" "foundation-url-character-sets-are-nscharactersets"
@@ -250,6 +254,9 @@ fmark 0040 stdlib/public/Darwin/Foundation/IndexPath.swift "Mavericks: getIndexe
 fmark 0041 stdlib/public/Darwin/Foundation/Data.swift "Mavericks: 1299 is NSFoundationVersionNumber10_11_Max, which" "foundation-data-names-the-10.11-foundation-version"
 fmark 0042 stdlib/public/Darwin/Foundation/AffineTransform.swift "Mavericks: typed, as 10.9's unannotated -" "foundation-typed-results-of-nsobject-init"
 fmark 0043 stdlib/public/Darwin/Foundation/NSObject.swift "Mavericks: 10.9 declares NSKeyValueChange NS_OPTIONS, not" "foundation-key-value-change-is-an-option-set"
+fmark 0044 apinotes/CoreGraphics.apinotes "Mavericks: 10.9 declares CGRectEdge a plain C enum" "coregraphics-apinotes-rect-edge-is-a-closed-enum"
+fmark 0045 stdlib/public/Darwin/Foundation/URL.swift "Mavericks: no isApplication or applicationIsScriptable" "foundation-url-no-post-10.9-resource-keys"
+fmark 0046 stdlib/public/Darwin/Foundation/Calendar.swift "Mavericks: NSCalendarIdentifierIslamicTabular and" "foundation-calendar-names-the-10.10-islamic-calendars-by-value"
 cp "$P/ObjectiveC.swift" "$OUT/ObjectiveC/"
 for f in $DFILES; do cp "$PD/$f" "$OUT/Dispatch/"; done
 cp "$PS/DispatchOverlayShims.h" "$OUT/Dispatch/shims/"

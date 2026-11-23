@@ -1,0 +1,13 @@
+--- apinotes/CoreGraphics.apinotes
++++ apinotes/CoreGraphics.apinotes
+@@ -804,6 +804,10 @@
+ # constants; an open enum gives the prefix-stripped cases (.indexed, ...) later SDKs have
+ - Name: CGColorSpaceModel
+   EnumExtensibility: open
++# Mavericks: 10.9 declares CGRectEdge a plain C enum, where later SDKs' CF_CLOSED_ENUM makes it a closed one: a
++# Swift enum whose init(rawValue:) is failable, as NSGeometry.swift's NSRectEdge conversion unwraps it
++- Name: CGRectEdge
++  EnumExtensibility: closed
+ # The below are not available in Swift
+ - Name: CGGlypDeprecatedEnum
+   Availability: nonswift

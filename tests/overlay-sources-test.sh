@@ -182,7 +182,8 @@ omark 0018 apinotes/CoreGraphics.apinotes "Mavericks: 10.9 declares CGColorSpace
 omark 0019 apinotes/Foundation.apinotes "Mavericks: 10.9's NSCalendarUnit also lists the"
 omark 0020 apinotes/Foundation.apinotes "Mavericks: 10.9's headers carry no nullability, so what the"
 omark 0021 apinotes/Foundation.apinotes "Mavericks: not throwing, as later SDKs' NS_SWIFT_NOTHROW has"
-omark 0022 Foundation/shims/NSCalendarShims.h "Mavericks: 10.9 types a calendar identifier NSString "
+omark 0022 Foundation/shims/NSDataShims.h "Mavericks: the 10.9 SDK has no API_AVAILABLE"
+omark 0022 Foundation/shims/NSDictionaryShims.h "Mavericks: 10.9 has getObjects:andKeys:"
 omark 0023 Foundation/NSCoder.swift "Mavericks: no resolveError: NSCoderValueNotFoundError (10.11)"
 omark 0024 Foundation/NSUndoManager.swift "Mavericks: no registerUndo(withTarget:handler:): it calls"
 omark 0025 Foundation/CharacterSet.swift "Mavericks: each set is NSCharacterSet's (10.9), never"
@@ -204,6 +205,20 @@ omark 0040 Foundation/IndexPath.swift "Mavericks: getIndexes(_:), every index, w
 omark 0041 Foundation/Data.swift "Mavericks: 1299 is NSFoundationVersionNumber10_11_Max, which"
 omark 0042 Foundation/AffineTransform.swift "Mavericks: typed, as 10.9's unannotated -"
 omark 0043 Foundation/NSObject.swift "Mavericks: 10.9 declares NSKeyValueChange NS_OPTIONS, not"
+omark 0044 apinotes/CoreGraphics.apinotes "Mavericks: 10.9 declares CGRectEdge a plain C enum"
+omark 0045 Foundation/URL.swift "Mavericks: no isApplication or applicationIsScriptable"
+omark 0046 Foundation/Calendar.swift "Mavericks: NSCalendarIdentifierIslamicTabular and"
+
+echo "-- the shims Recaulk's typedefs serve are 5.4's own; the NSCalendar and NSIndexSet blocks are NoEscape"
+for h in NSCalendarShims.h NSFileManagerShims.h; do
+  cmp -s "$O/Foundation/shims/$h" "$WORK/swift-5.4/stdlib/public/SwiftShims/$h" || fail "$h differs from 5.4's (NSCalendarIdentifier and NSURLResourceKey are Recaulk's)"
+done
+for sel in "'enumerateDatesStartingAfterDate:matchingComponents:options:usingBlock:'" "'indexesInRange:options:passingTest:'"; do
+  awk -v s="  - Selector: $sel" '$0==s{on=1;next} on&&/^  - Selector:|^- Name:/{exit} on&&/^      NoEscape: true$/{ok=1} END{exit !ok}' \
+    "$O/apinotes/Foundation.apinotes" || fail "Foundation.apinotes: $sel's block is not NoEscape"
+done
+[ "$(grep -c 'NSCalendar.Identifier(rawValue: "islamic-\(tbla\|umalqura\)")' "$O/Foundation/Calendar.swift")" = 4 ] \
+  || fail "Calendar.swift does not name the two 10.10 Islamic calendars by value, both ways"
 
 echo "-- no laid-out source names what neither the 10.9 SDK nor Recaulk declares, outside a comment"
 bad="$(grep -nE 'ISO8601DateFormatter|NSDateInterval|URLQueryItem|PersonNameComponents|URLSessionWebSocketTask|URLSessionTaskTransactionMetrics|import Combine|NSMeasurement|NSItemProvider|NSOrderedCollectionDifference|_CFURLComponentsGet|NSCoderValueNotFoundError|registerUndoWithTarget|decodeTopLevel' \
@@ -221,6 +236,13 @@ gone="$gone"'|rangeOf(Fragment|Host|Password|Path|Port|Query|Scheme|User)|unarch
 gone="$gone"'|decodeTopLevelDecodable|getIndexes\([^)]*range:|registerUndo\(withTarget|TopLevelEncoder|TopLevelDecoder'
 gone="$gone"'|__NSCoderDecodeObject(ForKey)?\(|__NSKeyedUnarchiver|__NSUndoManagerRegisterWithTargetHandler'
 gone="$gone"'|NSURLErrorBackgroundTaskCancelledReasonKey|NSURLErrorNetworkUnavailableReasonKey'
+# URL resource keys of 10.10 to 10.13 (0045), and 10.10's Islamic calendar identifier constants (0046)
+gone="$gone"'|isApplicationKey|applicationIsScriptableKey|canonicalPathKey|generationIdentifierKey|documentIdentifierKey'
+gone="$gone"'|addedToDirectoryDateKey|quarantinePropertiesKey|volumeAvailableCapacityFor(Important|Opportunistic)UsageKey'
+gone="$gone"'|volumeIsEncryptedKey|volumeIsRootFileSystemKey|volumeSupports(Compression|FileCloning|SwapRenaming|ExclusiveRenaming)Key'
+gone="$gone"'|volumeSupports(ImmutableFiles|AccessPermissions)Key|ubiquitousItemDownloadRequestedKey|ubiquitousItemContainerDisplayNameKey'
+gone="$gone"'|ubiquitousItemIsSharedKey|ubiquitousSharedItemCurrentUser(Role|Permissions)|NSCalendarIdentifierIslamic'
+gone="$gone"'|\.islamic(Tabular|UmmAlQura) : \.islamic(Tabular|UmmAlQura)'
 for f in "$O"/Foundation/*.swift "$O"/Foundation/shims/*.h "$O"/CoreFoundation/shims/*.h; do
   bad="$(sed -e 's|^[[:space:]]*//.*||' -e 's|[[:space:]]//.*||' "$f" | grep -nE "$gone" || true)"
   [ -z "$bad" ] || fail "${f##*/} still calls or names what its patch removes: $bad"

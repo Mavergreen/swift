@@ -1,0 +1,174 @@
+--- stdlib/public/Darwin/Foundation/URL.swift
++++ stdlib/public/Darwin/Foundation/URL.swift
+@@ -120,15 +120,8 @@
+         set { _set(.isPackageKey, newValue: newValue) }
+     }
+     
+-    /// True if resource is an application.
+-    @available(macOS 10.11, iOS 9.0, *)
+-    public var isApplication: Bool? { return _get(.isApplicationKey) }
+-    
+-#if os(macOS)
+-    /// True if the resource is scriptable. Only applies to applications.
+-    @available(macOS 10.11, *)
+-    public var applicationIsScriptable: Bool? { return _get(.applicationIsScriptableKey) }
+-#endif
++    // Mavericks: no isApplication or applicationIsScriptable: NSURLIsApplicationKey and NSURLApplicationIsScriptableKey
++    // are 10.11, which neither the 10.9 SDK nor Recaulk declares; a Recaulk declaration of the keys would restore them
+     
+     /// True for system-immutable resources.
+     public var isSystemImmutable: Bool? { return _get(.isSystemImmutableKey) }
+@@ -244,49 +237,16 @@
+     /// The URL's path as a file system path.
+     public var path: String? { return _get(.pathKey) }
+     
+-    /// The URL's path as a canonical absolute file system path.
+-    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+-    public var canonicalPath: String? { return _get(.canonicalPathKey) }
++    // Mavericks: no canonicalPath: NSURLCanonicalPathKey is 10.12, which neither the 10.9 SDK nor Recaulk declares; a
++    // Recaulk declaration of the key would restore it
+     
+     /// True if this URL is a file system trigger directory. Traversing or opening a file system trigger will cause an attempt to mount a file system on the trigger directory.
+     public var isMountTrigger: Bool? { return _get(.isMountTriggerKey) }
+     
+-    /// An opaque generation identifier which can be compared using `==` to determine if the data in a document has been modified.
+-    ///
+-    /// For URLs which refer to the same file inode, the generation identifier will change when the data in the file's data fork is changed (changes to extended attributes or other file system metadata do not change the generation identifier). For URLs which refer to the same directory inode, the generation identifier will change when direct children of that directory are added, removed or renamed (changes to the data of the direct children of that directory will not change the generation identifier). The generation identifier is persistent across system restarts. The generation identifier is tied to a specific document on a specific volume and is not transferred when the document is copied to another volume. This property is not supported by all volumes.
+-    @available(macOS 10.10, iOS 8.0, *)
+-    public var generationIdentifier: (NSCopying & NSCoding & NSSecureCoding & NSObjectProtocol)? { return _get(.generationIdentifierKey) }
+-    
+-    /// The document identifier -- a value assigned by the kernel to a document (which can be either a file or directory) and is used to identify the document regardless of where it gets moved on a volume.
+-    ///
+-    /// The document identifier survives "safe save" operations; i.e it is sticky to the path it was assigned to (`replaceItem(at:,withItemAt:,backupItemName:,options:,resultingItem:) throws` is the preferred safe-save API). The document identifier is persistent across system restarts. The document identifier is not transferred when the file is copied. Document identifiers are only unique within a single volume. This property is not supported by all volumes.
+-    @available(macOS 10.10, iOS 8.0, *)
+-    public var documentIdentifier: Int? { return _get(.documentIdentifierKey) }
+-    
+-    /// The date the resource was created, or renamed into or within its parent directory. Note that inconsistent behavior may be observed when this attribute is requested on hard-linked items. This property is not supported by all volumes.
+-    @available(macOS 10.10, iOS 8.0, *)
+-    public var addedToDirectoryDate: Date? { return _get(.addedToDirectoryDateKey) }
+-    
+-#if os(macOS)
+-    /// The quarantine properties as defined in LSQuarantine.h. To remove quarantine information from a file, pass `nil` as the value when setting this property.
+-    @available(macOS 10.10, *)
+-    public var quarantineProperties: [String : Any]? {
+-        get {
+-            let value = _values[.quarantinePropertiesKey]
+-            // If a caller has caused us to stash NSNull in the dictionary (via set), make sure to return nil instead of NSNull
+-            if value is NSNull {
+-                return nil
+-            } else {
+-                return value as? [String : Any]
+-            }
+-        }
+-        set {
+-            // Use NSNull for nil, a special case for deleting quarantine
+-            // properties
+-            _set(.quarantinePropertiesKey, newValue: newValue ?? NSNull())
+-        }
+-    }
+-#endif
++    // Mavericks: no generationIdentifier, documentIdentifier, addedToDirectoryDate or quarantineProperties: their
++    // NSURLGenerationIdentifierKey, NSURLDocumentIdentifierKey, NSURLAddedToDirectoryDateKey and
++    // NSURLQuarantinePropertiesKey are 10.10, which neither the 10.9 SDK nor Recaulk declares; a Recaulk declaration of
++    // the keys would restore them
+     
+     /// Returns the file system object type.
+     public var fileResourceType: URLFileResourceType? { return _get(.fileResourceTypeKey) }
+@@ -300,18 +260,9 @@
+     /// Total free space in bytes.
+     public var volumeAvailableCapacity : Int? { return _get(.volumeAvailableCapacityKey) }
+     
+-#if os(macOS) || os(iOS)
+-    /// Total available capacity in bytes for "Important" resources, including space expected to be cleared by purging non-essential and cached resources. "Important" means something that the user or application clearly expects to be present on the local system, but is ultimately replaceable. This would include items that the user has explicitly requested via the UI, and resources that an application requires in order to provide functionality.
+-    /// Examples: A video that the user has explicitly requested to watch but has not yet finished watching or an audio file that the user has requested to download.
+-    /// This value should not be used in determining if there is room for an irreplaceable resource. In the case of irreplaceable resources, always attempt to save the resource regardless of available capacity and handle failure as gracefully as possible.
+-    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+-    public var volumeAvailableCapacityForImportantUsage: Int64? { return _get(.volumeAvailableCapacityForImportantUsageKey) }
+-    
+-    /// Total available capacity in bytes for "Opportunistic" resources, including space expected to be cleared by purging non-essential and cached resources. "Opportunistic" means something that the user is likely to want but does not expect to be present on the local system, but is ultimately non-essential and replaceable. This would include items that will be created or downloaded without an explicit request from the user on the current device.
+-    /// Examples: A background download of a newly available episode of a TV series that a user has been recently watching, a piece of content explicitly requested on another device, and a new document saved to a network server by the current user from another device.
+-    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+-    public var volumeAvailableCapacityForOpportunisticUsage: Int64? { return _get(.volumeAvailableCapacityForOpportunisticUsageKey) }
+-#endif
++    // Mavericks: no volumeAvailableCapacityForImportantUsage or volumeAvailableCapacityForOpportunisticUsage: their
++    // keys are 10.13, which neither the 10.9 SDK nor Recaulk declares; a Recaulk declaration of the keys would restore
++    // them
+     
+     /// Total number of resources on the volume.
+     public var volumeResourceCount : Int? { return _get(.volumeResourceCountKey) }
+@@ -400,37 +351,10 @@
+     /// The user-presentable name of the volume 
+     public var volumeLocalizedName : String? { return _get(.volumeLocalizedNameKey) }
+     
+-    /// true if the volume is encrypted. 
+-    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+-    public var volumeIsEncrypted : Bool? { return _get(.volumeIsEncryptedKey) }
+-
+-    /// true if the volume is the root filesystem. 
+-    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+-    public var volumeIsRootFileSystem : Bool? { return _get(.volumeIsRootFileSystemKey) }
+-
+-    /// true if the volume supports transparent decompression of compressed files using decmpfs. 
+-    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+-    public var volumeSupportsCompression : Bool? { return _get(.volumeSupportsCompressionKey) }
+-    
+-    /// true if the volume supports clonefile(2).
+-    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+-    public var volumeSupportsFileCloning : Bool? { return _get(.volumeSupportsFileCloningKey) }
+-    
+-    /// true if the volume supports renamex_np(2)'s RENAME_SWAP option.
+-    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+-    public var volumeSupportsSwapRenaming : Bool? { return _get(.volumeSupportsSwapRenamingKey) }
+-    
+-    /// true if the volume supports renamex_np(2)'s RENAME_EXCL option.
+-    @available(macOS 10.12, iOS 10.0, tvOS 10.0, watchOS 3.0, *)
+-    public var volumeSupportsExclusiveRenaming : Bool? { return _get(.volumeSupportsExclusiveRenamingKey) }
+-    
+-    /// true if the volume supports making files immutable with isUserImmutable or isSystemImmutable.
+-    @available(macOS 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *)
+-    public var volumeSupportsImmutableFiles : Bool? { return _get(.volumeSupportsImmutableFilesKey) }
+-    
+-    /// true if the volume supports setting POSIX access permissions with fileSecurity.
+-    @available(macOS 10.13, iOS 11.0, tvOS 11.0, watchOS 4.0, *)
+-    public var volumeSupportsAccessPermissions : Bool? { return _get(.volumeSupportsAccessPermissionsKey) }
++    // Mavericks: no volumeIsEncrypted, volumeIsRootFileSystem, volumeSupportsCompression, volumeSupportsFileCloning,
++    // volumeSupportsSwapRenaming or volumeSupportsExclusiveRenaming (their keys are 10.12), nor
++    // volumeSupportsImmutableFiles or volumeSupportsAccessPermissions (10.13): neither the 10.9 SDK nor Recaulk
++    // declares the keys; a Recaulk declaration of them would restore these
+     
+     /// true if this item is synced to the cloud, false if it is only a local file. 
+     public var isUbiquitousItem : Bool? { return _get(.isUbiquitousItemKey) }
+@@ -456,26 +380,15 @@
+     /// returns the error when uploading the item to iCloud failed, see the NSUbiquitousFile section in FoundationErrors.h
+     public var ubiquitousItemUploadingError : NSError? { return _get(.ubiquitousItemUploadingErrorKey) }
+     
+-    /// returns whether a download of this item has already been requested with an API like `startDownloadingUbiquitousItem(at:) throws`.
+-    @available(macOS 10.10, iOS 8.0, *)
+-    public var ubiquitousItemDownloadRequested : Bool? { return _get(.ubiquitousItemDownloadRequestedKey) }
+-    
+-    /// returns the name of this item's container as displayed to users.
+-    @available(macOS 10.10, iOS 8.0, *)
+-    public var ubiquitousItemContainerDisplayName : String? { return _get(.ubiquitousItemContainerDisplayNameKey) }
++    // Mavericks: no ubiquitousItemDownloadRequested or ubiquitousItemContainerDisplayName: their keys are 10.10, which
++    // neither the 10.9 SDK nor Recaulk declares; a Recaulk declaration of the keys would restore them
+     
+ #if os(macOS) || os(iOS)
+-    // true if ubiquitous item is shared.
+-    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+-    public var ubiquitousItemIsShared: Bool? { return _get(.ubiquitousItemIsSharedKey) }
+-    
+-    // The current user's role for this shared item, or nil if not shared
+-    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+-    public var ubiquitousSharedItemCurrentUserRole: URLUbiquitousSharedItemRole? { return _get(.ubiquitousSharedItemCurrentUserRoleKey) }
+-    
+-    // The permissions for the current user, or nil if not shared.
+-    @available(macOS 10.13, iOS 11.0, *) @available(tvOS, unavailable) @available(watchOS, unavailable)
+-    public var ubiquitousSharedItemCurrentUserPermissions: URLUbiquitousSharedItemPermissions? { return _get(.ubiquitousSharedItemCurrentUserPermissionsKey) }
++    // Mavericks: no ubiquitousItemIsShared, ubiquitousSharedItemCurrentUserRole or
++    // ubiquitousSharedItemCurrentUserPermissions: their keys are 10.13, which neither the 10.9 SDK nor Recaulk
++    // declares, and the role and permission types are Recaulk's typedefs without the Swift names
++    // URLUbiquitousSharedItemRole and URLUbiquitousSharedItemPermissions; Recaulk declaring the keys, and naming the
++    // types, would restore them
+     
+     // Mavericks: no ubiquitousSharedItemOwnerNameComponents or ubiquitousSharedItemMostRecentEditorNameComponents: they are
+     // PersonNameComponents, whose NSPersonNameComponents (10.11) neither the 10.9 SDK nor Recaulk declares, so

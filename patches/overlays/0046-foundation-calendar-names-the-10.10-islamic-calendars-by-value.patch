@@ -1,0 +1,44 @@
+--- stdlib/public/Darwin/Foundation/Calendar.swift
++++ stdlib/public/Darwin/Foundation/Calendar.swift
+@@ -972,6 +972,9 @@
+     
+     internal static func _toNSCalendarIdentifier(_ identifier : Identifier) -> NSCalendar.Identifier {
+         if #available(macOS 10.10, iOS 8.0, *) {
++            // Mavericks: NSCalendarIdentifierIslamicTabular and NSCalendarIdentifierIslamicUmmAlQura are 10.10, which
++            // neither the 10.9 SDK nor Recaulk declares, so they are named by their values, as macOS 10.10 and later,
++            // where this branch runs, define them; a Recaulk declaration of the two constants would restore their names
+             let identifierMap : [Identifier : NSCalendar.Identifier] =
+                 [.gregorian : .gregorian,
+                  .buddhist : .buddhist,
+@@ -987,8 +990,8 @@
+                  .japanese : .japanese,
+                  .persian : .persian,
+                  .republicOfChina : .republicOfChina,
+-                 .islamicTabular : .islamicTabular,
+-                 .islamicUmmAlQura : .islamicUmmAlQura]
++                 .islamicTabular : NSCalendar.Identifier(rawValue: "islamic-tbla"),
++                 .islamicUmmAlQura : NSCalendar.Identifier(rawValue: "islamic-umalqura")]
+             return identifierMap[identifier]!
+         } else {
+             let identifierMap : [Identifier : NSCalendar.Identifier] =
+@@ -1012,6 +1015,9 @@
+     
+     internal static func _fromNSCalendarIdentifier(_ identifier : NSCalendar.Identifier) -> Identifier {
+         if #available(macOS 10.10, iOS 8.0, *) {
++            // Mavericks: NSCalendarIdentifierIslamicTabular and NSCalendarIdentifierIslamicUmmAlQura are 10.10, which
++            // neither the 10.9 SDK nor Recaulk declares, so they are named by their values, as macOS 10.10 and later,
++            // where this branch runs, define them; a Recaulk declaration of the two constants would restore their names
+             let identifierMap : [NSCalendar.Identifier : Identifier] =
+                 [.gregorian : .gregorian,
+                  .buddhist : .buddhist,
+@@ -1027,8 +1033,8 @@
+                  .japanese : .japanese,
+                  .persian : .persian,
+                  .republicOfChina : .republicOfChina,
+-                 .islamicTabular : .islamicTabular,
+-                 .islamicUmmAlQura : .islamicUmmAlQura]
++                 NSCalendar.Identifier(rawValue: "islamic-tbla") : .islamicTabular,
++                 NSCalendar.Identifier(rawValue: "islamic-umalqura") : .islamicUmmAlQura]
+             return identifierMap[identifier]!
+         } else {
+             let identifierMap : [NSCalendar.Identifier : Identifier] =

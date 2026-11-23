@@ -91,9 +91,12 @@ SWIFT40_SHA), under the same license (Apache License v2.0 with Runtime Library E
         deprecated NS...CalendarUnit spellings spoil the prefix the importer strips.
   0020  Foundation.apinotes: what the Foundation overlay relies on never being nil
         is marked so, as the 10.9 headers, which carry no nullability
-        annotations, do not say so; NSTimeZone's two factories return NSTimeZone.
+        annotations, do not say so; NSTimeZone's two factories return NSTimeZone,
+        and the NSCalendar and NSIndexSet blocks are NoEscape, as NS_NOESCAPE has them.
   0021  Foundation.apinotes: -[NSURL checkResourceIsReachableAndReturnError:]
         does not throw, as later SDKs' NS_SWIFT_NOTHROW has it.
+  0044  CoreGraphics.apinotes: CGRectEdge, a plain C enum in 10.9, is imported as a
+        closed enum, as later SDKs' CF_CLOSED_ENUM has it.
 
 The CoreFoundation, CoreGraphics and Foundation overlays' sources (their Swift files,
 BundleLookup.mm, DataThunks.m) and shims headers are from swift-5.4-RELEASE's
@@ -124,6 +127,8 @@ Recaulk declares:
   0041  Data names macOS 10.11's NSFoundationVersionNumber by its value.
   0042  An NSObject -init result is typed, as 10.9's imports as init!().
   0043  NSKeyValueChange is 10.9's NS_OPTIONS, whose init(rawValue:) is not failable.
+  0045  No URL resource values whose keys are 10.10 to 10.13.
+  0046  The two Islamic calendars of 10.10 are named by their identifiers' values.
 
 Both toolchain packages also contain Dispatch.apinotes (lib/swift/apinotes), from
 the Swift open source project at pins.env's SWIFT_SHA (apinotes/Dispatch.apinotes),

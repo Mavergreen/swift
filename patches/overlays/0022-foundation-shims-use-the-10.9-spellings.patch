@@ -1,15 +1,3 @@
---- stdlib/public/SwiftShims/NSCalendarShims.h
-+++ stdlib/public/SwiftShims/NSCalendarShims.h
-@@ -25,7 +25,8 @@
-     return (autoCalendarClass && [calendar isKindOfClass:autoCalendarClass]) || (olderAutoCalendarClass && [calendar isKindOfClass:olderAutoCalendarClass]);
- }
- 
--NS_INLINE NS_RETURNS_RETAINED NS_NON_BRIDGED(NSCalendar *) __NSCalendarCreate(NSCalendarIdentifier identifier) {
-+// Mavericks: 10.9 types a calendar identifier NSString *; NSCalendarIdentifier is 10.12's typedef of it
-+NS_INLINE NS_RETURNS_RETAINED NS_NON_BRIDGED(NSCalendar *) __NSCalendarCreate(NSString *identifier) {
-   return [[NSCalendar alloc] initWithCalendarIdentifier:identifier];
- }
- 
 --- stdlib/public/SwiftShims/NSDataShims.h
 +++ stdlib/public/SwiftShims/NSDataShims.h
 @@ -21,7 +21,8 @@
@@ -34,15 +22,3 @@
  }
  
  NS_END_DECLS
---- stdlib/public/SwiftShims/NSFileManagerShims.h
-+++ stdlib/public/SwiftShims/NSFileManagerShims.h
-@@ -20,7 +20,8 @@
-     return success ? result : nil;
- }
- 
--NS_INLINE NS_RETURNS_RETAINED NSDirectoryEnumerator<NSURL *> *_Nullable __NSFileManagerEnumeratorAtURL(NSFileManager *self_, NSURL *url, NSArray<NSURLResourceKey> *_Nullable keys, NSDirectoryEnumerationOptions options, BOOL (^errorHandler)(NSURL *url, NSError *error) ) {
-+// Mavericks: 10.9 types a resource key NSString *; NSURLResourceKey is 10.12's typedef of it
-+NS_INLINE NS_RETURNS_RETAINED NSDirectoryEnumerator<NSURL *> *_Nullable __NSFileManagerEnumeratorAtURL(NSFileManager *self_, NSURL *url, NSArray<NSString *> *_Nullable keys, NSDirectoryEnumerationOptions options, BOOL (^errorHandler)(NSURL *url, NSError *error) ) {
-     return [self_ enumeratorAtURL:url includingPropertiesForKeys:keys options:options errorHandler:^(NSURL *url, NSError *error) {
-         NSURL *realURL = url ?: error.userInfo[NSURLErrorKey];
-         if (!realURL) {

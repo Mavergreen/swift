@@ -78,7 +78,7 @@
    - Selector: 'uppercaseStringWithLocale:'
      SwiftName: uppercased(with:)
      MethodKind: Instance
-@@ -291,6 +331,13 @@
+@@ -291,6 +331,15 @@
  - Name: NSUUID
    SwiftBridge: UUID
  - Name: NSIndexSet
@@ -89,10 +89,12 @@
 +    Parameters:
 +    - Position: 2
 +      Type: 'BOOL (^)(NSUInteger, BOOL * _Nonnull)'
++      # Mavericks: the block runs only before the method returns, as later SDKs' NS_NOESCAPE says
++      NoEscape: true
    SwiftBridge: IndexSet
  - Name: NSIndexPath
    SwiftBridge: IndexPath
-@@ -568,6 +615,16 @@
+@@ -568,6 +617,16 @@
  - Name: NSLocale
    SwiftBridge: Locale
  - Name: NSTimeZone
@@ -109,7 +111,7 @@
    SwiftBridge: TimeZone
  - Name: NSCalendar
    SwiftBridge: Calendar
-@@ -578,9 +635,13 @@
+@@ -578,9 +637,15 @@
    - Selector: 'dateWithEra:yearForWeekOfYear:weekOfYear:weekday:hour:minute:second:nanosecond:'
      SwiftName: date(era:yearForWeekOfYear:weekOfYear:weekday:hour:minute:second:nanosecond:)
      MethodKind: Instance
@@ -120,10 +122,12 @@
 +    Parameters:
 +    - Position: 3
 +      Type: 'void (^)(NSDate * _Nullable, BOOL, BOOL * _Nonnull)'
++      # Mavericks: the block runs only before the method returns, as later SDKs' NS_NOESCAPE says
++      NoEscape: true
    - Selector: 'isDateInToday:'
      SwiftName: isDateInToday(_:)
      MethodKind: Instance
-@@ -769,6 +830,13 @@
+@@ -769,6 +834,13 @@
  - Name: NSScanner
    SwiftName: Scanner
    Methods:
