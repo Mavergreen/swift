@@ -21,6 +21,7 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/build-helpers.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 T="$(CDPATH='' cd -P -- "$T" && pwd -P)"   # physical, so a link below is the only second spelling
 . "$REPO/lib.sh"
+unset SWIFT_HOST_TOOLCHAIN SWIFT_HOST_TOOLCHAIN_VERSION   # a build host's environment names its own
 
 echo "-- apple_probe_answers: tapi, strip and ld64 named, none of them xcrun or a Command Line Tools tool"
 [ "$(apple_probe_answers /c22/bin)" = "-DCMAKE_TAPI=/usr/bin/false -DCMAKE_STRIP=/c22/bin/llvm-strip -DLD64_EXECUTABLE=/usr/bin/false" ] \

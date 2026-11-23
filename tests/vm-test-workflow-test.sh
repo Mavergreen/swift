@@ -9,7 +9,8 @@
 #   Longboat's latest release and mavericks-clang-22 (whose pkg requires Longboat) and runs the native
 #   toolchain smoke, a SKIP of which fails; publish waits for it. That is bundle_mode compile, the default (a
 #   push, a tag, a dispatch that names none) and the only mode a publishing run may take. bundle_mode, a dispatch
-#   input of compile or prebuilt and nothing else, is checked first; prebuilt (iteration only) downloads a bundle
+#   input of compile or prebuilt and nothing else, is checked first, in the version job right after it decides
+#   whether the run publishes (before any build) and again in vm-test; prebuilt (iteration only) downloads a bundle
 #   built elsewhere (the swift-selftest artifact), installs libcxx22 and this run's runtime pkg alone, holds its
 #   receipt, checks the install, installs Longboat, its 10.9 SDK and clang22 (FileCheck), and runs the bundle's
 #   --loads and then, only if that passed, its --gate: no compile in the guest, no toolchain, no smoke. The
@@ -43,6 +44,15 @@ check() {
     || { echo "vm-test does not refuse a bundle_mode other than compile or prebuilt before it does anything"; return 1; }
   grep -q '\[ "\$BUNDLE_MODE" = compile \] || \[ "\$PUBLISH" != true \] || ' "$T/job" && grep -q 'PUBLISH: \${{ needs.version.outputs.publish }}' "$T/job" \
     || { echo "vm-test lets a publishing run gate a prebuilt bundle"; return 1; }
+  # The version job checks the mode too, right after it decides whether the run publishes: before any build.
+  awk '/^  version:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" > "$T/version"
+  awk '/^      - / { n++ } /^        id: ver$/ { v = n }
+       /case "\$BUNDLE_MODE" in compile\|prebuilt\) ;; \*\) / && /exit 1/ { c = n }
+       /\[ "\$BUNDLE_MODE" = compile \] \|\| \[ "\$PUBLISH" != true \] \|\| / { p = n }
+       /^          BUNDLE_MODE: \$\{\{ inputs\.bundle_mode \|\| .compile. \}\}$/ { b = n }
+       /^          PUBLISH: \$\{\{ steps\.ver\.outputs\.publish \}\}$/ { o = n }
+       END { exit !(v && c == v + 1 && p == c && b == c && o == c) }' "$T/version" \
+    || { echo "the version job does not refuse a bad bundle_mode, or a prebuilt one in a publishing run, right after it decides whether the run publishes"; return 1; }
   for f in "$T"/step.*; do
     if grep -q 'name: swift-selftest' "$f"; then grep -qx "        if: env.BUNDLE_MODE == 'prebuilt'" "$f" && grep -q 'path: dist' "$f" \
       || { echo "vm-test does not download the prebuilt bundle (swift-selftest) into dist/ in prebuilt mode alone"; return 1; }; fi
@@ -152,4 +162,11 @@ mutant "prebuilt mode skips --loads" 's|^\(              \)sh swift-runtime-self
 mutant "prebuilt mode gates even when --loads fails" 's|^\(              sh swift-runtime-selftest/run-selftest\.sh --loads\) &&$|\1;|'
 mutant "prebuilt mode installs no clang22 for FileCheck" "/if: env.BUNDLE_MODE == 'prebuilt'/,\$ { /^            install clang22\/mavericks-clang-22-native-\*\.pkg\$/d; }"
 mutant "prebuilt mode does not hold the runtime receipt" 's/^\(            got="\$(pkgutil --pkg-info dev.mavergreen.swift-runtime\)/\1-other/'
+V='/^  version:$/,/^  build-cross:$/'; VM='/^  vm-test:$/,$'
+mutant "the version job does not check the mode" "$V { /^      - name: Check vm-test's bundle mode\$/,/never a prebuilt one\"; exit 1; }\$/d; }"
+mutant "the version job takes any mode" "$V s/case \"\\\$BUNDLE_MODE\" in compile|prebuilt) ;; \\*) /case \"\$BUNDLE_MODE\" in *) ;; compile|prebuilt) /"
+mutant "the version job lets a publishing run take prebuilt" "$V s/\\[ \"\\\$BUNDLE_MODE\" = compile \\] || \\[ \"\\\$PUBLISH\" != true \\] || /true || /"
+mutant "the version job's guard does not read the publish it decided" "$V s/^          PUBLISH: \\\${{ steps.ver.outputs.publish }}\$/          PUBLISH: \${{ needs.x.outputs.publish }}/"
+mutant "vm-test does not check the mode again" "$VM s/case \"\\\$BUNDLE_MODE\" in compile|prebuilt) ;; \\*) /case \"\$BUNDLE_MODE\" in *) ;; compile|prebuilt) /"
+mutant "vm-test does not refuse prebuilt in a publishing run again" "$VM s/\\[ \"\\\$BUNDLE_MODE\" = compile \\] || \\[ \"\\\$PUBLISH\" != true \\] || /true || /"
 echo "PASS: vm-test-workflow"

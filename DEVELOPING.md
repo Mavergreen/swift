@@ -248,11 +248,14 @@ reads Mach-O with clang22's `llvm-otool`, `llvm-nm` and `llvm-strings`, and stag
 `$MAVERICKS_BUILD_ROOT/swift/payload/runtime`, as on a Mac. The Linux-hosted compiler ships in no package.
 
 `make-selftest.sh` builds the self-test bundle with that same prefix's compiler, so every test is built, the
-ones that need compiler patch 0003 and upstream's concurrency tests included (its `dsymutil` links the `-g`
-ones); without `SWIFT_HOST_TOOLCHAIN` it refuses to run on Linux. Its `SWIFTC=` mode rewrites rpaths there with
-clang22's `llvm-install-name-tool` (`CLANG22_PREFIX`) or `INSTALL_NAME_TOOL`. The bundle runs on 10.9 as one
-built anywhere does; vm-test's `bundle_mode: prebuilt` gates such a bundle against a runtime pkg, for
-iteration only, while a release is always gated by the bundle compiled in the guest (`compile`).
+ones that need compiler patch 0003 and upstream's concurrency tests included; the prefix's `dsymutil` links
+the `-g` ones, and a prefix without one is refused (restage it with `build-toolchain.sh --host linux`).
+Without `SWIFT_HOST_TOOLCHAIN` it refuses to run on Linux. Its `SWIFTC=` mode rewrites rpaths there with
+clang22's `llvm-install-name-tool` (`CLANG22_PREFIX`) or `INSTALL_NAME_TOOL`. No Linux-built bundle has run on
+10.9 yet. Its bytes are not a Mac-built bundle's: with the same inputs and paths, `-O` builds of async code
+lay out their coroutine frames differently by host, which is under investigation. vm-test's
+`bundle_mode: prebuilt` is for gating such a bundle against a runtime pkg, for iteration only; a release is
+always gated by the bundle compiled in the guest (`compile`).
 
 ## A Swift bump
 

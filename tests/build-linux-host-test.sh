@@ -18,7 +18,7 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/build-linux-host.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 T="$(CDPATH='' cd -P -- "$T" && pwd -P)"
 . "$REPO/pins.env"   # -> SWIFT_VERSION, CLANG22_VERSION
-unset SWIFT_HOST_TOOLCHAIN_VERSION OTOOL NM STRINGS LIPO DYLDINFO
+unset SWIFT_HOST_TOOLCHAIN SWIFT_HOST_TOOLCHAIN_VERSION OTOOL NM STRINGS LIPO DYLDINFO
 
 R="$T/root"; mkdir -p "$R/swift/out/llvm/lib/cmake/llvm" "$R/swift/work/llvm-build/bin" "$T/shipyard" "$T/fakebin"
 : > "$R/swift/work/llvm-build/bin/ld64.lld"; chmod +x "$R/swift/work/llvm-build/bin/ld64.lld"

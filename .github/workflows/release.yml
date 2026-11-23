@@ -134,6 +134,17 @@ jobs:
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
           echo "version=$VER publish=$PUBLISH"
 
+      # vm-test's bundle_mode is checked here, before any build, as vm-test checks it again: compile or
+      # prebuilt and nothing else, and a publishing run is gated by the bundle compiled on 10.9 alone.
+      - name: Check vm-test's bundle mode
+        env:
+          BUNDLE_MODE: ${{ inputs.bundle_mode || 'compile' }}
+          PUBLISH: ${{ steps.ver.outputs.publish }}
+        run: |
+          set -eu
+          case "$BUNDLE_MODE" in compile|prebuilt) ;; *) echo "::error::bundle_mode is compile or prebuilt, not '$BUNDLE_MODE'"; exit 1 ;; esac
+          [ "$BUNDLE_MODE" = compile ] || [ "$PUBLISH" != true ] || { echo "::error::a release is gated by the bundle compiled on 10.9 (bundle_mode compile), never a prebuilt one"; exit 1; }
+
   # The cross toolchain, the stdlib and the runtime: arm64, macOS 11.0, built natively on this arm64
   # runner with nothing cross-compiled, its compiler's Swift half compiled by the swift.org compiler --
   # the one seed. The stdlib every pkg ships is then built ONCE, by that cross toolchain; build stages the
@@ -780,7 +791,7 @@ jobs:
             # platform: mavericks-clang-22's preinstall refuses without Longboat's 10.9 SDK (dev.mavergreen.longboat.sdk109) installed.
             sudo /usr/local/mavergreen/bin/longboat sdk install 10.9
             install clang22/mavericks-clang-22-native-*.pkg
-            # --loads first: a bundle built elsewhere must load every libswift* from this runtime, or not be gated.
+            # spec: tests/run-selftest.sh's --loads -- a bundle built elsewhere must load every libswift* from this runtime, or not be gated.
             mkdir gate
             ( cd gate && tar -xzf ../dist/swift-runtime-selftest.tar.gz &&
               sh swift-runtime-selftest/run-selftest.sh --loads &&

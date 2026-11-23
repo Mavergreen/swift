@@ -26,7 +26,8 @@
 #   mode, whose swift.org compiler refuses its 10.9 async code. With SWIFT_HOST_TOOLCHAIN (a toolchain prefix,
 #   as build.sh's) the default mode compiles with that prefix's swift-frontend, this repo's compiler, and so
 #   builds every test, those that need compiler patch 0003 and upstream's concurrency tests included, on a Mac
-#   and on Linux. On Linux (a fake uname) the default mode without SWIFT_HOST_TOOLCHAIN is refused before
+#   and on Linux; a prefix without bin/dsymutil (which swiftc -g links through) is refused before anything is
+#   compiled. On Linux (a fake uname) the default mode without SWIFT_HOST_TOOLCHAIN is refused before
 #   anything is compiled, and SWIFTC= mode's rpath replacement is INSTALL_NAME_TOOL's or clang22's
 #   llvm-install-name-tool, never install_name_tool's from PATH: without either it is refused before anything
 #   is compiled. A fake compiler and fake install_name_tools record their calls.
@@ -232,6 +233,13 @@ echo "   and builds every test, on a Mac and on Linux"
 mkdir -p "$T/linux" "$T/htc/bin" "$T/htc/lib/swift"
 printf '#!/bin/sh\necho Linux\n' > "$T/linux/uname"; chmod +x "$T/linux/uname"
 cp "$T/fake-swiftc" "$T/htc/bin/swift-frontend"; : > "$T/htc/bin/clang"; : > "$T/htc/bin/ld64.lld"
+echo "   a prefix with no dsymutil (swiftc -g links through it) is refused before any compile"
+rm -f "$T/calls"
+if ( unset SWIFT_RUNTIME_PREFIX SWIFTC TC; SWIFT_HOST_TOOLCHAIN="$T/htc" SWIFT_WORK="$T/work" SHIPYARD_SCRIPTS="$T/shipyard" \
+     DIST="$T/dist" sh "$REPO/make-selftest.sh" > /dev/null 2> "$T/err" ); then fail "made a bundle with a prefix that has no dsymutil"; fi
+grep -q 'dsymutil.*build-toolchain.sh --host linux' "$T/err" || fail "did not say the prefix needs restaging for its dsymutil: $(cat "$T/err")"
+[ ! -f "$T/calls" ] || fail "compiled before refusing a prefix with no dsymutil: $(cat "$T/calls")"
+printf '#!/bin/sh\nexit 0\n' > "$T/htc/bin/dsymutil"; chmod +x "$T/htc/bin/dsymutil"
 mkdir -p "$SUP/upstream/concurrency/test/Concurrency"
 : > "$SUP/upstream/concurrency/test/Concurrency/Baz.swift"
 printf '%s\n' -swift-version 5 -parse-as-library > "$SUP/upstream/concurrency/test/Concurrency/Baz.swift.args"

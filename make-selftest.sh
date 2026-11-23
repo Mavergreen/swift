@@ -16,7 +16,8 @@
 #            default          the swift.org toolchain build.sh expanded (or, with SWIFT_HOST_TOOLCHAIN, the
 #                             toolchain prefix build.sh's variable of that name names: this repo's compiler,
 #                             run through lib.sh's native_host_shim, which builds every test, the ones
-#                             marked below included; on Linux the only compiler, and refused without it),
+#                             marked below included; on Linux the only compiler, and refused without it;
+#                             a prefix without bin/dsymutil, which swiftc -g links through, is refused),
 #                             for x86_64-apple-macosx10.9,
 #                             -no-stdlib-rpath and one rpath, $SWIFT_RUNTIME_PREFIX/lib/swift
 #                             (default /usr/local/mavergreen/swift-runtime). Run after build.sh. As
@@ -108,6 +109,10 @@ else
   #           another way (DispatchSemaphore(value:) failable, say); a private one, afresh each run, cannot.
   VFSD="$(mktemp -d "${TMPDIR:-/tmp}/make-selftest-vfs.XXXXXX")"; trap 'rm -rf "$VFSD"' EXIT
   if [ -n "${SWIFT_HOST_TOOLCHAIN:-}" ]; then
+    # platform: swiftc -g (upstream's -g tests) links through the dsymutil beside swift-frontend, and Linux has
+    #           no other: a prefix staged before build-toolchain.sh --host linux staged one would fail there, late
+    [ -x "$SWIFT_HOST_TOOLCHAIN/bin/dsymutil" ] || {
+      echo "make-selftest: no $SWIFT_HOST_TOOLCHAIN/bin/dsymutil -- restage with build-toolchain.sh --host linux" >&2; exit 1; }
     native_host_shim "$SWIFT_HOST_TOOLCHAIN" "$VFSD/host" || { echo "make-selftest: no compiler shim from SWIFT_HOST_TOOLCHAIN=$SWIFT_HOST_TOOLCHAIN" >&2; exit 1; }
     TC="$VFSD/host/usr"
     # platform: this repo's (legacy) driver runs the `ld` of -tools-directory, else /usr/bin/ld: the host's own
