@@ -7,7 +7,7 @@ name: pins-bot
 #   that each holds exactly its commit's tree. Upstream's bytes are read there, never run, and never beside a
 #   token that can write. scripts/pins-bot.sh fill decides: a write only when --check exits 3 (stale); its 1
 #   (an error) fails the job, and nothing is written or pushed.
-# - push touches no upstream byte: it writes the three checked values into pins.env (scripts/pins-bot.sh),
+# - push touches no upstream byte: it writes the four checked values into pins.env (scripts/pins-bot.sh),
 #   commits, and pushes to the branch with a token of the Mavergreen pins-bot GitHub App (org variable
 #   PINS_BOT_CLIENT_ID, org secret PINS_BOT_PRIVATE_KEY; minted for this repository with contents: write alone).
 #   A push made with GITHUB_TOKEN starts no workflow, and a run it dispatches does not count for the PR's
@@ -54,7 +54,7 @@ jobs:
       - name: The tarball pins, if a source commit moved and its pin is stale
         id: pin
         # pins-bot.sh fill decides by pin-source-tarballs.sh's exit codes: --check 0 (current) is nothing to
-        # do; 3 (stale) fills pins.env and prints the three values; anything else (1, an error) fails this
+        # do; 3 (stale) fills pins.env and prints the four values; anything else (1, an error) fails this
         # job with no values, so the push job never runs on a pin that was not checked.
         run: |
           set -eu
@@ -87,7 +87,7 @@ jobs:
         run: |
           set -eu
           # A refusal fails the job here (set -e sees an assignment's status), never reads as "unchanged".
-          # shellcheck disable=SC2086  # three KEY=SHA256 words; pins-bot.sh refuses anything else
+          # shellcheck disable=SC2086  # four KEY=SHA256 words; pins-bot.sh refuses anything else
           applied="$(sh scripts/pins-bot.sh apply $PINS)"
           [ "$applied" = changed ] || { echo "pins.env already holds them"; exit 0; }
           git -c user.name='mavergreen-pins-bot[bot]' -c user.email='342268518+mavergreen-pins-bot[bot]@users.noreply.github.com' \

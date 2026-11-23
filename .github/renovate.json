@@ -77,7 +77,7 @@
       ],
       "groupName": "Swift release",
       "prBodyNotes": [
-        "**The tarball pins:** `.github/workflows/pins-bot.yml` writes `LLVM_TARBALL_SHA256`, `SWIFT_TARBALL_SHA256` and `CMARK_TARBALL_SHA256` on this branch, after checking that each tarball is its commit's tree, and runs `release.yml` on its commit; that run's `build` is the check this PR merges on. Until then CI fails at the first fetch, naming the pin. If the bot failed, run `sh scripts/pin-source-tarballs.sh` on this branch and push `pins.env` (INGREDIENTS.md)."
+        "**The tarball pins:** `.github/workflows/pins-bot.yml` writes `LLVM_TARBALL_SHA256`, `SWIFT_TARBALL_SHA256`, `CMARK_TARBALL_SHA256` and `LINUX_SEED_SHA256` on this branch, after checking that each source tarball is its commit's tree and that the Linux seed is signed by swift.org's pinned key, and runs `release.yml` on its commit; that run's `build` is the check this PR merges on. Until then CI fails at the first fetch, naming the pin. If the bot failed, run `sh scripts/pin-source-tarballs.sh` on this branch and push `pins.env` (INGREDIENTS.md)."
       ]
     }
   ]

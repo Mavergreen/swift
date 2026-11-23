@@ -15,7 +15,12 @@
 #          found a pin that is not its tarball's; 1 any failure (a tarball not its commit's tree, a
 #          failed fetch, a refused digest, a missing pin line, a failed command); 2 usage, and only
 #          usage; 130/143 on INT/TERM.
-#          Needs curl, git, tar, shasum and shipyard (msc.sh).
+#          LINUX_SEED_SHA256 is a fourth, different row: swift.org's Linux toolchain tarball for the bumped
+#          SWIFT_VERSION (LINUX_SEED_URL) is downloaded, and its hash written only if fetch-linux-seed.sh's
+#          signature check passes against the PINNED key fingerprint, never against the old hash. A tarball
+#          that fails it writes nothing and exits 1. This downloads ~1.1 GB, and the bot runs it only when a
+#          source pin moved (a Swift bump). Needs gpg for that row.
+#          Needs curl, git, tar, shasum, gpg and shipyard (msc.sh).
 set -eu
 CHECK=0
 case "$#:${1:-}" in
@@ -39,7 +44,7 @@ HERE="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$SHIPYARD/fetch_pinned_source.sh" ] || fail "the shipyard at $SHIPYARD has no fetch_pinned_source.sh -- install a newer shipyard pkg"
 [ -f "$SHIPYARD/mavericks_fetch.sh" ] || fail "the shipyard at $SHIPYARD has no mavericks_fetch.sh"
 . "$SHIPYARD/mavericks_fetch.sh"
-for pin in LLVM_TARBALL_SHA256 SWIFT_TARBALL_SHA256 CMARK_TARBALL_SHA256; do
+for pin in LLVM_TARBALL_SHA256 SWIFT_TARBALL_SHA256 CMARK_TARBALL_SHA256 LINUX_SEED_SHA256; do
   grep -q "^$pin=\"[0-9a-f]*\"" "$HERE/pins.env" || fail "pins.env has no $pin=\"...\" line"
 done
 T="$(mktemp -d "${TMPDIR:-/tmp}/pin-source-tarballs.XXXXXX")"
@@ -88,6 +93,23 @@ for row in "LLVM_TARBALL_SHA256 $LLVM_REPO_URL $LLVM_SHA $LLVM_TAG" "SWIFT_TARBA
   fi
   rm -rf "$T/$pin.tar.gz" "$T/$pin.x" "$T/$pin.git"
 done
+# The Linux seed: the hash is written only for a tarball swift.org signed with the pinned key.
+. "$HERE/fetch-linux-seed.sh"
+pin=LINUX_SEED_SHA256
+echo "==> $pin: $LINUX_SEED_URL"
+linux_seed_download "$LINUX_SEED_URL" "$T/seed.tar.gz" || fail "could not fetch $LINUX_SEED_URL"
+linux_seed_verify_signature "$T/seed.tar.gz" || fail "$LINUX_SEED_URL is not signed by the pinned key: writing nothing"
+sha="$(linux_seed_sha256 "$T/seed.tar.gz")" || fail "could not hash $LINUX_SEED_URL"
+echo "    $sha (signed by $LINUX_SEED_KEY_FPR)"
+if [ "$CHECK" = 1 ]; then
+  [ "$LINUX_SEED_SHA256" = "$sha" ] || { echo "FAIL: pins.env's $pin is $LINUX_SEED_SHA256, but $LINUX_SEED_URL is $sha -- run sh scripts/pin-source-tarballs.sh and commit pins.env" >&2; rc=3; }
+elif [ "$LINUX_SEED_SHA256" != "$sha" ]; then
+  awk -v k="$pin" -v v="$sha" 'index($0, k "=\"") == 1 { sub(/="[0-9a-f]*"/, "=\"" v "\"") } { print }' \
+    "$T/pins.env" > "$T/pins.env.next" && mv "$T/pins.env.next" "$T/pins.env" || fail "could not write $pin"
+  grep -q "^$pin=\"$sha\"" "$T/pins.env" || fail "could not write $pin into pins.env"
+  echo "    $pin moves"
+fi
+rm -f "$T/seed.tar.gz"
 [ "$CHECK" = 0 ] || finish "$rc"
 if cmp -s "$T/pins.env" "$HERE/pins.env"; then echo "pins.env: unchanged"; finish 0; fi
 cp "$T/pins.env" "$NEW" && mv "$NEW" "$HERE/pins.env" || fail "could not write pins.env"

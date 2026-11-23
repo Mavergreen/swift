@@ -2,71 +2,87 @@
 # platform: host-agnostic
 # usage: sh tests/fetch-linux-seed-test.sh
 #   fetch_linux_seed must fail closed: a tarball whose SHA-256 is not the pin is FAIL ...sha256 and is
-#   removed; one whose hash is right but whose signature is not by the pinned key (even a good signature
-#   by another key in the keyring) is FAIL ...signature; a good pair prints the extracted toolchain's usr.
-#   Runs with no network, against throwaway keys and a stubbed shipyard_curl that copies from a directory.
+#   removed; one whose hash is right but whose signature is not good and by the pinned key is FAIL
+#   ...signature -- another key's good signature, the pinned key's signature over other bytes, an expired
+#   key, a missing or garbage .sig; a good pair prints the extracted toolchain's usr. Sourcing it sets no
+#   shell option, and a failure leaves no <dest>. Offline, against throwaway keys (tests/lib/fake-linux-seed.sh).
 #   SKIPs (77) without gpg.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 command -v gpg >/dev/null 2>&1 || { echo "no gpg -- skipping"; exit 77; }
-
-T="$(mktemp -d "${TMPDIR:-/tmp}/fetch-linux-seed-test.XXXXXX")"
-# platform: gpg-agent listens on a unix socket under GNUPGHOME, and a macOS $TMPDIR is too long for one
-#           (sun_path is 104 bytes), so the throwaway keys live under a short /tmp path.
-G="$(mktemp -d /tmp/fls.XXXXXX)"
-cleanup() { for h in "$G"/*; do [ -d "$h" ] && GNUPGHOME="$h" gpgconf --kill gpg-agent >/dev/null 2>&1 || :; done; rm -rf "$T" "$G"; }
-trap cleanup EXIT INT TERM
-SRV="$T/srv"; mkdir -p "$SRV" "$T/tar/swift-x/usr/bin"
-printf '#!/bin/sh\n' > "$T/tar/swift-x/usr/bin/swiftc"; chmod +x "$T/tar/swift-x/usr/bin/swiftc"
-tar -czf "$SRV/seed.tar.gz" -C "$T/tar" swift-x
-
-# two throwaway keys: "good" is the pinned one, "other" is a second key that is in the keyring too
-mkkey() { # <name> -> prints the primary fingerprint, exports the public key to $SRV/<name>.asc
-  mkdir -m 700 "$G/gh-$1"
-  GNUPGHOME="$G/gh-$1" gpg --batch --quiet --passphrase '' --quick-gen-key "$1 <$1@example.invalid>" rsa2048 sign 1d >/dev/null 2>&1
-  GNUPGHOME="$G/gh-$1" gpg --batch --armor --export > "$SRV/$1.asc" 2>/dev/null
-  GNUPGHOME="$G/gh-$1" gpg --batch --with-colons --list-keys 2>/dev/null | awk -F: '$1=="fpr"{print $10; exit}'
-}
-GOOD_FPR="$(mkkey good)"; mkkey other >/dev/null
-cat "$SRV/good.asc" "$SRV/other.asc" > "$SRV/keys.asc"
-sign() { GNUPGHOME="$G/gh-$1" gpg --batch --yes --detach-sign --output "$SRV/$2" "$SRV/seed.tar.gz" >/dev/null 2>&1; }
-HASH="$( (sha256sum "$SRV/seed.tar.gz" 2>/dev/null || shasum -a 256 "$SRV/seed.tar.gz") | awk '{print $1}')"
-
-# the stub honours shipyard_curl's (url, dest) form with a path as the url; extra flags are skipped
-shipyard_curl() { while [ $# -gt 2 ]; do shift; done; cp "$1" "$2"; }
+. "$REPO/tests/lib/fake-linux-seed.sh"
+T0="$(mktemp -d "${TMPDIR:-/tmp}/fetch-linux-seed-test.XXXXXX")"
+trap fake_seed_cleanup EXIT INT TERM
+fake_seed_setup "$T0"; FST="$T0"
+[ -n "$GOOD_FPR" ] || fail "no throwaway key"
 
 KEYRING="$SRV/keys.asc"
-run() { # <sigfile> <sha256> -> sets OUT and RC
-  MAVERICKS_BUILD_ROOT="$T/build"; export MAVERICKS_BUILD_ROOT; rm -rf "$T/dest" "$T/build"
+run() { # <sigfile-path> <sha256> -> sets OUT and RC
+  MAVERICKS_BUILD_ROOT="$FST/build"; export MAVERICKS_BUILD_ROOT; rm -rf "$FST/dest" "$FST/build"
   set +e
-  OUT="$( HERE="$REPO" TEST_ONLY_LINUX_SEED_URL="$SRV/seed.tar.gz" TEST_ONLY_LINUX_SEED_SIG_URL="$SRV/$1" TEST_ONLY_LINUX_SEED_SHA256="$2" \
-          TEST_ONLY_LINUX_SEED_KEYRING_URL="$KEYRING" TEST_ONLY_LINUX_SEED_KEY_FPR="$GOOD_FPR" \
-          . "$REPO/fetch-linux-seed.sh" && fetch_linux_seed "$T/dest" 2>&1 )"; RC=$?
+  OUT="$( HERE="$REPO"; TEST_ONLY_LINUX_SEED_URL="$SRV/seed.tar.gz"; TEST_ONLY_LINUX_SEED_SIG_URL="$1"; TEST_ONLY_LINUX_SEED_SHA256="$2"
+          TEST_ONLY_LINUX_SEED_KEYRING_URL="$KEYRING"; TEST_ONLY_LINUX_SEED_KEY_FPR="$GOOD_FPR"
+          { . "$REPO/fetch-linux-seed.sh" && fetch_linux_seed "$FST/dest"; } 2>&1 )"; RC=$?
   set -e
 }
+expect_sigfail() { # <label> <sigfile>
+  run "$2" "$HASH"
+  [ "$RC" -ne 0 ] || fail "$1: accepted"
+  case "$OUT" in *"FAIL:"*) ;; *) fail "$1: no FAIL line in: $OUT" ;; esac
+  [ ! -e "$FST/dest" ] || fail "$1: an unverified seed was extracted"
+  [ -z "$(find "$FST/build" -name '*.tar.gz' 2>/dev/null)" ] || fail "$1: the rejected download was kept"
+}
 
-echo "-- a signature by another key in the keyring is a FAIL, though it is a good signature"
-sign other bad.sig
-run bad.sig "$HASH"
+echo "-- a good signature by another key in the keyring is a FAIL ...signature"
+run "$SRV/other.sig" "$HASH"
 [ "$RC" -ne 0 ] || fail "a signature by an unpinned key was accepted"
 case "$OUT" in *"FAIL:"*signature*) ;; *) fail "no 'FAIL: ...signature' in: $OUT" ;; esac
-[ ! -e "$T/dest" ] || fail "an unverified seed was extracted"
+[ ! -e "$FST/dest" ] || fail "an unverified seed was extracted"
 
-echo "-- a hash that is not the pin is a FAIL, and the download is removed"
-sign good good.sig
-run good.sig "0000000000000000000000000000000000000000000000000000000000000000"
+echo "-- the pinned key's signature over other bytes is a FAIL (BADSIG)"
+expect_sigfail "a bad signature by the pinned key" "$SRV/wrongfile.sig"
+
+echo "-- an expired key is a FAIL, though it is the pinned one"
+saved="$GOOD_FPR"; GOOD_FPR="$(GNUPGHOME="$G/gh-expired" gpg --batch --with-colons --list-keys 2>/dev/null | awk -F: '$1=="fpr"{print $10; exit}')"
+expect_sigfail "an expired pinned key" "$SRV/expired.sig"
+case "$OUT" in *EXPKEYSIG*) ;; *) fail "the expired key was not named EXPKEYSIG: $OUT" ;; esac
+GOOD_FPR="$saved"
+
+echo "-- a garbage or missing .sig is a FAIL"
+expect_sigfail "a garbage .sig" "$SRV/garbage.sig"
+expect_sigfail "a missing .sig" "$SRV/no-such.sig"
+case "$OUT" in *"could not fetch the signature"*) ;; *) fail "a missing .sig named no fetch failure: $OUT" ;; esac
+
+echo "-- a keyring that cannot be fetched is a FAIL"
+KEYRING="$SRV/no-such.asc"; expect_sigfail "a missing keyring" "$SRV/good.sig"
+case "$OUT" in *"could not fetch the keyring"*) ;; *) fail "a missing keyring named no fetch failure: $OUT" ;; esac
+KEYRING="$SRV/keys.asc"
+
+echo "-- a hash that is not the pin is a FAIL ...sha256, and the download is removed"
+run "$SRV/good.sig" "0000000000000000000000000000000000000000000000000000000000000000"
 [ "$RC" -ne 0 ] || fail "a wrong hash was accepted"
 case "$OUT" in *"FAIL:"*sha256*) ;; *) fail "no 'FAIL: ...sha256' in: $OUT" ;; esac
-[ -z "$(find "$T/build" -name '*.tar.gz' 2>/dev/null)" ] || fail "the bad download was kept"
+[ -z "$(find "$FST/build" -name '*.tar.gz*' 2>/dev/null)" ] || fail "the bad download was kept"
 
-echo "-- a good pair prints the extracted usr"
-run good.sig "$HASH"
+echo "-- a good pair prints the extracted usr; the test-only overrides are announced"
+run "$SRV/good.sig" "$HASH"
 [ "$RC" -eq 0 ] || fail "a good pair failed: $OUT"
-[ "$(printf '%s\n' "$OUT" | tail -n 1)" = "$T/dest/swift-x/usr" ] || fail "last line is not the usr path: $OUT"
-[ -x "$T/dest/swift-x/usr/bin/swiftc" ] || fail "swiftc was not extracted"
-echo "-- a keyring served gzip-encoded, as swift.org's is to a client that did not ask, still verifies"
+[ "$(printf '%s\n' "$OUT" | tail -n 1)" = "$FST/dest/swift-x/usr" ] || fail "last line is not the usr path: $OUT"
+[ -x "$FST/dest/swift-x/usr/bin/swiftc" ] || fail "swiftc was not extracted"
+case "$OUT" in *"WARNING: TEST_ONLY_LINUX_SEED_"*) ;; *) fail "no warning that the test-only overrides are set: $OUT" ;; esac
+
+echo "-- a keyring served gzip-encoded, as swift.org's is, still verifies"
 gzip -c "$SRV/keys.asc" > "$SRV/keys.asc.gz"; KEYRING="$SRV/keys.asc.gz"
-run good.sig "$HASH"
+run "$SRV/good.sig" "$HASH"
 [ "$RC" -eq 0 ] || fail "a gzip-encoded keyring was not read: $OUT"
+KEYRING="$SRV/keys.asc"
+
+echo "-- sourcing sets no shell option, and the functions are safe under if and ||"
+( set +eu; HERE="$REPO" . "$REPO/fetch-linux-seed.sh"; case "$-" in *e*|*u*) exit 1 ;; esac ) || fail "sourcing fetch-linux-seed.sh set -e or -u"
+( set +e; MAVERICKS_BUILD_ROOT="$FST/build2"; export MAVERICKS_BUILD_ROOT
+  HERE="$REPO" TEST_ONLY_LINUX_SEED_URL="$SRV/seed.tar.gz" TEST_ONLY_LINUX_SEED_SIG_URL="$SRV/garbage.sig" TEST_ONLY_LINUX_SEED_SHA256="$HASH" \
+  TEST_ONLY_LINUX_SEED_KEYRING_URL="$KEYRING" TEST_ONLY_LINUX_SEED_KEY_FPR="$GOOD_FPR" . "$REPO/fetch-linux-seed.sh" 2>/dev/null
+  if fetch_linux_seed "$FST/dest2" >/dev/null 2>&1; then exit 1; fi
+  fetch_linux_seed "$FST/dest2" >/dev/null 2>&1 || exit 0; exit 1 ) || fail "a failing fetch_linux_seed under if/|| did not return a status"
 echo "PASS"

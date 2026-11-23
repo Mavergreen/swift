@@ -12,19 +12,26 @@
 #   143 TERM.
 #   Offline: three fixture git repositories stand in for llvm-project, swift and swift-cmark, a fake
 #   shipyard serves their tarballs (made as GitHub makes them, `git archive --prefix=<name>-<commit>/`)
-#   and clones them, and a copy of the repo's pins.env names the fixtures' commits.
+#   and clones them, and a copy of the repo's pins.env names the fixtures' commits. The fourth row,
+#   LINUX_SEED_SHA256, is written only for a seed tarball signed by the pinned key: a fake seed, signed by
+#   a throwaway key, stands in for swift.org's (tests/lib/fake-linux-seed.sh); a seed signed by another key
+#   writes nothing and exits 1. SKIPs (77) without gpg.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 # platform: OS X 10.9's /usr/bin/git is a Command Line Tools stub, there whether or not they are installed.
+command -v gpg >/dev/null 2>&1 || { echo "no gpg -- skipping"; exit 77; }
 git --version >/dev/null 2>&1 || { echo "no git that runs -- skipping"; exit 77; }
 T="$(mktemp -d "${TMPDIR:-/tmp}/pin-source-tarballs.XXXXXX")"
-trap 'rm -rf "$T"' EXIT
+trap 'rm -rf "$T"; fake_seed_cleanup' EXIT
 T="$(CDPATH='' cd -P -- "$T" && pwd -P)"
 REAL_SHIPYARD="$(. "$REPO/msc.sh" 2>/dev/null && echo "$SHIPYARD")" || { echo "no shipyard -- skipping"; exit 77; }
 R="$T/repo"; mkdir -p "$R/scripts" "$T/shipyard" "$T/tarballs" "$T/tmp"
 cp "$REAL_SHIPYARD/mavericks_fetch.sh" "$T/shipyard/"   # shipyard_curl
-cp "$REPO/scripts/pin-source-tarballs.sh" "$R/scripts/"; cp "$REPO/lib.sh" "$REPO/msc.sh" "$R/"
+cp "$REPO/scripts/pin-source-tarballs.sh" "$R/scripts/"; cp "$REPO/lib.sh" "$REPO/msc.sh" "$REPO/fetch-linux-seed.sh" "$R/"
+. "$REPO/tests/lib/fake-linux-seed.sh"
+fake_seed_setup "$T/fakeseed"
+SEED_FPR="$GOOD_FPR"; SEED_SHA="$HASH"
 for n in llvm-project swift swift-cmark; do
   g="$T/up/$n"; mkdir -p "$g/sub"
   git -C "$g" init -q; git -C "$g" config user.email t@t; git -C "$g" config user.name t
@@ -51,12 +58,14 @@ n="\${1##*/}"; n="\${n%.git}"
 git clone -q "$T/up/\$n" "\$4" && [ "\$(git -C "\$4" rev-parse HEAD)" = "\$3" ]
 F
 cp "$T/shipyard/clone_pinned.sh" "$T/clone_pinned.sh"
-pins() { TMPDIR="$T/tmp" SHIPYARD_SCRIPTS="$T/shipyard" sh "$R/scripts/pin-source-tarballs.sh" "$@"; }
+SEED_SIG="file://$SRV/good.sig"
+pins() { TMPDIR="$T/tmp" SHIPYARD_SCRIPTS="$T/shipyard" TEST_ONLY_LINUX_SEED_URL="file://$SRV/seed.tar.gz" TEST_ONLY_LINUX_SEED_SIG_URL="$SEED_SIG" \
+  TEST_ONLY_LINUX_SEED_KEYRING_URL="file://$SRV/keys.asc" TEST_ONLY_LINUX_SEED_KEY_FPR="$SEED_FPR" sh "$R/scripts/pin-source-tarballs.sh" "$@"; }
 run() { rc=0; pins "$@" > "$T/out" 2>&1 || rc=$?; }
 want() { [ "$rc" = "$1" ] || fail "$2: exit $rc, not $1: $(cat "$T/out")"; }
 sum() { shasum -a 256 < "$T/tarballs/$1-$2.tar.gz" | cut -c1-64; }
 # What a run left behind: anything in its TMPDIR, or beside pins.env.
-left() { ls -A "$T/tmp"; ls -A "$R" | grep -vx -e scripts -e lib.sh -e msc.sh -e pins.env || true; }
+left() { ls -A "$T/tmp"; ls -A "$R" | grep -vx -e scripts -e lib.sh -e msc.sh -e fetch-linux-seed.sh -e pins.env || true; }
 # swift's tarball: its commit's tree, changed by the shell command $1 run in it.
 swift_tarball() {
   rm -rf "$T/fake"; mkdir -p "$T/fake"
@@ -80,7 +89,8 @@ run; want 0 "a first run"
 grep -qx "LLVM_TARBALL_SHA256=\"$(sum llvm-project "$C_llvm_project")\"" "$R/pins.env" || fail "LLVM_TARBALL_SHA256: $(grep LLVM_TARBALL "$R/pins.env")"
 grep -qx "SWIFT_TARBALL_SHA256=\"$(sum swift "$C_swift")\"" "$R/pins.env" || fail "SWIFT_TARBALL_SHA256: $(grep SWIFT_TARBALL "$R/pins.env")"
 grep -qx "CMARK_TARBALL_SHA256=\"$(sum swift-cmark "$C_swift_cmark")\"" "$R/pins.env" || fail "CMARK_TARBALL_SHA256: $(grep CMARK_TARBALL "$R/pins.env")"
-[ "$(diff "$T/before" "$R/pins.env" | grep -c '^[<>]')" = 6 ] || fail "changed more than the three pins: $(diff "$T/before" "$R/pins.env")"
+grep -qx "LINUX_SEED_SHA256=\"$SEED_SHA\"" "$R/pins.env" || fail "LINUX_SEED_SHA256: $(grep LINUX_SEED_SHA256 "$R/pins.env")"
+[ "$(diff "$T/before" "$R/pins.env" | grep -c '^[<>]')" = 8 ] || fail "changed more than the four pins: $(diff "$T/before" "$R/pins.env")"
 cp "$R/pins.env" "$T/after"; touch -t 200001010000 "$R/pins.env"
 run; want 0 "a second run"
 cmp -s "$T/after" "$R/pins.env" && [ -z "$(find "$R/pins.env" -newer "$T/after")" ] || fail "a second run, the pins current, rewrote pins.env"
@@ -92,6 +102,23 @@ cp "$T/stale" "$R/pins.env"
 run --check; want 3 "--check on a stale SWIFT_TARBALL_SHA256"
 grep -q "pins.env's SWIFT_TARBALL_SHA256 is 0000" "$T/out" || fail "did not name the stale pin: $(cat "$T/out")"
 cmp -s "$T/stale" "$R/pins.env" || fail "--check wrote pins.env"
+
+echo "-- the Linux seed: a stale hash is named by --check; a seed signed by another key writes nothing, exit 1"
+cp "$R/pins.env" "$T/seedbase"
+sed "s/^LINUX_SEED_SHA256=\"[0-9a-f]*\"/LINUX_SEED_SHA256=\"$Z\"/" "$T/seedbase" > "$T/seedstale"
+cp "$T/seedstale" "$R/pins.env"
+run --check; want 3 "--check on a stale LINUX_SEED_SHA256"
+grep -q "pins.env's LINUX_SEED_SHA256 is 0000" "$T/out" || fail "did not name the stale seed pin: $(cat "$T/out")"
+cmp -s "$T/seedstale" "$R/pins.env" || fail "--check wrote pins.env"
+SEED_SIG="file://$SRV/other.sig"
+run; want 1 "a seed signed by another key"
+grep -q "not signed by the pinned key" "$T/out" || fail "a badly signed seed named no signature failure: $(cat "$T/out")"
+cmp -s "$T/seedstale" "$R/pins.env" || fail "a badly signed seed wrote pins.env"
+[ -z "$(left)" ] || fail "a badly signed seed left: $(left)"
+SEED_SIG="file://$SRV/good.sig"
+run; want 0 "a bumped seed, signed by the pinned key"
+grep -qx "LINUX_SEED_SHA256=\"$SEED_SHA\"" "$R/pins.env" || fail "the seed's hash was not written: $(grep LINUX_SEED_SHA256 "$R/pins.env")"
+cp "$T/stale" "$R/pins.env"   # swift-stale again, as the next section expects
 
 echo "-- a tarball that is not its commit's tree is refused: exit 1, nothing written, nothing left"
 # Each a tarball git status alone (with a macOS git's defaults) passes but for the first.

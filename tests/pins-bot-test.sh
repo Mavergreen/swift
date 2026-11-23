@@ -40,6 +40,10 @@ git -C "$R" checkout -q main; edit CMARK_TARBALL_SHA256 "$Z"; git -C "$R" commit
 git -C "$R" checkout -q -b renovate/swift HEAD~1; edit SWIFT_SHA 1111111111111111111111111111111111111111; git -C "$R" commit -qam swift
 bot moved main > "$T/out" || fail "a moved SWIFT_SHA was not seen"
 [ "$(grep -c '^[-+]SWIFT_SHA=' "$T/out")" = 2 ] && [ "$(wc -l < "$T/out" | tr -d ' ')" = 2 ] || fail "moved printed: $(cat "$T/out")"
+# The seed's hash alone is a source pin line too: a stale one moves with the bump.
+git -C "$R" checkout -q -b renovate/seed main; edit LINUX_SEED_SHA256 "$Z"; git -C "$R" commit -qam seed
+bot moved main | grep -q '^+LINUX_SEED_SHA256=' || fail "a moved LINUX_SEED_SHA256 was not seen"
+git -C "$R" checkout -q renovate/swift; git -C "$R" branch -qD renovate/seed
 # A git whose diff fails cannot tell: exit 2, never 1 ("no source pin moved").
 mkdir -p "$T/faildiff"
 printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = diff ] && { echo "fatal: no diff today" >&2; exit 128; }; done\nexec "%s" "$@"\n' \
@@ -49,19 +53,20 @@ rc=0; (PATH="$T/faildiff:$PATH"; bot moved main) > "$T/out" 2> "$T/err" || rc=$?
 [ "$rc" -eq 2 ] && [ ! -s "$T/out" ] || fail "moved, a failed git diff: exit $rc, printed [$(cat "$T/out")]"
 grep -q 'pins-bot: git diff .* failed' "$T/err" || fail "moved, a failed git diff: said [$(cat "$T/err")]"
 
-echo "-- values: the three pins on one line; a bad one refused"
-[ "$(bot values)" = "$(. "$REPO/pins.env" && echo "LLVM_TARBALL_SHA256=$LLVM_TARBALL_SHA256 SWIFT_TARBALL_SHA256=$SWIFT_TARBALL_SHA256 CMARK_TARBALL_SHA256=$CMARK_TARBALL_SHA256")" ] \
+echo "-- values: the four pins on one line; a bad one refused"
+[ "$(bot values)" = "$(. "$REPO/pins.env" && echo "LLVM_TARBALL_SHA256=$LLVM_TARBALL_SHA256 SWIFT_TARBALL_SHA256=$SWIFT_TARBALL_SHA256 CMARK_TARBALL_SHA256=$CMARK_TARBALL_SHA256 LINUX_SEED_SHA256=$LINUX_SEED_SHA256")" ] \
   || fail "values: $(bot values)"
 edit CMARK_TARBALL_SHA256 abc
 if bot values > /dev/null 2> "$T/err"; then fail "handed on CMARK_TARBALL_SHA256=abc"; fi
 grep -q "CMARK_TARBALL_SHA256 is 'abc'" "$T/err" || fail "values: $(cat "$T/err")"
 cp "$REPO/pins.env" "$R/pins.env"
 
-echo "-- apply: the three lines, nothing else; unchanged when they hold the values; refusals write nothing"
+echo "-- apply: the four lines, nothing else; unchanged when they hold the values; refusals write nothing"
 cp "$R/pins.env" "$T/before"
 [ "$(bot apply LLVM_TARBALL_SHA256=$Z SWIFT_TARBALL_SHA256=$Z)" = changed ] || fail "apply did not say changed"
 [ "$(diff "$T/before" "$R/pins.env" | grep -c '^>')" = 2 ] || fail "apply changed: $(diff "$T/before" "$R/pins.env")"
 grep -qx "SWIFT_TARBALL_SHA256=\"$Z\"" "$R/pins.env" || fail "SWIFT_TARBALL_SHA256 not written"
+[ "$(bot apply LINUX_SEED_SHA256=$Z)" = changed ] && grep -qx "LINUX_SEED_SHA256=\"$Z\"" "$R/pins.env" || fail "LINUX_SEED_SHA256 not written by apply"
 [ "$(bot apply SWIFT_TARBALL_SHA256=$Z)" = unchanged ] || fail "a second apply of the same value changed pins.env"
 cp "$R/pins.env" "$T/now"
 for bad in "SWIFT_SHA=$Z" "SWIFT_TARBALL_SHA256=${Z%0}" "SWIFT_TARBALL_SHA256=$Z SWIFT_TARBALL_SHA256=$Z" "LLVM_TARBALL_SHA256=\$(touch $T/pwned)"; do
@@ -95,7 +100,7 @@ fill main 0 0 || fail "fill, --check current: exit $? ($(cat "$T/err"))"
 cmp -s "$T/now" "$R/pins.env" || fail "fill, --check current: pins.env changed"
 fill main 3 0 || fail "fill, --check stale: exit $? ($(cat "$T/err"))"
 [ "$(calls)" = "--check write" ] || fail "fill, --check stale: calls [$(calls)]"
-[ "$(cat "$T/out")" = "$(. "$R/pins.env" && echo "LLVM_TARBALL_SHA256=$LLVM_TARBALL_SHA256 SWIFT_TARBALL_SHA256=$E CMARK_TARBALL_SHA256=$CMARK_TARBALL_SHA256")" ] \
+[ "$(cat "$T/out")" = "$(. "$R/pins.env" && echo "LLVM_TARBALL_SHA256=$LLVM_TARBALL_SHA256 SWIFT_TARBALL_SHA256=$E CMARK_TARBALL_SHA256=$CMARK_TARBALL_SHA256 LINUX_SEED_SHA256=$LINUX_SEED_SHA256")" ] \
   || fail "fill, --check stale: handed on [$(cat "$T/out")]"
 cp "$T/now" "$R/pins.env"
 for rc in 1 2 130 143 7; do
