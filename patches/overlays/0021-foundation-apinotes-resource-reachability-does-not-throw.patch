@@ -1,6 +1,6 @@
 --- apinotes/Foundation.apinotes
 +++ apinotes/Foundation.apinotes
-@@ -260,6 +260,12 @@
+@@ -275,6 +275,12 @@
  - Name: NSURL
    SwiftBridge: URL
    Methods:

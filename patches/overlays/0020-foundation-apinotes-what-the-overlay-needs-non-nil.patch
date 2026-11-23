@@ -25,7 +25,36 @@
    - Selector: 'rangeOfData:options:range:'
      SwiftName: range(of:options:in:)
      MethodKind: Instance
-@@ -122,6 +130,23 @@
+@@ -106,6 +114,15 @@
+     SwiftName: setUserInfoValueProvider(forDomain:provider:)
+     MethodKind: Class
+ - Name: NSDictionary
++  Methods:
++  # Mavericks: 10.9's headers carry no nullability, so what the overlay relies on never being nil is said so here, as later SDKs say it
++  - Selector: 'initWithObjects:forKeys:count:'
++    MethodKind: Instance
++    Parameters:
++    - Position: 0
++      Type: 'id _Nonnull const * _Nullable'
++    - Position: 1
++      Type: 'id<NSCopying> _Nonnull const * _Nullable'
+   SwiftBridge: Swift.Dictionary
+   SwiftImportAsNonGeneric: true
+ - Name: NSMutableDictionary
+@@ -114,6 +131,12 @@
+   SwiftBridge: Swift.Set
+   SwiftImportAsNonGeneric: true
+   Methods:
++  # Mavericks: 10.9's headers carry no nullability, so what the overlay relies on never being nil is said so here, as later SDKs say it
++  - Selector: 'initWithObjects:count:'
++    MethodKind: Instance
++    Parameters:
++    - Position: 0
++      Type: 'id _Nonnull const * _Nullable'
+   - Selector: 'filteredSetUsingPredicate:'
+     SwiftName: filtered(using:)
+     MethodKind: Instance
+@@ -122,6 +145,23 @@
  - Name: NSString
    SwiftBridge: Swift.String
    Methods:
@@ -49,7 +78,7 @@
    - Selector: 'uppercaseStringWithLocale:'
      SwiftName: uppercased(with:)
      MethodKind: Instance
-@@ -291,6 +316,13 @@
+@@ -291,6 +331,13 @@
  - Name: NSUUID
    SwiftBridge: UUID
  - Name: NSIndexSet
@@ -63,7 +92,7 @@
    SwiftBridge: IndexSet
  - Name: NSIndexPath
    SwiftBridge: IndexPath
-@@ -568,6 +600,16 @@
+@@ -568,6 +615,16 @@
  - Name: NSLocale
    SwiftBridge: Locale
  - Name: NSTimeZone
@@ -80,7 +109,7 @@
    SwiftBridge: TimeZone
  - Name: NSCalendar
    SwiftBridge: Calendar
-@@ -578,9 +620,13 @@
+@@ -578,9 +635,13 @@
    - Selector: 'dateWithEra:yearForWeekOfYear:weekOfYear:weekday:hour:minute:second:nanosecond:'
      SwiftName: date(era:yearForWeekOfYear:weekOfYear:weekday:hour:minute:second:nanosecond:)
      MethodKind: Instance
@@ -94,7 +123,7 @@
    - Selector: 'isDateInToday:'
      SwiftName: isDateInToday(_:)
      MethodKind: Instance
-@@ -769,6 +815,13 @@
+@@ -769,6 +830,13 @@
  - Name: NSScanner
    SwiftName: Scanner
    Methods:

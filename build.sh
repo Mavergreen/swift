@@ -381,9 +381,8 @@ FOUNDATION_SDK_METADATA="foundation-array-generics-v2 foundation-dictionary-gene
   foundation-orderedset-generics-v1 foundation-maptable-generics-v1 foundation-enumerator-generics-v1
   foundation-directoryenumerator-generics-v1 foundation-objcruntime-macros-v1 foundation-rectedge-v1
   foundation-locale-codes-v1 foundation-processinfo-version-v1"
-SDK_PLAIN="$(sh "$SHIPYARD/fetch_sdk.sh")" || { echo "FAIL: could not fetch the 10.9 SDK"; exit 1; }
 # shellcheck disable=SC2086  # space-free recipe ids
-recaulk_sdk_metadata_vfs "$SDK_PLAIN" "$SDK_OVERLAYS" "$RECAULK_PREFIX/share/sdk-metadata/recipes.json" "$ROOT/overlays/sdk-metadata" \
+recaulk_sdk_metadata_vfs "$SDK_OVERLAYS" "$RECAULK_PREFIX/share/sdk-metadata/recipes.json" "$ROOT/overlays/sdk-metadata" \
   $FOUNDATION_SDK_METADATA || { echo "FAIL: could not materialize Recaulk's sdk-metadata recipes"; exit 1; }
 echo "    Recaulk $RECAULK_VERSION sdk-metadata: $ROOT/overlays/sdk-metadata/overlay.json"
 # host_object <object> clang|clang++ <source> [<flag>...] -- <source> compiled by the host clang against the

@@ -210,4 +210,20 @@ bad="$(grep -nE 'ISO8601DateFormatter|NSDateInterval|URLQueryItem|PersonNameComp
   "$O"/Foundation/*.swift "$O"/Foundation/shims/*.h "$O"/CoreFoundation/shims/*.h | grep -vE '^[^:]*:[0-9]+: *//' || true)"
 [ -z "$bad" ] || fail "a source still names what 10.9 lacks: $bad"
 
+echo "-- nor calls a method or names a constant the patches remove, outside a comment"
+# 10.10-and-later NSURL, NSString, NSCoder, NSKeyedUnarchiver, NSUndoManager, NSProgress, NSURLRequest, NSURLCache,
+# NSError and NSURLComponents API; 10.13's getValue:size: and 10.11's NSFoundationVersionNumber10_11_Max; Combine's coders.
+gone='failWithError|userInfoValueProvider|getValue\([^)]*size:|NSFoundationVersionNumber10_11_Max|checkPromisedItemIsReachable'
+gone="$gone"'|promisedItemResourceValues|allowsExpensiveNetworkAccess|allowsConstrainedNetworkAccess|localizedCapitalized'
+gone="$gone"'|localizedUppercase|localizedLowercase|localizedStandardContains|estimatedTimeRemaining|fileTotalCount|fileCompletedCount'
+gone="$gone"'|resolvingAliasFileAt|dataRepresentation|fileURLWithPath: [^)]*relativeTo|directory: URL|queryItems|QueryItems'
+gone="$gone"'|rangeOf(Fragment|Host|Password|Path|Port|Query|Scheme|User)|unarchivedObject|unarchiveTopLevelObjectWithData'
+gone="$gone"'|decodeTopLevelDecodable|getIndexes\([^)]*range:|registerUndo\(withTarget|TopLevelEncoder|TopLevelDecoder'
+gone="$gone"'|__NSCoderDecodeObject(ForKey)?\(|__NSKeyedUnarchiver|__NSUndoManagerRegisterWithTargetHandler'
+gone="$gone"'|NSURLErrorBackgroundTaskCancelledReasonKey|NSURLErrorNetworkUnavailableReasonKey'
+for f in "$O"/Foundation/*.swift "$O"/Foundation/shims/*.h "$O"/CoreFoundation/shims/*.h; do
+  bad="$(sed -e 's|^[[:space:]]*//.*||' -e 's|[[:space:]]//.*||' "$f" | grep -nE "$gone" || true)"
+  [ -z "$bad" ] || fail "${f##*/} still calls or names what its patch removes: $bad"
+done
+
 echo "PASS"
