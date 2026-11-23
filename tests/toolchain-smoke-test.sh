@@ -10,9 +10,10 @@
 #   native toolchain, beside its installed runtime), runs it; compiles and links a program that imports Foundation
 #   and calls what only the SDK view the Foundation overlays were built with declares (attributesOfItem(atPath:)'s
 #   FileAttributeKey, NSURL's host property, Notification.Name), which loads libswiftFoundation, and on 10.9 runs
-#   it: until this toolchain's swiftc applies that view itself, that case, and the corpus's tests that import
-#   Foundation, are left out and the run ends in a SKIP naming the missing view, unless SWIFT_WRAPPER_SDK_VIEW=1
-#   says the wrapper applies it; links Recaulk (lib/recaulk, pins.env's
+#   it: until this toolchain's swiftc applies that view itself, that case, and the corpus's tests marked
+#   `// selftest: needs the SDK view` (lib.sh's selftest_corpus_without_view), are left out and the run ends in a
+#   SKIP naming the missing view and the tests left out, unless SWIFT_WRAPPER_SDK_VIEW=1 says the wrapper applies
+#   it; links Recaulk (lib/recaulk, pins.env's
 #   RECAULK_VERSION) into a program and a dylib, each defining Recaulk's fma, fmal and truncl, hidden,
 #   the program still taking puts and malloc from libSystem, while -c compiles alone; then builds the gate corpus through
 #   make-selftest.sh's SWIFTC= mode, and its clang links C that uses @available (its builtins archive is
@@ -32,7 +33,7 @@
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
-. "$REPO/lib.sh"     # -> $SWIFT_BUILD, toolchain_host_select, macho_version, macho_rpaths
+. "$REPO/lib.sh"     # -> $SWIFT_BUILD, toolchain_host_select, macho_version, macho_rpaths, selftest_corpus_without_view
 HOST="${STAGE_HOST:-x86_64}"
 toolchain_host_select "$HOST" || exit 2
 if [ "$HOST" = arm64 ]; then
@@ -123,7 +124,7 @@ F
     [ "$out" = "foundation ok" ] || fail "the Foundation program printed '$out', not 'foundation ok'"
   fi
 else
-  FOUNDATION_SKIP="its swiftc wrapper does not yet apply the SDK view the Foundation overlays were built with (no wrapper view), so no program that imports Foundation was built (SWIFT_WRAPPER_SDK_VIEW=1 once it does)"
+  FOUNDATION_SKIP="its swiftc wrapper does not yet apply the SDK view the Foundation overlays were built with (no wrapper view), so no program that imports Foundation was built"
   echo "-- skipped: $FOUNDATION_SKIP"
 fi
 
@@ -161,11 +162,11 @@ done
 echo "-- it builds the gate corpus through make-selftest.sh"
 CORPUS="$REPO/tests"
 if [ -n "$FOUNDATION_SKIP" ]; then
-  # The tests that import Foundation wait for the wrapper's view, as the case above does.
-  CORPUS="$T/corpus"; mkdir "$CORPUS"
-  for f in "$REPO"/tests/*.swift; do
-    if grep -q '^import Foundation$' "$f"; then echo "   left out: ${f##*/}"; else cp "$f" "$CORPUS/"; fi
-  done
+  # The tests that need the view wait for the wrapper's, as the case above does.
+  CORPUS="$T/corpus"
+  LEFT="$(selftest_corpus_without_view "$REPO/tests" "$CORPUS")" || fail "could not lay out the corpus without the view's tests"
+  echo "   left out:$LEFT"
+  FOUNDATION_SKIP="$FOUNDATION_SKIP, and the gate corpus left out$LEFT"
 fi
 SWIFTC="$COPY" SELFTEST_SRC="$CORPUS" DIST="$T/dist" sh "$REPO/make-selftest.sh" || fail "make-selftest.sh could not build the gate corpus"
 tar -xzf "$T/dist/swift-runtime-selftest.tar.gz" -C "$T" || fail "cannot unpack the self-test bundle"
@@ -276,5 +277,5 @@ for d in clang clang++; do
   case "$line" in *'"-platform_version" "macos" "10.9.0"'*'"-U" "__availability_version_check"'*) ;;
     *) fail "the shim's $d lost the cfg's -mmacosx-version-min=10.9 or -U: $line" ;; esac
 done
-if [ -n "$FOUNDATION_SKIP" ]; then echo "SKIP: $FOUNDATION_SKIP"; exit 77; fi
+if [ -n "$FOUNDATION_SKIP" ]; then echo "SKIP: $FOUNDATION_SKIP (SWIFT_WRAPPER_SDK_VIEW=1 once it applies the view)"; exit 77; fi
 echo "PASS"

@@ -11,7 +11,11 @@
 #          in Swift 6 mode, after the first build's flags, into bin/<name>-swift6 and bin/<name>-swift6-Onone,
 #          for a test whose code must compile as a Swift 6 client too; any other flags there fail the bundle.
 #          A test whose first line is `// selftest: skip: <reason>` is built
-#          in neither mode, saying why (none is so marked today).
+#          in neither mode, saying why (none is so marked today). A leading comment line
+#          `// selftest: needs the SDK view` marks a test that compiles only against the SDK view the
+#          Foundation overlays were built with (SDK_VIEW below); it is built like any other here, and
+#          tests/toolchain-smoke-test.sh leaves it out of the corpus it builds while the toolchain's own
+#          swiftc does not apply that view.
 #          Two compilers:
 #            default          the swift.org toolchain build.sh expanded, for x86_64-apple-macosx10.9,
 #                             -no-stdlib-rpath and one rpath, $SWIFT_RUNTIME_PREFIX/lib/swift

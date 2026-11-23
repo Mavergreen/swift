@@ -5,7 +5,7 @@
        result = Dictionary(_unsafeUninitializedCapacity: numElems,
          allowingDuplicates: handleDuplicates) { keys, vals in
 +        // Mavericks: an empty NSDictionary is an empty Dictionary: for no
-+        // elements the stdlib this overlay runs on passes nil buffers.
++        // elements the stdlib it is built against (6.4's) passes nil buffers.
 +        guard numElems > 0 else { return 0 }
          
          let objectKeys = UnsafeMutableRawPointer(mutating:
@@ -15,7 +15,7 @@
      let tmpResult = Dictionary(_unsafeUninitializedCapacity: numElems,
        allowingDuplicates: handleDuplicates) { keys, vals in
 +      // Mavericks: an empty NSDictionary is an empty Dictionary: for no
-+      // elements the stdlib this overlay runs on passes nil buffers.
++      // elements the stdlib it is built against (6.4's) passes nil buffers.
 +      guard numElems > 0 else { return 0 }
        
        let objectKeys = UnsafeMutableRawPointer(mutating:

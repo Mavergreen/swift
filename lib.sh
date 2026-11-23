@@ -714,16 +714,36 @@ compiler_patches() {
   [ "$_cp_n" -gt 0 ] || { echo "compiler_patches: no $1 patches in $2" >&2; return 1; }
 }
 
+# selftest_corpus_without_view <tests-dir> <out-dir> -- copies each <tests-dir>/*.swift into <out-dir> but those
+# whose leading comment lines hold `// selftest: needs the SDK view` (make-selftest.sh's usage), and prints the
+# names of those it leaves out, each after a space, on one line: the corpus a swiftc that does not apply the SDK
+# view the Foundation overlays were built with can build.
+selftest_corpus_without_view() {
+  mkdir -p "$2" || return 1
+  _cv_left=""
+  for _cv_f in "$1"/*.swift; do
+    [ -f "$_cv_f" ] || continue
+    if sed -n '/^\/\//!q; p' "$_cv_f" | grep -qx '// selftest: needs the SDK view'; then
+      _cv_left="$_cv_left ${_cv_f##*/}"
+    else
+      cp "$_cv_f" "$2/" || return 1
+    fi
+  done
+  printf '%s\n' "$_cv_left"
+}
+
 # toolchain_digest <toolchain-prefix> -- one line of `<path>=<sha256>` entries, one space apart, sorted by
 # <path> (relative to the prefix), for every file under toolchain_stdlib_trees with lib/clang/<v>/lib: the
 # stdlib's dylibs, the swiftmodules whose inlinable code lands in every program a toolchain builds, the shims,
-# the API notes (Dispatch's, Foundation's and CoreGraphics') and Recaulk's dispatch declarations (what the importer shows every program of Dispatch),
-# the builtins archive, and Recaulk's archive (which the ld
+# the API notes (Dispatch's, Foundation's and CoreGraphics') and Recaulk's dispatch declarations (what the
+# importer shows every program of Dispatch), the builtins archive, and Recaulk's archive (which the ld
 # wrapper links into every program) with its notices and version. The two toolchain pkgs must carry them byte for
 # byte: in CI build-cross builds them once and stages them in the cross toolchain, and build stages the
 # cross pkg's copy in the native one, so a difference is a staging fault; each job digests what it
-# staged, and collect compares the two. Fails, naming it, when an anchor (the nine dylibs, Swift's, Darwin's,
-# ObjectiveC's, Dispatch's, CoreFoundation's, CoreGraphics', Foundation's, _Concurrency's and _Builtin_float's swiftmodule, the shims' module.modulemap, the three API notes, Recaulk's dispatch.h for the importer, the builtins archive, Recaulk's archive and notices) is missing, or a tree holds a link, a
+# staged, and collect compares the two. Fails, naming it, when an anchor is missing (the nine dylibs; Swift's,
+# Darwin's, ObjectiveC's, Dispatch's, CoreFoundation's, CoreGraphics', Foundation's, _Concurrency's and
+# _Builtin_float's swiftmodule; the shims' module.modulemap; the three API notes; Recaulk's dispatch.h for the
+# importer; the builtins archive; Recaulk's archive and notices), or a tree holds a link, a
 # path with a space, or a file that cannot be hashed: two jobs that each printed nothing, or less than
 # the whole trees, must never compare equal.
 toolchain_digest() {

@@ -13,7 +13,8 @@
 #   source must fail naming the file; --recaulk-importer and --apinotes must reach the compile as
 #   `-Xcc -ivfsoverlay -Xcc <work>/recaulk-vfs.yaml`, a YAML naming the SDK and the importer, and as
 #   `-Xcc -iapinotes-modules -Xcc <dir>` (a recording driver stands in, so Dispatch's headers are not needed), and
-#   a missing directory fails naming it; --flag must hand a word to the compile; and two build roots must give the same bytes (the prefix maps,
+#   a missing directory fails naming it; a module with a call the compiler warns recurses forever must be refused,
+#   its warning shown and no dylib left; --flag must hand a word to the compile; and two build roots must give the same bytes (the prefix maps,
 #   and compiler patch 0004, without which an escaping-closure check carried the length of the source's path).
 #   SKIPs (77) without SWIFT_HOST_TOOLCHAIN, a shipyard, or a host that can run that toolchain. Reads with
 #   OTOOL, NM and STRINGS, else otool, nm and strings, unless those are the Command Line Tools' stubs (OS X
@@ -138,6 +139,14 @@ for o in --recaulk-importer --apinotes; do
     "$o" "$T/no-such-dir" -- "$T/r3/work/src/Tiny.swift" > "$T/log6" 2>&1; then fail "built with $o naming no directory"; fi
   grep -q "$T/no-such-dir" "$T/log6" || fail "$o's missing directory was not named: $(cat "$T/log6")"
 done
+
+echo "-- a module whose code calls itself forever is refused, naming the call (the compiler only warns)"
+printf '%s\n' 'public struct Loops { public var d: String { return self.d } }' > "$T/r1/work/src/Loops.swift"
+if build "$T/r1" "$T/r1/work/src/Loops.swift" > "$T/log7" 2>&1; then fail "built a module with an infinite recursion: $(cat "$T/log7")"; fi
+grep -q 'Loops.swift:1:.*infinite recursion' "$T/log7" || fail "the compiler's warning, naming the file, is not shown: $(cat "$T/log7")"
+grep -q '^build-module.sh: Tiny calls itself forever' "$T/log7" || fail "build-module.sh did not say why it refused Tiny: $(cat "$T/log7")"
+[ ! -e "$T/r1/work/out/x86_64/libswiftTiny.dylib" ] || fail "a refused Tiny's dylib was left in --out"
+build "$T/r1" > "$T/log7" 2>&1 || { cat "$T/log7"; fail "Tiny without the recursion failed after it"; }
 
 echo "-- a missing source fails, naming it"
 if build "$T/r1" "$T/r1/work/src/Absent.swift" > "$T/log2" 2>&1; then fail "built with a missing source"; fi

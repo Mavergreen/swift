@@ -1,4 +1,5 @@
 // selftest: also -swift-version 6
+// selftest: needs the SDK view
 // foundation_overlay_test.swift — the Foundation, CoreFoundation and CoreGraphics overlays (Swift 5.4's) on 10.9.
 //
 // `import Foundation` here is libswiftFoundation.dylib's module over 10.9's own Foundation.framework, read
@@ -50,9 +51,12 @@ func bridgingBothWays() {
   check(("héllo" as NSString) as String == "héllo", "bridgingBothWays: String through NSString")
   check(([1, 2, 3] as NSArray).count == 3, "bridgingBothWays: [Int] as NSArray has count 3")
   check((["a": 1] as NSDictionary)["a"] as? Int == 1, "bridgingBothWays: NSDictionary's \"a\" is 1")
-  // An empty one, by both of NSDictionary's in-place bridges: as? (conditional) and as! (forced).
+  // An empty one, by both of NSDictionary's in-place bridges: a cast (as?, as!: the conditional bridge), and an
+  // Objective-C method's NSDictionary result (the unconditional bridge, which returns hand to Swift).
   check((NSDictionary() as? [String: Any])?.isEmpty == true, "bridgingBothWays: an empty NSDictionary as? [String: Any]")
   check((NSDictionary() as! [String: Any]).isEmpty, "bridgingBothWays: an empty NSDictionary as! [String: Any]")
+  let none = NSDictionary().dictionaryWithValues(forKeys: [])
+  check(none?.isEmpty == true, "bridgingBothWays: dictionaryWithValues(forKeys: []) is \(String(describing: none)), not empty")
   check((Data([1, 2, 3]) as NSData).length == 3, "bridgingBothWays: Data as NSData has length 3")
   let host = (URL(string: "https://e.x/p")! as NSURL).host
   check(host == "e.x", "bridgingBothWays: URL as NSURL has host e.x, not \(host ?? "nil")")

@@ -125,6 +125,7 @@ UNXFLAGS=""; [ -z "$UNX" ] || UNXFLAGS="-Xlinker -unexported_symbols_list -Xlink
 # shellcheck disable=SC2086  # every word is space-free: the build root (lib.sh refuses whitespace), the
 #                              SDK cache, the toolchain prefix, each --flag (one word apiece), and the importer's
 #                              and apinotes' directories
+_bm_rc=0
 "$SWIFTC" -sdk "$SDK" -target "$ARCH-apple-macosx$DEPLOYMENT" -resource-dir "$RES" \
   -I "$OUT" $INCS -L "$OUT/$ARCH" -L "$RES/macosx/$ARCH" -L "$RES/macosx" \
   -module-cache-path "$WORK/module-cache" -tools-directory "$WORK/tools" -ld-path="$LLD" \
@@ -139,4 +140,13 @@ UNXFLAGS=""; [ -z "$UNX" ] || UNXFLAGS="-Xlinker -unexported_symbols_list -Xlink
   -emit-module-path "$OUT/$NAME.swiftmodule/$ARCH-apple-macos.swiftmodule" -avoid-emit-module-source-info \
   -Xlinker -S -Xlinker -install_name -Xlinker "@rpath/lib$LINKNAME.dylib" -Xlinker -compatibility_version -Xlinker 1 \
   -Xlinker -headerpad_max_install_names $LINKS $UNXFLAGS \
-  -o "$OUT/$ARCH/lib$LINKNAME.dylib" "$@"
+  -o "$OUT/$ARCH/lib$LINKNAME.dylib" "$@" 2> "$WORK/compile.log" || _bm_rc=$?
+cat "$WORK/compile.log" >&2
+[ "$_bm_rc" -eq 0 ] || exit "$_bm_rc"
+# spec: "The overlays" -- a call that recurses forever is only a warning to the compiler, and a module that has one
+#       (an SDK view whose nullability turned an overlay's NSError.localizedDescription into a call to itself, say)
+#       would crash its client: it is refused, and what it built removed.
+if grep -q 'warning: function call causes an infinite recursion' "$WORK/compile.log"; then
+  rm -rf "$OUT/$NAME.swiftmodule" "$OUT/$ARCH/lib$LINKNAME.dylib"
+  echo "build-module.sh: $NAME calls itself forever (the warning above) -- refused" >&2; exit 1
+fi

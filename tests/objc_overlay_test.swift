@@ -1,3 +1,4 @@
+// selftest: needs the SDK view
 // objc_overlay_test.swift — the ObjectiveC overlay (swift-5.4's) on 10.9.
 //
 // #selector and Selector, autoreleasepool, ObjCBool and NSObject's ==, Hashable and description, from
