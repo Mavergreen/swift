@@ -41,14 +41,18 @@ rc=0; compiler_patches arm64 "$T/p" > /dev/null 2>&1 || rc=$?; [ "$rc" -eq 1 ] |
 
 echo "-- toolchain_digest: every file of the shared trees, sorted by path, or a failure naming what is wrong"
 P="$T/tc"; M="$P/lib/swift/macosx"
-mkdir -p "$M/Swift.swiftmodule" "$M/Darwin.swiftmodule" "$M/ObjectiveC.swiftmodule" "$M/Dispatch.swiftmodule" "$M/_Concurrency.swiftmodule" "$M/_Builtin_float.swiftmodule" "$P/lib/swift/shims" "$P/lib/swift/apinotes" "$P/lib/swift/recaulk-importer/dispatch" "$P/lib/clang/21/include" "$P/lib/clang/21/lib/darwin" "$P/lib/recaulk" "$P/bin"
+mkdir -p "$M/Swift.swiftmodule" "$M/Darwin.swiftmodule" "$M/ObjectiveC.swiftmodule" "$M/Dispatch.swiftmodule" "$M/CoreFoundation.swiftmodule" "$M/CoreGraphics.swiftmodule" "$M/Foundation.swiftmodule" "$M/_Concurrency.swiftmodule" "$M/_Builtin_float.swiftmodule" "$P/lib/swift/shims" "$P/lib/swift/apinotes" "$P/lib/swift/recaulk-importer/dispatch" "$P/lib/clang/21/include" "$P/lib/clang/21/lib/darwin" "$P/lib/recaulk" "$P/bin"
 echo core > "$M/libswiftCore.dylib"; echo onone > "$M/libswiftSwiftOnoneSupport.dylib"; echo lay > "$M/layouts-x86_64.yaml"
 echo dar > "$M/libswiftDarwin.dylib"; echo objc > "$M/libswiftObjectiveC.dylib"
 echo conc > "$M/libswift_Concurrency.dylib"; echo disp > "$M/libswiftDispatch.dylib"; echo dimod > "$M/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule"
+echo cf > "$M/libswiftCoreFoundation.dylib"; echo cg > "$M/libswiftCoreGraphics.dylib"; echo fd > "$M/libswiftFoundation.dylib"
+echo cfmod > "$M/CoreFoundation.swiftmodule/x86_64-apple-macos.swiftmodule"; echo cgmod > "$M/CoreGraphics.swiftmodule/x86_64-apple-macos.swiftmodule"
+echo fdmod > "$M/Foundation.swiftmodule/x86_64-apple-macos.swiftmodule"
 echo cmod > "$M/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule"; echo bmod > "$M/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule"
 echo dmod > "$M/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule"; echo omod > "$M/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule"
 echo mod > "$M/Swift.swiftmodule/x86_64-apple-macos.swiftmodule"; echo api > "$M/Swift.swiftmodule/x86_64-apple-macos.swiftinterface"
 echo map > "$P/lib/swift/shims/module.modulemap"; echo int > "$P/lib/swift/shims/SwiftStdint.h"
+echo cgapn > "$P/lib/swift/apinotes/CoreGraphics.apinotes"; echo fdapn > "$P/lib/swift/apinotes/Foundation.apinotes"
 echo apn > "$P/lib/swift/apinotes/Dispatch.apinotes"; echo imp > "$P/lib/swift/recaulk-importer/dispatch/dispatch.h"
 echo impm > "$P/lib/swift/recaulk-importer/Dispatch.modulemap"
 echo rt > "$P/lib/clang/21/lib/darwin/libclang_rt.osx.a"
@@ -58,17 +62,22 @@ echo hdr > "$P/lib/clang/21/include/stddef.h"; echo fe > "$P/bin/swift-frontend"
 h() { printf '%s\n' "$1" | shasum -a 256 | awk '{ print $1 }'; }
 want="lib/clang/21/lib/darwin/libclang_rt.osx.a=$(h rt)"
 want="$want lib/recaulk/VERSION=$(h rkv) lib/recaulk/librecaulk.a=$(h rk) lib/recaulk/notices.tsv=$(h rkn)"
-want="$want lib/swift/apinotes/Dispatch.apinotes=$(h apn)"
+want="$want lib/swift/apinotes/CoreGraphics.apinotes=$(h cgapn) lib/swift/apinotes/Dispatch.apinotes=$(h apn)"
+want="$want lib/swift/apinotes/Foundation.apinotes=$(h fdapn)"
+want="$want lib/swift/macosx/CoreFoundation.swiftmodule/x86_64-apple-macos.swiftmodule=$(h cfmod)"
+want="$want lib/swift/macosx/CoreGraphics.swiftmodule/x86_64-apple-macos.swiftmodule=$(h cgmod)"
 want="$want lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule=$(h dmod)"
 want="$want lib/swift/macosx/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule=$(h dimod)"
+want="$want lib/swift/macosx/Foundation.swiftmodule/x86_64-apple-macos.swiftmodule=$(h fdmod)"
 want="$want lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule=$(h omod)"
 want="$want lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftinterface=$(h api)"
 want="$want lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule=$(h mod)"
 want="$want lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule=$(h bmod)"
 want="$want lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule=$(h cmod)"
 want="$want lib/swift/macosx/layouts-x86_64.yaml=$(h lay)"
-want="$want lib/swift/macosx/libswiftCore.dylib=$(h core) lib/swift/macosx/libswiftDarwin.dylib=$(h dar)"
-want="$want lib/swift/macosx/libswiftDispatch.dylib=$(h disp)"
+want="$want lib/swift/macosx/libswiftCore.dylib=$(h core) lib/swift/macosx/libswiftCoreFoundation.dylib=$(h cf)"
+want="$want lib/swift/macosx/libswiftCoreGraphics.dylib=$(h cg) lib/swift/macosx/libswiftDarwin.dylib=$(h dar)"
+want="$want lib/swift/macosx/libswiftDispatch.dylib=$(h disp) lib/swift/macosx/libswiftFoundation.dylib=$(h fd)"
 want="$want lib/swift/macosx/libswiftObjectiveC.dylib=$(h objc) lib/swift/macosx/libswiftSwiftOnoneSupport.dylib=$(h onone)"
 want="$want lib/swift/macosx/libswift_Concurrency.dylib=$(h conc)"
 want="$want lib/swift/recaulk-importer/Dispatch.modulemap=$(h impm) lib/swift/recaulk-importer/dispatch/dispatch.h=$(h imp)"
@@ -88,7 +97,12 @@ for a in lib/clang/21/lib/darwin/libclang_rt.osx.a lib/recaulk/librecaulk.a lib/
          lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule \
          lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule lib/swift/macosx/libswiftDispatch.dylib \
          lib/swift/macosx/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule lib/swift/apinotes/Dispatch.apinotes \
-         lib/swift/recaulk-importer/dispatch/dispatch.h; do
+         lib/swift/recaulk-importer/dispatch/dispatch.h lib/swift/macosx/libswiftCoreFoundation.dylib \
+         lib/swift/macosx/libswiftCoreGraphics.dylib lib/swift/macosx/libswiftFoundation.dylib \
+         lib/swift/macosx/CoreFoundation.swiftmodule/x86_64-apple-macos.swiftmodule \
+         lib/swift/macosx/CoreGraphics.swiftmodule/x86_64-apple-macos.swiftmodule \
+         lib/swift/macosx/Foundation.swiftmodule/x86_64-apple-macos.swiftmodule lib/swift/apinotes/Foundation.apinotes \
+         lib/swift/apinotes/CoreGraphics.apinotes; do
   mv "$P/$a" "$T/held"
   if toolchain_digest "$P" > "$T/out" 2> "$T/err"; then fail "digested a prefix without $a: $(cat "$T/out")"; fi
   grep -q "$P/$a" "$T/err" || fail "did not name the missing $a: $(cat "$T/err")"
@@ -123,7 +137,12 @@ for a in 'lib/clang/21/lib/darwin/libclang_rt.osx.a' 'lib/recaulk/librecaulk.a' 
          'lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule' \
          'lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule' 'lib/swift/macosx/libswiftDispatch.dylib' \
          'lib/swift/macosx/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule' 'lib/swift/apinotes/Dispatch.apinotes' \
-         'lib/swift/recaulk-importer/dispatch/dispatch.h'; do
+         'lib/swift/recaulk-importer/dispatch/dispatch.h' 'lib/swift/macosx/libswiftCoreFoundation.dylib' \
+         'lib/swift/macosx/libswiftCoreGraphics.dylib' 'lib/swift/macosx/libswiftFoundation.dylib' \
+         'lib/swift/macosx/CoreFoundation.swiftmodule/x86_64-apple-macos.swiftmodule' \
+         'lib/swift/macosx/CoreGraphics.swiftmodule/x86_64-apple-macos.swiftmodule' \
+         'lib/swift/macosx/Foundation.swiftmodule/x86_64-apple-macos.swiftmodule' 'lib/swift/apinotes/Foundation.apinotes' \
+         'lib/swift/apinotes/CoreGraphics.apinotes'; do
   part="$(printf '%s\n' "$want" | tr ' ' '\n' | grep -v "^$a=" | tr '\n' ' ' | sed 's/ $//')"
   [ "$part" != "$want" ] || fail "the test did not drop $a"
   if toolchain_digests_agree "$part" "$part" 2> "$T/err"; then fail "accepted two equal lines without $a"; fi

@@ -207,6 +207,9 @@ omark 0043 Foundation/NSObject.swift "Mavericks: 10.9 declares NSKeyValueChange 
 omark 0044 apinotes/CoreGraphics.apinotes "Mavericks: 10.9 declares CGRectEdge a plain C enum"
 omark 0045 Foundation/URL.swift "Mavericks: no isApplication or applicationIsScriptable"
 omark 0046 Foundation/Calendar.swift "Mavericks: NSCalendarIdentifierIslamicTabular and"
+omark 0047 Foundation/NSDictionary.swift "Mavericks: an empty NSDictionary is an empty Dictionary: for no"
+[ "$(grep -c 'guard numElems > 0 else { return 0 }' "$O/Foundation/NSDictionary.swift")" = 2 ] \
+  || fail "patch 0047 does not guard both of NSDictionary.swift's in-place bridges against an empty dictionary"
 
 echo "-- the shims Recaulk's typedefs serve are 5.4's own; the NSCalendar and NSIndexSet blocks are NoEscape"
 for h in NSCalendarShims.h NSFileManagerShims.h; do

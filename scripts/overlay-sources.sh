@@ -172,10 +172,13 @@ done
 #       10.11's value; 0043 NSKeyValueChange is 10.9's NS_OPTIONS, whose init(rawValue:) is not failable; 0045 no URL
 #       resource values whose keys are 10.10 to 10.13; 0046 the two Islamic calendars of 10.10 are named by their
 #       identifiers' values.
+#  0047 Foundation -- an empty NSDictionary bridges to an empty Dictionary: for capacity 0 the stdlib it runs on
+#       (6.4's _NativeDictionary) hands Dictionary(_unsafeUninitializedCapacity:)'s closure nil buffers, whose
+#       base addresses 5.4's in-place bridges force-unwrapped, a trap on every {} JSONDecoder reads.
 #  0042 is retired: Recaulk declares -[NSObject init] nonnull, so an untyped let of its result is not optional.
 OVERLAY_PATCHES="0001 0002 0003 0004 0005 0006 0008 0009 0010 0011 0012 0013 0014 0015 0016 0017 0018 0019 0020 0021
   0022 0023 0024 0025 0026 0027 0028 0029 0030 0031 0032 0033 0034 0035 0036 0037 0038 0039 0040 0041 0043
-  0044 0045 0046"
+  0044 0045 0046 0047"
 PATCHES_DIR="$HERE/patches/overlays"
 UNLISTED="$(runtime_patches_unlisted "$PATCHES_DIR" $OVERLAY_PATCHES)" || {
   [ -z "$UNLISTED" ] || printf '%s\n' "$UNLISTED" >&2
@@ -258,6 +261,7 @@ fmark 0043 stdlib/public/Darwin/Foundation/NSObject.swift "Mavericks: 10.9 decla
 fmark 0044 apinotes/CoreGraphics.apinotes "Mavericks: 10.9 declares CGRectEdge a plain C enum" "coregraphics-apinotes-rect-edge-is-a-closed-enum"
 fmark 0045 stdlib/public/Darwin/Foundation/URL.swift "Mavericks: no isApplication or applicationIsScriptable" "foundation-url-no-post-10.9-resource-keys"
 fmark 0046 stdlib/public/Darwin/Foundation/Calendar.swift "Mavericks: NSCalendarIdentifierIslamicTabular and" "foundation-calendar-names-the-10.10-islamic-calendars-by-value"
+fmark 0047 stdlib/public/Darwin/Foundation/NSDictionary.swift "Mavericks: an empty NSDictionary is an empty Dictionary: for no" "foundation-dictionary-bridges-an-empty-nsdictionary"
 cp "$P/ObjectiveC.swift" "$OUT/ObjectiveC/"
 for f in $DFILES; do cp "$PD/$f" "$OUT/Dispatch/"; done
 cp "$PS/DispatchOverlayShims.h" "$OUT/Dispatch/shims/"

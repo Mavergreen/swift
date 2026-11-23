@@ -717,13 +717,13 @@ compiler_patches() {
 # toolchain_digest <toolchain-prefix> -- one line of `<path>=<sha256>` entries, one space apart, sorted by
 # <path> (relative to the prefix), for every file under toolchain_stdlib_trees with lib/clang/<v>/lib: the
 # stdlib's dylibs, the swiftmodules whose inlinable code lands in every program a toolchain builds, the shims,
-# Dispatch.apinotes and Recaulk's dispatch declarations (what the importer shows every program of Dispatch),
+# the API notes (Dispatch's, Foundation's and CoreGraphics') and Recaulk's dispatch declarations (what the importer shows every program of Dispatch),
 # the builtins archive, and Recaulk's archive (which the ld
 # wrapper links into every program) with its notices and version. The two toolchain pkgs must carry them byte for
 # byte: in CI build-cross builds them once and stages them in the cross toolchain, and build stages the
 # cross pkg's copy in the native one, so a difference is a staging fault; each job digests what it
-# staged, and collect compares the two. Fails, naming it, when an anchor (the six dylibs, Swift's, Darwin's,
-# ObjectiveC's, Dispatch's, _Concurrency's and _Builtin_float's swiftmodule, the shims' module.modulemap, Dispatch.apinotes, Recaulk's dispatch.h for the importer, the builtins archive, Recaulk's archive and notices) is missing, or a tree holds a link, a
+# staged, and collect compares the two. Fails, naming it, when an anchor (the nine dylibs, Swift's, Darwin's,
+# ObjectiveC's, Dispatch's, CoreFoundation's, CoreGraphics', Foundation's, _Concurrency's and _Builtin_float's swiftmodule, the shims' module.modulemap, the three API notes, Recaulk's dispatch.h for the importer, the builtins archive, Recaulk's archive and notices) is missing, or a tree holds a link, a
 # path with a space, or a file that cannot be hashed: two jobs that each printed nothing, or less than
 # the whole trees, must never compare equal.
 toolchain_digest() {
@@ -732,13 +732,19 @@ toolchain_digest() {
   for _td_f in lib/swift/macosx/libswiftCore.dylib lib/swift/macosx/libswiftSwiftOnoneSupport.dylib \
                lib/swift/macosx/libswiftDarwin.dylib lib/swift/macosx/libswiftObjectiveC.dylib \
                lib/swift/macosx/libswiftDispatch.dylib lib/swift/macosx/libswift_Concurrency.dylib \
+               lib/swift/macosx/libswiftCoreFoundation.dylib lib/swift/macosx/libswiftCoreGraphics.dylib \
+               lib/swift/macosx/libswiftFoundation.dylib \
                lib/swift/macosx/Dispatch.swiftmodule/x86_64-apple-macos.swiftmodule \
+               lib/swift/macosx/CoreFoundation.swiftmodule/x86_64-apple-macos.swiftmodule \
+               lib/swift/macosx/CoreGraphics.swiftmodule/x86_64-apple-macos.swiftmodule \
+               lib/swift/macosx/Foundation.swiftmodule/x86_64-apple-macos.swiftmodule \
                lib/swift/macosx/_Concurrency.swiftmodule/x86_64-apple-macos.swiftmodule \
                lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule \
                lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule \
                lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule \
                lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule lib/swift/shims/module.modulemap \
-               lib/swift/apinotes/Dispatch.apinotes lib/swift/recaulk-importer/dispatch/dispatch.h \
+               lib/swift/apinotes/Dispatch.apinotes lib/swift/apinotes/Foundation.apinotes \
+               lib/swift/apinotes/CoreGraphics.apinotes lib/swift/recaulk-importer/dispatch/dispatch.h \
                "$_td_cl/darwin/libclang_rt.osx.a" lib/recaulk/librecaulk.a lib/recaulk/notices.tsv; do
     [ -f "$1/$_td_f" ] || { echo "toolchain_digest: no $1/$_td_f" >&2; return 1; }
   done
@@ -768,6 +774,7 @@ toolchain_digest_whole() {
     ' '*|*' '|*'  '*) echo "toolchain_digest: the line holds an empty entry" >&2; return 1 ;;
   esac
   _tw_core=""; _tw_onone=""; _tw_mod=""; _tw_map=""; _tw_rt=""; _tw_dar=""; _tw_objc=""; _tw_dmod=""; _tw_omod=""; _tw_disp=""; _tw_dimod=""; _tw_conc=""; _tw_cmod=""; _tw_bmod=""; _tw_rk=""; _tw_rkn=""; _tw_apn=""; _tw_imp=""
+  _tw_cf=""; _tw_cg=""; _tw_fd=""; _tw_cfmod=""; _tw_cgmod=""; _tw_fdmod=""; _tw_fdapn=""; _tw_cgapn=""
   while IFS= read -r _tw_e; do
     _tw_h="${_tw_e#*=}"
     case "$_tw_e" in lib/?*=*) _tw_ok=1 ;; *) _tw_ok="" ;; esac
@@ -789,6 +796,14 @@ toolchain_digest_whole() {
       lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_bmod=1 ;;
       lib/swift/shims/module.modulemap) _tw_map=1 ;;
       lib/swift/apinotes/Dispatch.apinotes) _tw_apn=1 ;;
+      lib/swift/macosx/libswiftCoreFoundation.dylib) _tw_cf=1 ;;
+      lib/swift/macosx/libswiftCoreGraphics.dylib) _tw_cg=1 ;;
+      lib/swift/macosx/libswiftFoundation.dylib) _tw_fd=1 ;;
+      lib/swift/macosx/CoreFoundation.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_cfmod=1 ;;
+      lib/swift/macosx/CoreGraphics.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_cgmod=1 ;;
+      lib/swift/macosx/Foundation.swiftmodule/x86_64-apple-macos.swiftmodule) _tw_fdmod=1 ;;
+      lib/swift/apinotes/Foundation.apinotes) _tw_fdapn=1 ;;
+      lib/swift/apinotes/CoreGraphics.apinotes) _tw_cgapn=1 ;;
       lib/swift/recaulk-importer/dispatch/dispatch.h) _tw_imp=1 ;;
       lib/clang/*/lib/darwin/libclang_rt.osx.a) _tw_rt=1 ;;
       lib/recaulk/librecaulk.a) _tw_rk=1 ;;
@@ -812,6 +827,14 @@ EOF
   [ -n "$_tw_bmod" ] || _tw_miss="$_tw_miss lib/swift/macosx/_Builtin_float.swiftmodule/x86_64-apple-macos.swiftmodule"
   [ -n "$_tw_map" ] || _tw_miss="$_tw_miss lib/swift/shims/module.modulemap"
   [ -n "$_tw_apn" ] || _tw_miss="$_tw_miss lib/swift/apinotes/Dispatch.apinotes"
+  [ -n "$_tw_cf" ] || _tw_miss="$_tw_miss lib/swift/macosx/libswiftCoreFoundation.dylib"
+  [ -n "$_tw_cg" ] || _tw_miss="$_tw_miss lib/swift/macosx/libswiftCoreGraphics.dylib"
+  [ -n "$_tw_fd" ] || _tw_miss="$_tw_miss lib/swift/macosx/libswiftFoundation.dylib"
+  [ -n "$_tw_cfmod" ] || _tw_miss="$_tw_miss lib/swift/macosx/CoreFoundation.swiftmodule/x86_64-apple-macos.swiftmodule"
+  [ -n "$_tw_cgmod" ] || _tw_miss="$_tw_miss lib/swift/macosx/CoreGraphics.swiftmodule/x86_64-apple-macos.swiftmodule"
+  [ -n "$_tw_fdmod" ] || _tw_miss="$_tw_miss lib/swift/macosx/Foundation.swiftmodule/x86_64-apple-macos.swiftmodule"
+  [ -n "$_tw_fdapn" ] || _tw_miss="$_tw_miss lib/swift/apinotes/Foundation.apinotes"
+  [ -n "$_tw_cgapn" ] || _tw_miss="$_tw_miss lib/swift/apinotes/CoreGraphics.apinotes"
   [ -n "$_tw_imp" ] || _tw_miss="$_tw_miss lib/swift/recaulk-importer/dispatch/dispatch.h"
   [ -n "$_tw_rt" ] || _tw_miss="$_tw_miss lib/clang/<v>/lib/darwin/libclang_rt.osx.a"
   [ -n "$_tw_rk" ] || _tw_miss="$_tw_miss lib/recaulk/librecaulk.a"

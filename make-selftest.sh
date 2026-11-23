@@ -38,7 +38,12 @@
 #                             ($WORK/overlays/recaulk-importer, $WORK/overlays/src/apinotes: the overlays'
 #                             own, patched), when there; the tests that import Dispatch need both, and so do
 #                             those that import Foundation, whose Swift names come from its API notes.
-#                             Each run's module cache is its own, as the importer's is keyed on neither.
+#                             SDK_VIEW=<file> is the SDK view (a clang VFS overlay) the importer reads the
+#                             10.9 headers through, after Recaulk's: unset, the one the CoreFoundation,
+#                             CoreGraphics and Foundation overlays were built with,
+#                             $WORK/overlays/sdk-metadata/overlay.json, or, when that is not there, none,
+#                             with a warning naming it. SWIFTC= mode passes none: that swiftc's own.
+#                             Each run's module cache is its own, as the importer's is keyed on none of these.
 #            SWIFTC=<swiftc>  exactly `$SWIFTC -O|-Onone <file> -o <out>`: this repo's own toolchain,
 #                             on 10.9, whose defaults supply target, SDK and rpath. With SWIFT_RUNTIME_PREFIX
 #                             also set (a staged, uninstalled runtime), each compile adds
@@ -60,7 +65,7 @@
 #          one pair for both builds; and <dir>/lib, the test-support dylibs,
 #          is copied to the bundle's lib/, which that rpath reaches from upstream/bin/. The support
 #          modules are binary .swiftmodule files: the compiler here must be the release that built them.
-#          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, TC (toolchain usr/), DIST (output dir), RECAULK_IMPORTER, APINOTES,
+#          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, TC (toolchain usr/), DIST (output dir), RECAULK_IMPORTER, SDK_VIEW, APINOTES,
 #          SWIFT_RUNTIME_PREFIX, SWIFTC, INSTALL_NAME_TOOL, CLANG22_PREFIX, SELFTEST_SRC (the dir whose
 #          *.swift are the tests, default this repo's tests/), SELFTEST_SUPPORT.
 set -eu
@@ -116,6 +121,16 @@ else
     [ -d "$RECAULK_IMPORTER" ] || { echo "make-selftest: RECAULK_IMPORTER=$RECAULK_IMPORTER is no directory" >&2; exit 1; }
     recaulk_vfs_yaml "$SDK" "$RECAULK_IMPORTER" "$VFSD/recaulk-vfs.yaml" || { echo "make-selftest: could not write the importer's overlay for $SDK" >&2; exit 1; }
     IMPFLAGS="$IMPFLAGS -Xcc -ivfsoverlay -Xcc $VFSD/recaulk-vfs.yaml"
+  fi
+  # spec: "The overlays" -- the SDK view CoreFoundation, CoreGraphics and Foundation were built against (build.sh's
+  #       FOUNDATION_VFS): their binary swiftmodules name clang declarations as that view shows them, so a test
+  #       compiled against the bare 10.9 headers could fail to read them, or quietly see less API.
+  [ -n "${SDK_VIEW:-}" ] || ! [ -f "$WORK/overlays/sdk-metadata/overlay.json" ] || SDK_VIEW="$WORK/overlays/sdk-metadata/overlay.json"
+  if [ -n "${SDK_VIEW:-}" ]; then
+    [ -f "$SDK_VIEW" ] || { echo "make-selftest: SDK_VIEW=$SDK_VIEW is no file" >&2; exit 1; }
+    IMPFLAGS="$IMPFLAGS -Xcc -ivfsoverlay -Xcc $SDK_VIEW"
+  else
+    echo "make-selftest: warning: no $WORK/overlays/sdk-metadata/overlay.json (the overlays' SDK view), so the tests see the bare 10.9 headers" >&2
   fi
   if [ -n "${APINOTES:-}" ]; then
     [ -d "$APINOTES" ] || { echo "make-selftest: APINOTES=$APINOTES is no directory" >&2; exit 1; }

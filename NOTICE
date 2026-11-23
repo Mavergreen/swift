@@ -128,6 +128,7 @@ declares, or removing what neither the 10.9 SDK nor Recaulk declares:
   0043  NSKeyValueChange is 10.9's NS_OPTIONS, whose init(rawValue:) is not failable.
   0045  No URL resource values whose keys are 10.10 to 10.13.
   0046  The two Islamic calendars of 10.10 are named by their identifiers' values.
+  0047  An empty NSDictionary bridges to an empty Dictionary.
 
 Both toolchain packages also contain Dispatch.apinotes (lib/swift/apinotes), from
 the Swift open source project at pins.env's SWIFT_SHA (apinotes/Dispatch.apinotes),

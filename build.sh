@@ -476,9 +476,12 @@ build_overlay CoreFoundation swiftCoreFoundation --I "$OVS/CoreFoundation/shims"
 build_overlay CoreGraphics swiftCoreGraphics --recaulk-importer "$DISPATCH_IMPORTER" --apinotes "$OVS/apinotes" \
   --flag -Xcc --flag -ivfsoverlay --flag -Xcc --flag "$FOUNDATION_VFS" --flag -framework --flag ApplicationServices -- \
   "$OVS/CoreGraphics/CoreGraphics.swift" "$OVS/CoreGraphics/Private.swift" "$OVS/CoreGraphics/CGFloat.swift"
-# Every .swift overlay-sources.sh laid out for Foundation, in C collation, so the compile is the same on every host.
+# Every .swift overlay-sources.sh laid out for Foundation, in C collation, so the compile is the same on every host;
+# none (an unmatched glob, which would be passed on as the literal ./*.swift) fails before any compile.
 FOUNDATION_SOURCES="$(cd "$OVS/Foundation" && printf '%s\n' ./*.swift | LC_ALL=C sort | sed "s|^\./|$OVS/Foundation/|")" \
   || { echo "FAIL: could not list $OVS/Foundation's sources"; exit 1; }
+[ -f "${FOUNDATION_SOURCES%%
+*}" ] || { echo "FAIL: $OVS/Foundation holds no .swift sources -- overlay-sources.sh laid out none"; exit 1; }
 # shellcheck disable=SC2086  # the laid-out Foundation sources, space-free names (overlay-sources.sh's)
 build_overlay Foundation swiftFoundation --I "$OVS/CoreFoundation/shims" --I "$OVS/Foundation/shims" --recaulk-importer "$DISPATCH_IMPORTER" \
   --apinotes "$OVS/apinotes" --flag -Xcc --flag -ivfsoverlay --flag -Xcc --flag "$FOUNDATION_VFS" \

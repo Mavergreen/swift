@@ -277,6 +277,19 @@ awk '/^build_overlay CoreGraphics /,/[^\\]$/' "$REPO/build.sh" | grep -qe '--fla
 for f in BundleLookup.mm DataThunks.m; do
   grep -q "^host_object .*/Foundation/$f\"" "$REPO/build.sh" || fail "step 5b does not compile $f with host_object"
 done
+# Foundation's sources are every .swift laid out for it: none there fails, naming the directory, before any compile
+# (an unmatched glob would hand build-module.sh the literal ./*.swift).
+FS="$(awk '/^# Every \.swift overlay-sources\.sh laid out for Foundation/,/^build_overlay Foundation /' "$REPO/build.sh" | sed '$d')"
+[ -n "$FS" ] || fail "no listing of Foundation's sources in build.sh"
+mkdir -p "$T/ovs/Foundation"
+rc=0; out="$(OVS="$T/ovs" sh -c "set -u; $FS
+echo listed" 2>&1)" || rc=$?
+[ "$rc" -ne 0 ] || fail "listed an empty $T/ovs/Foundation as Foundation's sources: $out"
+case "$out" in *FAIL*"$T/ovs/Foundation"*) ;; *) fail "the empty source dir was not named: $out" ;; esac
+: > "$T/ovs/Foundation/b.swift"; : > "$T/ovs/Foundation/a.swift"
+out="$(OVS="$T/ovs" sh -c "set -u; $FS
+echo \"\$FOUNDATION_SOURCES\"" 2>&1)" || fail "refused two sources: $out"
+[ "$(printf '%s' "$out" | tr '\n' ' ')" = "$T/ovs/Foundation/a.swift $T/ovs/Foundation/b.swift" ] || fail "Foundation's sources are [$out]"
 sed -n '/^SHIPPED_DYLIBS=/p' "$REPO/build.sh" | grep -q ' \$FOUNDATION_DYLIBS"$' || fail "step 7's SHIPPED_DYLIBS lacks \$FOUNDATION_DYLIBS"
 for l in CoreFoundation CoreGraphics Foundation; do
   sed -n '/^FOUNDATION_DYLIBS=/p' "$REPO/build.sh" | grep -q "/libswift$l\.dylib" || fail "step 7's FOUNDATION_DYLIBS lacks libswift$l.dylib"

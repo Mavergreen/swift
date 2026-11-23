@@ -7,7 +7,12 @@
 #   installed. Its bin/swiftc compiles and links a hello world whose load commands record minOS 10.9 and
 #   SDK 10.9 and whose one rpath is the installed runtime's; compiles and links a program that imports Dispatch
 #   (a queue's sync and a group's wait), which loads libswiftDispatch through that rpath, and, on 10.9 (the
-#   native toolchain, beside its installed runtime), runs it; links Recaulk (lib/recaulk, pins.env's
+#   native toolchain, beside its installed runtime), runs it; compiles and links a program that imports Foundation
+#   and calls what only the SDK view the Foundation overlays were built with declares (attributesOfItem(atPath:)'s
+#   FileAttributeKey, NSURL's host property, Notification.Name), which loads libswiftFoundation, and on 10.9 runs
+#   it: until this toolchain's swiftc applies that view itself, that case, and the corpus's tests that import
+#   Foundation, are left out and the run ends in a SKIP naming the missing view, unless SWIFT_WRAPPER_SDK_VIEW=1
+#   says the wrapper applies it; links Recaulk (lib/recaulk, pins.env's
 #   RECAULK_VERSION) into a program and a dylib, each defining Recaulk's fma, fmal and truncl, hidden,
 #   the program still taking puts and malloc from libSystem, while -c compiles alone; then builds the gate corpus through
 #   make-selftest.sh's SWIFTC= mode, and its clang links C that uses @available (its builtins archive is
@@ -22,7 +27,7 @@
 #   translated); release.yml fails its step on that SKIP. Load commands are read with otool and nm (OTOOL
 #   and NM), or where those are Command Line Tools stubs (OS X 10.9), mavericks-clang-22's llvm-otool and
 #   llvm-nm (CLANG22_PREFIX).
-#   Env: MAVERICKS_BUILD_ROOT, STAGE_HOST, SMOKE_TOOLCHAIN (the installed native prefix, default
+#   Env: MAVERICKS_BUILD_ROOT, STAGE_HOST, SWIFT_WRAPPER_SDK_VIEW, SMOKE_TOOLCHAIN (the installed native prefix, default
 #   /usr/local/mavergreen/swift-toolchain), OTOOL, NM, CLANG22_PREFIX.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -97,6 +102,31 @@ if [ "$HOST" = x86_64 ]; then
   [ "$out" = "dispatch ok" ] || fail "the Dispatch program printed '$out', not 'dispatch ok'"
 fi
 
+# spec: "The overlays" -- every client sees the SDK view the CoreFoundation, CoreGraphics and Foundation overlays
+#       were built with; without it, their swiftmodules name declarations the bare 10.9 headers lack.
+FOUNDATION_SKIP=""
+if [ "${SWIFT_WRAPPER_SDK_VIEW:-}" = 1 ]; then
+  echo "-- its swiftc compiles and links a program that imports Foundation, through the overlays' SDK view"
+  cat > "$T/foundation.swift" <<'F'
+import Foundation
+let size = (try? FileManager.default.attributesOfItem(atPath: CommandLine.arguments[0]))?[FileAttributeKey.size] as? NSNumber
+let host: String? = (URL(string: "https://e.x/p")! as NSURL).host
+let name = Notification.Name("dev.mavergreen.smoke")
+print(size != nil && host == "e.x" && name.rawValue == "dev.mavergreen.smoke" ? "foundation ok" : "foundation FAILED")
+F
+  "$COPY" "$T/foundation.swift" -o "$T/foundation" || fail "its swiftc could not compile and link a program that imports Foundation"
+  "$OTOOL" -L "$T/foundation" | grep -q '@rpath/libswiftFoundation\.dylib' || fail "$T/foundation does not load @rpath/libswiftFoundation.dylib"
+  p="$(plat "$T/foundation")"
+  [ "$p" = "10.9 10.9" ] || fail "the Foundation program records minOS and SDK '$p', not '10.9 10.9'"
+  if [ "$HOST" = x86_64 ]; then
+    out="$("$T/foundation")" || fail "the Foundation program failed on this 10.9, with the installed runtime: $out"
+    [ "$out" = "foundation ok" ] || fail "the Foundation program printed '$out', not 'foundation ok'"
+  fi
+else
+  FOUNDATION_SKIP="its swiftc wrapper does not yet apply the SDK view the Foundation overlays were built with (no wrapper view), so no program that imports Foundation was built (SWIFT_WRAPPER_SDK_VIEW=1 once it does)"
+  echo "-- skipped: $FOUNDATION_SKIP"
+fi
+
 echo "-- it links Recaulk's archive, pins.env's release, into every program and dylib"
 . "$REPO/pins.env"
 [ "$(cat "$TC/lib/recaulk/VERSION" 2>/dev/null)" = "$RECAULK_VERSION" ] \
@@ -129,7 +159,15 @@ done
 "$COPY" -c "$T/fp.swift" -o "$T/fp.o" || fail "its swiftc -c could not compile alone"
 
 echo "-- it builds the gate corpus through make-selftest.sh"
-SWIFTC="$COPY" DIST="$T/dist" sh "$REPO/make-selftest.sh" || fail "make-selftest.sh could not build the gate corpus"
+CORPUS="$REPO/tests"
+if [ -n "$FOUNDATION_SKIP" ]; then
+  # The tests that import Foundation wait for the wrapper's view, as the case above does.
+  CORPUS="$T/corpus"; mkdir "$CORPUS"
+  for f in "$REPO"/tests/*.swift; do
+    if grep -q '^import Foundation$' "$f"; then echo "   left out: ${f##*/}"; else cp "$f" "$CORPUS/"; fi
+  done
+fi
+SWIFTC="$COPY" SELFTEST_SRC="$CORPUS" DIST="$T/dist" sh "$REPO/make-selftest.sh" || fail "make-selftest.sh could not build the gate corpus"
 tar -xzf "$T/dist/swift-runtime-selftest.tar.gz" -C "$T" || fail "cannot unpack the self-test bundle"
 ls "$T/swift-runtime-selftest/bin"
 for b in thorough_test thorough_test-Onone; do
@@ -238,4 +276,5 @@ for d in clang clang++; do
   case "$line" in *'"-platform_version" "macos" "10.9.0"'*'"-U" "__availability_version_check"'*) ;;
     *) fail "the shim's $d lost the cfg's -mmacosx-version-min=10.9 or -U: $line" ;; esac
 done
+if [ -n "$FOUNDATION_SKIP" ]; then echo "SKIP: $FOUNDATION_SKIP"; exit 77; fi
 echo "PASS"

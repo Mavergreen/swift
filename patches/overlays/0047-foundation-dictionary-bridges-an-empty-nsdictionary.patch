@@ -1,0 +1,22 @@
+--- stdlib/public/Darwin/Foundation/NSDictionary.swift
++++ stdlib/public/Darwin/Foundation/NSDictionary.swift
+@@ -246,6 +246,9 @@
+       
+       result = Dictionary(_unsafeUninitializedCapacity: numElems,
+         allowingDuplicates: handleDuplicates) { keys, vals in
++        // Mavericks: an empty NSDictionary is an empty Dictionary: for no
++        // elements the stdlib this overlay runs on passes nil buffers.
++        guard numElems > 0 else { return 0 }
+         
+         let objectKeys = UnsafeMutableRawPointer(mutating:
+           keys.baseAddress!).assumingMemoryBound(to: AnyObject.self)
+@@ -301,6 +304,9 @@
+     
+     let tmpResult = Dictionary(_unsafeUninitializedCapacity: numElems,
+       allowingDuplicates: handleDuplicates) { keys, vals in
++      // Mavericks: an empty NSDictionary is an empty Dictionary: for no
++      // elements the stdlib this overlay runs on passes nil buffers.
++      guard numElems > 0 else { return 0 }
+       
+       let objectKeys = UnsafeMutableRawPointer(mutating:
+         keys.baseAddress!).assumingMemoryBound(to: AnyObject.self)

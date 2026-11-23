@@ -1,8 +1,9 @@
 // objc_overlay_test.swift — the ObjectiveC overlay (swift-5.4's) on 10.9.
 //
 // #selector and Selector, autoreleasepool, ObjCBool and NSObject's ==, Hashable and description, from
-// libswiftObjectiveC.dylib over libobjc. The 10.9 SDK declares NSObject's -hash a method, not a property,
-// so the override is `func hash() -> Int`. Exits non-zero on any wrong answer.
+// libswiftObjectiveC.dylib over libobjc. The bare 10.9 SDK declares NSObject's -hash a method; the SDK view
+// the Foundation overlays are built with, which every client compiles against, declares it a property, as
+// later SDKs do, so the override is `override var hash: Int`. Exits non-zero on any wrong answer.
 import ObjectiveC
 
 var failures = 0
@@ -13,7 +14,7 @@ final class Thing: NSObject {
   let n: Int
   init(_ n: Int) { self.n = n }
   override func isEqual(_ object: Any?) -> Bool { (object as? Thing)?.n == n }
-  override func hash() -> Int { n }
+  override var hash: Int { n }
 }
 
 let sel = #selector(NSObject.isEqual(_:))
@@ -28,7 +29,7 @@ var made = 0
 for i in 0..<1000 {
   autoreleasepool {
     let o = Thing(i)
-    made += o.hash() == i ? 1 : 0
+    made += o.hash == i ? 1 : 0
   }
 }
 check(made == 1000, "autoreleasepool ran \(made) times")
