@@ -166,6 +166,19 @@ rc=0; OUT="$T/out-gw" DIST="$T/dist-gw" UPD_APP=/nonexistent sh ./package.sh > "
 grep -q "$P/share/doc/NOTICE" "$T/gw.log" || fail "package.sh refused, but did not name the writable entry: $(cat "$T/gw.log")"
 [ -z "$(ls "$T/dist-gw"/swift-runtime-*.pkg 2>/dev/null)" ] || fail "package.sh left a pkg behind after refusing a writable entry"
 
+echo "-- package.sh checks the final tree: a group-writable entry the product staging step adds is refused too"
+# shipyard's stage_product.sh adds the manifest, the updater and its LaunchAgent; a copy of the scripts whose
+# stage_product.sh leaves the manifest group-writable stands in for a staging step that does.
+cp -R "$SHIPYARD" "$T/shipyard-gw"
+mv "$T/shipyard-gw/stage_product.sh" "$T/shipyard-gw/stage_product.real.sh"
+printf '%s\n' '#!/bin/sh' 'set -eu' 'sh "$(dirname "$0")/stage_product.real.sh" "$@"' \
+  "chmod g+w \"$T/out-gw2/$P/mavergreen.plist\"" > "$T/shipyard-gw/stage_product.sh"
+rm -rf "$T/out-gw2"; cp -R "$T/out" "$T/out-gw2"
+rc=0; SHIPYARD_SCRIPTS="$T/shipyard-gw" OUT="$T/out-gw2" DIST="$T/dist-gw2" UPD_APP=/nonexistent sh ./package.sh > "$T/gw2.log" 2>&1 || rc=$?
+[ "$rc" -ne 0 ] || fail "package.sh packaged a manifest the staging step left group-writable"
+grep -q "$P/mavergreen.plist" "$T/gw2.log" || fail "package.sh refused, but did not name the writable manifest: $(cat "$T/gw2.log")"
+[ -z "$(ls "$T/dist-gw2"/swift-runtime-*.pkg 2>/dev/null)" ] || fail "package.sh left a pkg behind after refusing a writable manifest"
+
 echo "-- package.sh stages the updater under the identity shipyard's registry derives for swift-runtime"
 U="Library/Application Support/Mavergreen/swift-runtime-updater.app"
 LA=Library/LaunchAgents/dev.mavergreen.swift-runtime-updatecheck.plist
@@ -232,6 +245,8 @@ conform() {
   facts="$(sh "$SHIPYARD/artifact-facts.sh" "$1" "$version")" || fail "artifact-facts.sh failed on $1"
   printf '%s\n' "$facts" | grep -qx end-of-facts || fail "artifact-facts.sh on $1 stopped early"
   printf '%s\n' "$facts" | sh "$SHIPYARD/check-artifact-conformance.sh" || fail "artifact conformance failed on $1"
+  # Every bundle, the updater's included, installs in place: no relocation, no version check that skips it.
+  sh "$SHIPYARD/assert_pkg_installs_in_place.sh" "$1"/swift-runtime-*.pkg || fail "a bundle in $1's pkg does not install in place"
 }
 conform "$T/dist"
 sh "$SHIPYARD/stand-in-feeds.sh" "$T/dist-upd" "$version" || fail "stand-in-feeds.sh failed"

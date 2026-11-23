@@ -303,6 +303,8 @@ jobs:
       # arm64 / macOS 11, where the cross toolchain runs (clang22-cross's updater, CLANG_VARIANT=cross).
       - name: Build swift-toolchain-cross-updater.app (Cocoa/Sparkle, arm64 / macOS 11; must NOT link Swift)
         run: |
+          # spec: shipyard's "Apple's clang is a declared deviation, never a default" -- this updater still builds with
+          #       /usr/bin/clang; it exits when this step moves to clang22, as swift-runtime-updater's did.
           shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater-toolchain-cross" -DSWIFT_UPDATER_PRODUCT=swift-toolchain-cross \
             -DCMAKE_OBJC_COMPILER=/usr/bin/clang -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
           shipyard-cmake --build "$SWIFT_BUILD/build/updater-toolchain-cross" --target swift-toolchain-cross-updater
@@ -495,6 +497,8 @@ jobs:
 
       - name: Build swift-toolchain-updater.app (Cocoa/Sparkle; must NOT link Swift)
         run: |
+          # spec: shipyard's "Apple's clang is a declared deviation, never a default" -- this updater still builds with
+          #       /usr/bin/clang; it exits when this step moves to clang22, as swift-runtime-updater's did.
           shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater-toolchain" -DSWIFT_UPDATER_PRODUCT=swift-toolchain \
             -DCMAKE_OBJC_COMPILER=/usr/bin/clang -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
           shipyard-cmake --build "$SWIFT_BUILD/build/updater-toolchain" --target swift-toolchain-updater

@@ -38,11 +38,6 @@ UPD_APP="${UPD_APP:-$SWIFT_BUILD/build/updater/swift-runtime-updater.app}"
 # Only this step puts anything under $OUT/Library, and $OUT persists between builds: clear it, or a
 # previous run's updater ships alongside this one.
 rm -rf "$OUT/Library"
-# A pkg installs each entry's mode as staged, the payload root's onto / itself, so nothing it ships may be
-# writable by group or other. stage-runtime.sh stages 0755 and 0644 under any umask; a payload staged or
-# copied otherwise is refused, not shipped.
-writable="$(find "$OUT" ! -type l \( -perm -020 -o -perm -002 \))"
-[ -z "$writable" ] || { echo "group- or world-writable entries in $OUT would install so (restage it with build.sh): $writable" >&2; exit 1; }
 SCR="$DIST/pkg-scripts"; rm -rf "$SCR"
 set -- --stage "$OUT" --product swift-runtime --name "Mavericks Swift Runtime" --version "$VERSION" --scripts-out "$SCR"
 # spec: INGREDIENTS.md "One C++ runtime" -- the runtime links libcxx22's
@@ -59,6 +54,11 @@ else
   echo "   (no updater app at $UPD_APP; packaging runtime only -- build it: shipyard-cmake --build \"\$SWIFT_BUILD/build/updater\")"
 fi
 sh "$SHIPYARD/stage_product.sh" "$@"
+# A pkg installs each entry's mode as staged, the payload root's onto / itself, so nothing it ships may be
+# writable by group or other. Checked here, on the final tree: stage-runtime.sh stages the runtime 0755 and
+# 0644 under any umask, and stage_product.sh has just added the manifest, the updater and its LaunchAgent.
+writable="$(find "$OUT" ! -type l \( -perm -020 -o -perm -002 \))"
+[ -z "$writable" ] || { echo "group- or world-writable entries in $OUT would install so (restage it with build.sh, and stage the updater from a 0755 tree): $writable" >&2; exit 1; }
 
 echo ">> flat component pkg (payload -> /usr/local/mavergreen/swift-runtime, /Library; shared helper)"
 sh "$SHIPYARD/build_component_pkg.sh" --root "$OUT" --identifier "$IDENTIFIER" --version "$VERSION" \
