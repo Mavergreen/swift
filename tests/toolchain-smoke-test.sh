@@ -42,7 +42,7 @@ if [ "$HOST" = arm64 ]; then
   # The cross toolchain's frontend runs on the OS's /usr/lib/swift (no compiler patch 0002).
   TC="$(dirname "$(dirname "$STAGED")")"
   . "$REPO/msc.sh"     # -> $SHIPYARD
-  SDKROOT="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$SHIPYARD/fetch_sdk.sh")" || fail "could not obtain the Mac OS X 10.9 SDK"
+  CLANG_SDK="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$SHIPYARD/fetch_sdk.sh")" || fail "could not obtain the Mac OS X 10.9 SDK"
 else
   TC="${SMOKE_TOOLCHAIN:-/usr/local/mavergreen/$TH_PRODUCT}"
   [ -x "$TC/bin/swiftc" ] || { echo "no installed native toolchain at $TC -- skipping"; exit 77; }
@@ -51,9 +51,12 @@ else
   [ "$(uname -m)" = x86_64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" != 1 ] \
     || { echo "this host does not run x86_64 code natively -- skipping"; exit 77; }
   # The toolchain's own SDK fetch, as its swiftc runs it: no shipyard on the user's Mac.
-  SDKROOT="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$TC/libexec/mavergreen-swift/fetch_sdk.sh")" || fail "could not obtain the Mac OS X 10.9 SDK"
+  CLANG_SDK="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$TC/libexec/mavergreen-swift/fetch_sdk.sh")" || fail "could not obtain the Mac OS X 10.9 SDK"
 fi
-export SDKROOT
+# spec: "The overlays" -- swiftc fetches the plain SDK itself, as on a user's Mac, and makes its view from it: the
+#       materializer writes SDKSettings.json; the with-sdk-settings-json variant is not needed. clang is given
+#       that variant (CLANG_SDK) by -isysroot, for the SDK version it records.
+unset SDKROOT
 # platform: OS X 10.9 without the Command Line Tools has only stubs for otool and nm. Never dyld_info for the
 #           SDK: it shows the minOS where the SDK is 0 (lib.sh's macho_version).
 if [ -z "${OTOOL:-}" ] && ! otool -l /bin/sh >/dev/null 2>&1; then
@@ -68,7 +71,7 @@ trap 'rm -rf "$T"' EXIT
 COPY="$TC/bin/swiftc"
 plat() { macho_version "$1" || fail "could not read $1's minOS and SDK"; }
 
-echo "-- its swiftc compiles and links a hello world ($COPY; SDK $SDKROOT)"
+echo "-- its swiftc compiles and links a hello world ($COPY; the SDK its fetch_sdk.sh gives)"
 printf 'print("hello from Mavericks Swift")\n' > "$T/hello.swift"
 "$COPY" "$T/hello.swift" -o "$T/hello" || fail "its swiftc could not compile and link a hello world"
 [ -f "$T/hello" ] || fail "its swiftc exited 0 but wrote no $T/hello"
@@ -178,7 +181,7 @@ printf '%s\n' '#include <stdio.h>' 'int main(void) {' \
   '  return 0;' '}' > "$T/avail.c"
 # No -Wl,-U here: its bin/clang.cfg (toolchain/clang.cfg) lets compiler-rt's weak reference to
 # _availability_version_check, which the 10.9 SDK does not declare, stay undefined.
-"$TC/bin/clang" -isysroot "$SDKROOT" -fuse-ld=lld "$T/avail.c" -o "$T/avail" \
+"$TC/bin/clang" -isysroot "$CLANG_SDK" -fuse-ld=lld "$T/avail.c" -o "$T/avail" \
   || fail "its clang could not link C that uses @available"
 "${NM:-nm}" "$T/avail" | grep -q ' [Tt] ___isPlatformVersionAtLeast$' \
   || fail "___isPlatformVersionAtLeast did not come from its builtins archive"
@@ -189,18 +192,18 @@ echo "-- bare clang and clang++, given no flags, build for OS X 10.9 (clang.cfg,
 printf 'int main(void) { return 0; }\n' > "$T/bare.c"
 for d in clang clang++; do
   # platform: 10.9's env has no -u.
-  ( unset SDKROOT; "$TC/bin/$d" -x c -c "$T/bare.c" -o "$T/bare-$d.o" ) || fail "bare $d could not compile"
+  ( "$TC/bin/$d" -x c -c "$T/bare.c" -o "$T/bare-$d.o" ) || fail "bare $d could not compile"
   v="$("${OTOOL:-otool}" -l "$T/bare-$d.o" | awk '$1 == "cmd" { c = $2 } c == "LC_VERSION_MIN_MACOSX" && $1 == "version" { print $2 }')"
   [ "$v" = 10.9 ] || fail "bare $d built for macOS '$v', not 10.9"
 done
 echo "-- bare clang links C with the toolchain's own ld64.lld, given only the SDK"
 printf 'int main(void) { return 0; }\n' > "$T/hi.c"
-LD="$("$TC/bin/clang" -isysroot "$SDKROOT" -### "$T/hi.c" -o "$T/hi" 2>&1 | tail -1 | sed "s/^ *//")" || fail "bare clang -### failed"
+LD="$("$TC/bin/clang" -isysroot "$CLANG_SDK" -### "$T/hi.c" -o "$T/hi" 2>&1 | tail -1 | sed "s/^ *//")" || fail "bare clang -### failed"
 echo "$LD" | cut -c1-160
 BIN="$(CDPATH='' cd -P -- "$TC/bin" && pwd -P)"
 case "$LD" in "\"$BIN/ld64.lld\""*) ;; *) fail "bare clang links with $(echo "$LD" | awk '{ print $1 }'), not $BIN/ld64.lld" ;; esac
 case "$LD" in *'"-no_deduplicate"'*) fail "bare clang passes -no_deduplicate, a flag for an ld64 of 262 or later" ;; esac
-"$TC/bin/clang" -isysroot "$SDKROOT" "$T/hi.c" -o "$T/hi" || fail "bare clang could not link C"
+"$TC/bin/clang" -isysroot "$CLANG_SDK" "$T/hi.c" -o "$T/hi" || fail "bare clang could not link C"
 p="$(plat "$T/hi")"
 [ "$p" = "10.9 10.9" ] || fail "bare clang's program records minOS and SDK '$p', not '10.9 10.9'"
 
@@ -239,14 +242,14 @@ int main(int argc, char **) {
 C
 for d in clang clang++; do
   case "$d" in clang) src=rk.c ;; *) src=rk.cc ;; esac
-  line="$("$TC/bin/$d" -isysroot "$SDKROOT" -### "$T/$src" -o "$T/rk-$d" 2>&1 | tail -1 | sed "s/^ *//")"
+  line="$("$TC/bin/$d" -isysroot "$CLANG_SDK" -### "$T/$src" -o "$T/rk-$d" 2>&1 | tail -1 | sed "s/^ *//")"
   case "$line" in "\"$BIN/ld64.lld\""*) ;; *) fail "$d links with something other than $BIN/ld64.lld" ;; esac
   n="$(printf '%s\n' "$line" | grep -o 'librecaulk\.a' | wc -l | tr -d ' ')"
   [ "$n" = 1 ] || fail "$d's link line names librecaulk.a $n times, not once"
   printf '%s\n' "$line" | grep -q "\"$RKA\"" || fail "$d's link line does not name $RKA"
   pre="${line%%\"-lSystem\"*}"
   case "$pre" in *librecaulk.a*) ;; *) fail "$d's link line puts librecaulk.a after -lSystem" ;; esac
-  "$TC/bin/$d" -isysroot "$SDKROOT" "$T/$src" -o "$T/rk-$d" || fail "$d could not link a program that calls fmal"
+  "$TC/bin/$d" -isysroot "$CLANG_SDK" "$T/$src" -o "$T/rk-$d" || fail "$d could not link a program that calls fmal"
   m="$("$NM" -m "$T/rk-$d")" || fail "could not read rk-$d's symbols"
   printf '%s\n' "$m" | grep -q "(__TEXT,__text) non-external (was a private external) _fmal\$" \
     || fail "rk-$d does not define Recaulk's _fmal, hidden: $(printf '%s\n' "$m" | grep ' _fmal$')"
@@ -255,21 +258,21 @@ for d in clang clang++; do
       || fail "rk-$d does not take $sym from libSystem"
   done
   # Link-only: a compile alone neither warns nor fails (an unused linker argument would warn).
-  w="$("$TC/bin/$d" -isysroot "$SDKROOT" -Werror -c "$T/$src" -o "$T/rk-$d.o" 2>&1)" || fail "$d -c failed: $w"
+  w="$("$TC/bin/$d" -isysroot "$CLANG_SDK" -Werror -c "$T/$src" -o "$T/rk-$d.o" 2>&1)" || fail "$d -c failed: $w"
   [ -z "$w" ] || fail "$d -c warned: $w"
 done
 echo "-- the toolchain moves: its clang finds the archive relative to bin/, not by an absolute path"
 mkdir -p "$T/reloc"
 cp -R "$TC/." "$T/reloc/"
-"$T/reloc/bin/clang" -isysroot "$SDKROOT" "$T/rk.c" -o "$T/rk-reloc" -### 2>&1 | tail -1 | grep -q "\"$(CDPATH='' cd -P -- "$T/reloc/bin" && pwd -P)/../lib/recaulk/librecaulk.a\"" \
+"$T/reloc/bin/clang" -isysroot "$CLANG_SDK" "$T/rk.c" -o "$T/rk-reloc" -### 2>&1 | tail -1 | grep -q "\"$(CDPATH='' cd -P -- "$T/reloc/bin" && pwd -P)/../lib/recaulk/librecaulk.a\"" \
   || fail "a copied toolchain's clang does not name its own copy of the archive"
-"$T/reloc/bin/clang" -isysroot "$SDKROOT" "$T/rk.c" -o "$T/rk-reloc" || fail "a copied toolchain's clang could not link"
+"$T/reloc/bin/clang" -isysroot "$CLANG_SDK" "$T/rk.c" -o "$T/rk-reloc" || fail "a copied toolchain's clang could not link"
 rm -rf "$T/reloc"
 echo "-- build.sh's host shim over this toolchain: its clang and clang++ link no Recaulk, with the cfgs' other flags"
 # The runtime links its own hidden subset; the whole archive before -lSystem would bind its weak OS imports.
 native_host_shim "$TC" "$T/shim" || fail "native_host_shim failed on $TC"
 for d in clang clang++; do
-  line="$("$T/shim/usr/bin/$d" -isysroot "$SDKROOT" -### -dynamiclib "$T/rk-$d.o" -o "$T/rk-$d.dylib" 2>&1 | tail -1)"
+  line="$("$T/shim/usr/bin/$d" -isysroot "$CLANG_SDK" -### -dynamiclib "$T/rk-$d.o" -o "$T/rk-$d.dylib" 2>&1 | tail -1)"
   case "$line" in *librecaulk*) fail "the shim's $d links Recaulk: $line" ;; esac
   case "$line" in *'"-platform_version" "macos" "10.9.0"'*'"-U" "__availability_version_check"'*) ;;
     *) fail "the shim's $d lost the cfg's -mmacosx-version-min=10.9 or -U: $line" ;; esac

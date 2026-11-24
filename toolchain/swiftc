@@ -25,12 +25,9 @@ if [ -z "$SDK" ]; then
   SDK="$(sh "$LIBEXEC/fetch_sdk.sh")" || { echo "swiftc: could not obtain the Mac OS X 10.9 SDK" >&2; exit 1; }
 fi
 [ -d "$SDK" ] || { echo "swiftc: no Mac OS X 10.9 SDK at '$SDK'" >&2; exit 1; }
-# platform: shipyard's with-sdk-settings-json SDK (fetch_sdk.sh's MAVERICKS_SDK_SETTINGS_JSON=1) and a view made
-#           here link their System and usr into the SDK they show, and recaulk-materialize reads only an SDK whose
-#           headers are inside it: so the SDK is that link's physical parent, by its real path.
-SRC="$SDK"
-if [ -L "$SDK/System" ]; then SRC="$SDK/System/.."; fi
-SRC="$(CDPATH= cd -P -- "$SRC" && pwd -P)" || { echo "swiftc: could not resolve the SDK '$SDK'" >&2; exit 1; }
+# spec: "The overlays" -- the plain SDK, by its real path (the view's key): the materializer writes
+#       SDKSettings.json; the with-sdk-settings-json variant is not needed.
+SRC="$(CDPATH= cd -P -- "$SDK" && pwd -P)" || { echo "swiftc: could not resolve the SDK '$SDK'" >&2; exit 1; }
 IMPORTER="$PREFIX/lib/swift/recaulk-importer"
 [ -d "$IMPORTER" ] || { echo "swiftc: no $IMPORTER -- this toolchain's Recaulk declarations are missing" >&2; exit 1; }
 # spec: "The overlays" -- every program sees the SDK the overlays were built against: Recaulk's profile of this

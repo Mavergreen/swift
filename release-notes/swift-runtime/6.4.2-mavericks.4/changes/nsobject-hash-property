@@ -1,1 +1,1 @@
-On 10.9 a Swift subclass of NSObject now overrides hash as a property, override var hash: Int, as on later macOS.
+On 10.9 NSObject's hash, description and debugDescription are now properties: override them with var, since override func hash() no longer compiles, and NSObject() is no longer optional.

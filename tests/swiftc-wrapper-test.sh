@@ -15,8 +15,8 @@
 #   sdk-view/<sha256 of the toolchain's swift-foundation.stamp and the SDK's real path> -- once: a miss first
 #   checks that the tool prints that stamp, a hit lets the tool check the view's. A view of another stamp, a
 #   tool of another stamp, a view the tool cannot make, or a toolchain without the stamp is refused before the
-#   driver runs, the first naming the stamp and the view to delete. A with-sdk-settings-json SDK (its System a
-#   link) gets the view of the SDK it links. Before the view's overlay the driver is given the importer's view
+#   driver runs, the first naming the stamp and the view to delete. The tool is given the plain SDK by its real
+#   path (it writes the view's SDKSettings.json itself). Before the view's overlay the driver is given the importer's view
 #   of Recaulk's dispatch declarations: -Xcc -ivfsoverlay with a YAML that names the view's SDK and the
 #   toolchain's lib/swift/recaulk-importer, byte for byte the YAML lib.sh's recaulk_vfs_yaml writes, kept in
 #   the cache beside the views, written whole (atomically) before the driver replaces the shell, so no
@@ -134,10 +134,11 @@ SV="$P/lib/swift/sdk-view"
 "$P/bin/swiftc" foo.swift | argv_after -sdk | grep -qxF "$VIEW/sdk/MacOSX10.9.sdk" || fail "a second run named another view"
 [ "$(wc -l < "$T/mat.log" | tr -d ' ')" = 1 ] && grep -q "^--sdk $T/fake-sdk --out $VIEW " "$T/mat.log" \
   || fail "a second run did not take the tool's one-read path: $(cat "$T/mat.log")"
-# A with-sdk-settings-json SDK links its System into the SDK it shows: the view is that SDK's.
-mkdir -p "$T/json-sdk"; ln -s "$T/fake-sdk/System" "$T/json-sdk/System"; ln -s "$T/fake-sdk/usr" "$T/json-sdk/usr"
-SDKROOT="$T/json-sdk" "$P/bin/swiftc" foo.swift | argv_after -sdk | grep -qxF "$VIEW/sdk/MacOSX10.9.sdk" \
-  || fail "a with-sdk-settings-json SDK did not get its SDK's view"
+# The SDK is handed to the tool as it is, by its real path: a link to it gets its view, and nothing else is resolved.
+ln -s "$T/fake-sdk" "$T/sdk-link"; : > "$T/mat.log"
+SDKROOT="$T/sdk-link" "$P/bin/swiftc" foo.swift | argv_after -sdk | grep -qxF "$VIEW/sdk/MacOSX10.9.sdk" \
+  || fail "a link to the SDK did not get its view"
+grep -q "^--sdk $T/fake-sdk --out $VIEW " "$T/mat.log" || fail "the tool was not given the SDK's real path: $(cat "$T/mat.log")"
 # A stamp mismatch inside the cache: refused before the driver, naming the stamp and the view to delete.
 echo "another" > "$VIEW/stamp.json"; rm -f "$T/frontend-ran"; rc=0
 "$P/bin/swiftc" x.swift > "$T/out" 2> "$T/err" || rc=$?
