@@ -721,8 +721,9 @@ jobs:
             # .swiftmodule files, which only the compiler that wrote them reads: build-cross's cross toolchain,
             # this release's Swift, as the native swiftc installed above is.
             SWIFTC=/usr/local/mavergreen/bin/swiftc SELFTEST_SUPPORT="$PWD/dist/selftest-support" MAVERICKS_BUILD_ROOT="$HOME/mm-build" DIST="$PWD/gate" sh make-selftest.sh
+            # platform: 10.9's sh (bash 3.2.53) has a set -e that does not stop for a failing ( ... && ... ) subshell.
             ( cd gate && tar -xzf swift-runtime-selftest.tar.gz && sh swift-runtime-selftest/run-selftest.sh --loads &&
-              sh swift-runtime-selftest/run-selftest.sh --gate )
+              sh swift-runtime-selftest/run-selftest.sh --gate ) || exit 1
             rc=0; MAVERICKS_BUILD_ROOT="$HOME/mm-smoke" sh tests/toolchain-smoke-test.sh || rc=$?
             [ "$rc" -ne 77 ] || { echo "the native toolchain smoke SKIPPED on 10.9"; exit 1; }
             exit "$rc"
