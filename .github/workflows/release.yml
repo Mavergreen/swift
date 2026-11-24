@@ -671,6 +671,7 @@ jobs:
           bundle_mode: compile
           publish: ${{ needs.version.outputs.publish }}
       - name: Install the pkgs, build the self-test with the installed swiftc, and gate it, on Mac OS X 10.9
+        id: vm
         uses: Mavergreen/mavericks-vm@v1
         env:
           SWIFT_FULL_VERSION: ${{ needs.version.outputs.version }}
@@ -709,6 +710,15 @@ jobs:
             rc=0; MAVERICKS_BUILD_ROOT="$HOME/mm-smoke" sh tests/toolchain-smoke-test.sh || rc=$?
             [ "$rc" -ne 77 ] || { echo "the native toolchain smoke SKIPPED on 10.9"; exit 1; }
             exit "$rc"
+      # spec: mavericks-vm's logs-dir output -- on a failure, the boot's serial console and what the guest
+      #       logged; a guest that stops answering ssh (exit 255) is otherwise a log with no cause in it.
+      - name: Keep the 10.9 guest's logs when it fails
+        if: failure() && steps.vm.outputs.logs-dir != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: mavericks-vm-logs
+          path: ${{ steps.vm.outputs.logs-dir }}
+          if-no-files-found: warn
 
   # The Linux-hosted compiler (build-toolchain.sh --host linux), cached under
   # swift-linux-compiler-<runner.os>-x86_64-<hash>: the hash is scripts/compiler-cache-inputs.sh's, over the scripts
@@ -1141,6 +1151,7 @@ jobs:
           publish: 'false'
           prebuilt_artifact: swift-linux
       - name: Install the runtime pkg and gate the prebuilt self-test bundle, on Mac OS X 10.9
+        id: vm
         uses: Mavergreen/mavericks-vm@v1
         env:
           SWIFT_FULL_VERSION: ${{ needs.version.outputs.version }}
@@ -1182,6 +1193,15 @@ jobs:
             ( cd gate && tar -xzf ../dist/swift-runtime-selftest.tar.gz &&
               sh swift-runtime-selftest/run-selftest.sh --loads &&
               sh swift-runtime-selftest/run-selftest.sh --gate )
+      # spec: mavericks-vm's logs-dir output -- on a failure, the boot's serial console and what the guest
+      #       logged; a guest that stops answering ssh (exit 255) is otherwise a log with no cause in it.
+      - name: Keep the 10.9 guest's logs when it fails
+        if: failure() && steps.vm.outputs.logs-dir != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: mavericks-vm-logs-prebuilt
+          path: ${{ steps.vm.outputs.logs-dir }}
+          if-no-files-found: warn
 
   # The same commit's runtime pkg, built on Linux (linux-runtime) and on a Mac (build-cross): shipyard's
   # build-equivalence.sh, with this repo's INGREDIENTS.md entries, on Linux (it is host-agnostic, and reads Mach-O
