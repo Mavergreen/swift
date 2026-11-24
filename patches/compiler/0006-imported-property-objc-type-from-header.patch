@@ -1,0 +1,26 @@
+diff --git lib/IRGen/GenObjC.cpp lib/IRGen/GenObjC.cpp
+--- lib/IRGen/GenObjC.cpp
++++ lib/IRGen/GenObjC.cpp
+@@ -1261,8 +1261,21 @@
+   // Use the lowered return type of the foreign getter.
+   auto getter = property->getOpaqueAccessor(AccessorKind::Get);
+   CanSILFunctionType methodTy = getObjCMethodType(IGM, getter);
+-  return IGM.getClangType(
++  auto clangType = IGM.getClangType(
+     methodTy->getFormalCSemanticResult(IGM.getSILModule()).getASTType());
++  // Mavergreen: an imported property's ObjC type is its header's. Lowering
++  // its Swift type back fails where the bridge is not loaded (a String with
++  // no Foundation), and the getter's descriptor then had no impl to emit
++  // (buildMethodDescriptor). Below macOS 13.3 an imported protocol's record
++  // is Swift's (emitObjCProtocolData), and a 10.9 target emits one wherever
++  // a mangled name refers to it (compiler patch 0003). As for its methods
++  // (getObjectEncodingFromClangNode), the clang declaration answers.
++  if (clangType.isNull())
++    if (auto *clangProp = dyn_cast_or_null<clang::ObjCPropertyDecl>(
++            property->getClangDecl()))
++      clangType = IGM.getClangASTContext().getCanonicalType(
++          clangProp->getType());
++  return clangType;
+ }
+ 
+ void irgen::getObjCEncodingForPropertyType(IRGenModule &IGM,

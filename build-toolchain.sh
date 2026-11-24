@@ -207,6 +207,8 @@ grep -q 'Mavergreen: the length of the string passed, which is empty when optimi
 for f in lib/AST/Decl.cpp lib/Sema/TypeCheckExpr.cpp lib/Sema/TypeCheckDeclPrimary.cpp; do
   grep -q "Mavergreen: #isolation is the caller's" "$SC/$f" || { echo "FAIL: compiler patch 0005 not applied ($f)"; exit 1; }
 done
+grep -q "Mavergreen: an imported property's ObjC type is its header's" "$SC/lib/IRGen/GenObjC.cpp" \
+  || { echo "FAIL: compiler patch 0006 not applied"; exit 1; }
 if [ "$HOST" = x86_64 ]; then
   grep -q "host tools run on the toolchain's own bundled runtime" "$SC/cmake/modules/AddSwift.cmake" || { echo "FAIL: compiler patch 0002 not applied"; exit 1; }
 elif grep -q "host tools run on the toolchain's own bundled runtime" "$SC/cmake/modules/AddSwift.cmake"; then

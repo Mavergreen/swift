@@ -538,6 +538,11 @@ swift-frontend is modified: it is built with the patches in ./patches/compiler
         to #isolation is evaluated at each call, in the caller's isolation, as
         upstream's #isolation macro is; the toolchains' compiler, built without
         swift-syntax, had evaluated it in the callee, where it is nil.
+  0006  an imported property's Objective-C type is its header's — where its
+        Swift type cannot be turned back into an Objective-C one (a String
+        with no Foundation loaded), the compiler takes the type its header
+        declares, as it already did for an imported method, instead of
+        crashing while it writes that protocol's Objective-C description.
 
 The cross toolchain package (swift-toolchain-cross-*.pkg) contains the same
 components under the same licenses, built from the same sources and patches

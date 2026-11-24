@@ -86,6 +86,7 @@ case "\${p##*/}" in
   0003-*) for f in lib/AST/Availability.cpp include/swift/AST/ASTContext.h lib/Serialization/Deserialization.cpp; do echo "Mavergreen: the 10.9 runtime is the pkgs'" >> \$f; done ;;
   0004-*) echo 'Mavergreen: the length of the string passed, which is empty when optimizing' >> lib/IRGen/GenHeap.cpp ;;
   0005-*) for f in lib/AST/Decl.cpp lib/Sema/TypeCheckExpr.cpp lib/Sema/TypeCheckDeclPrimary.cpp; do echo "Mavergreen: #isolation is the caller's" >> \$f; done ;;
+  0006-*) echo "Mavergreen: an imported property's ObjC type is its header's" >> lib/IRGen/GenObjC.cpp ;;
 esac
 F
 # shipyard-cmake records its arguments and, like a configure, leaves a CMakeCache.txt in its -B dir.
@@ -169,6 +170,7 @@ x86_both() {  # what the x86_64 toolchain's configure is in either mode; $2 is t
   has "$1" "patch swift-compiler <T>/repo/patches/compiler/0003-runtime-versions-macos-10.9.patch"
   has "$1" "patch swift-compiler <T>/repo/patches/compiler/0004-escaping-closure-check-filename-length.patch"
   has "$1" "patch swift-compiler <T>/repo/patches/compiler/0005-isolation-default-arg-caller-side.patch"
+  has "$1" "patch swift-compiler <T>/repo/patches/compiler/0006-imported-property-objc-type-from-header.patch"
   has "$1" "  -DSWIFT_LIPO=<T>/$2/bin/llvm-lipo"
   has "$1" "  -DCMAKE_C_COMPILER=<T>/$2/bin/clang"
   has "$1" "  -DCMAKE_AR=<T>/$2/bin/llvm-ar"
@@ -315,6 +317,7 @@ has arm64 "patch swift-compiler-arm64 <T>/repo/patches/compiler/0001-accept-10.9
 has arm64 "patch swift-compiler-arm64 <T>/repo/patches/compiler/0003-runtime-versions-macos-10.9.patch"
 has arm64 "patch swift-compiler-arm64 <T>/repo/patches/compiler/0004-escaping-closure-check-filename-length.patch"
 has arm64 "patch swift-compiler-arm64 <T>/repo/patches/compiler/0005-isolation-default-arg-caller-side.patch"
+has arm64 "patch swift-compiler-arm64 <T>/repo/patches/compiler/0006-imported-property-objc-type-from-header.patch"
 lacks arm64 "0002-hosttools-rpath-loader-path.patch"
 lacks arm64 "patch swift-compiler "
 lacks arm64 "SWIFT_LIPO"
