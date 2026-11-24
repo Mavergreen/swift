@@ -115,6 +115,20 @@ else
       echo "make-selftest: no $SWIFT_HOST_TOOLCHAIN/bin/dsymutil -- restage with build-toolchain.sh --host linux" >&2; exit 1; }
     native_host_shim "$SWIFT_HOST_TOOLCHAIN" "$VFSD/host" || { echo "make-selftest: no compiler shim from SWIFT_HOST_TOOLCHAIN=$SWIFT_HOST_TOOLCHAIN" >&2; exit 1; }
     TC="$VFSD/host/usr"
+    # spec: INGREDIENTS.md "Recaulk in every program" -- a test links as a user's program does through the shipped
+    #       swiftc, by toolchain/ld (Recaulk's archive before -lSystem), never by the shim's bare ld, which is the
+    #       stdlib build's. Without it a test binds 10.9's libm fma, fmal and truncl, whose truncl(+0) and
+    #       fma(1+u, u-1, 1) come back negative. The archive is the prefix's own (a shipped toolchain's), else
+    #       fetch-recaulk.sh's: the Linux-hosted prefix carries none.
+    RK="$SWIFT_HOST_TOOLCHAIN/lib/recaulk/librecaulk.a"
+    if ! [ -f "$RK" ]; then
+      RK="$(sh "$REPO/fetch-recaulk.sh")/lib/librecaulk.a" || { echo "make-selftest: could not fetch Recaulk, which every test links" >&2; exit 1; }
+    fi
+    mkdir -p "$VFSD/link/bin" "$VFSD/link/lib/recaulk" "$VFSD/link/libexec/mavergreen-swift" \
+      && ln -s "$SWIFT_HOST_TOOLCHAIN/bin/ld64.lld" "$VFSD/link/bin/ld64.lld" && ln -s "$RK" "$VFSD/link/lib/recaulk/librecaulk.a" \
+      && cp "$REPO/toolchain/ld" "$VFSD/link/libexec/mavergreen-swift/ld" && chmod 755 "$VFSD/link/libexec/mavergreen-swift/ld" \
+      && rm -f "$TC/bin/ld" && ln -s "$VFSD/link/libexec/mavergreen-swift/ld" "$TC/bin/ld" \
+      || { echo "make-selftest: could not lay out the tests' linker (toolchain/ld over $RK)" >&2; exit 1; }
     # platform: this repo's (legacy) driver runs the `ld` of -tools-directory, else /usr/bin/ld: the host's own
     #           (a GNU ld on Linux); the shim's is the prefix's ld64.lld, as build-module.sh links the overlays
     TOOLFLAGS="-tools-directory $TC/bin"

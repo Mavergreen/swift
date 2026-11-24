@@ -230,7 +230,9 @@ rm -r "$SUP/upstream/concurrency"
 
 echo "-- SWIFT_HOST_TOOLCHAIN: the default mode compiles with the named prefix's swift-frontend, this repo's compiler,"
 echo "   and builds every test, on a Mac and on Linux"
-mkdir -p "$T/linux" "$T/htc/bin" "$T/htc/lib/swift"
+mkdir -p "$T/linux" "$T/htc/bin" "$T/htc/lib/swift" "$T/htc/lib/recaulk"
+# The prefix's own Recaulk archive, so no fetch: tests/make-selftest-recaulk-test.sh holds the link to it.
+: > "$T/htc/lib/recaulk/librecaulk.a"
 printf '#!/bin/sh\necho Linux\n' > "$T/linux/uname"; chmod +x "$T/linux/uname"
 cp "$T/fake-swiftc" "$T/htc/bin/swift-frontend"; : > "$T/htc/bin/clang"; : > "$T/htc/bin/ld64.lld"
 echo "   a prefix with no dsymutil (swiftc -g links through it) is refused before any compile"
