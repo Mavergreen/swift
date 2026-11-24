@@ -29,7 +29,8 @@
 #   The linux host (a faked Linux uname) builds with the swift.org Linux seed that fetch-linux-seed.sh prints:
 #   its clang and clang++ compile, its swiftc compiles the Swift half (HOSTTOOLS), the cmake on PATH
 #   configures, build-llvm.sh's TableGen, compiler patches 0001, 0003, 0004, 0005 and 0006 in its own checkout,
-#   no Dispatch, pkg-config looked for (uuid-dev is required first), lld with --gc-sections; it stages the
+#   no Dispatch, pkg-config looked for (uuid-dev is required first), lld with --gc-sections, the seed clang's
+#   ld.lld pointed at the lld built in step 1 (and refused if the seed's clang cannot then link with it); it stages the
 #   prefix build.sh takes as SWIFT_HOST_TOOLCHAIN, with the seed's libswiftCore.so and its own dsymutil, and refuses a clang whose
 #   default triple (read without its cfgs), or a swift-frontend whose default target, is not
 #   x86_64-apple-macosx10.9; its OK line says when it has no builtins; --stop-after llvm builds LLVM, clang, lld and
@@ -50,9 +51,18 @@ cp "$REPO/build-toolchain.sh" "$REPO/lib.sh" "$REPO/pins.env" "$REPO/msc.sh" "$R
 cp -R "$REPO/patches/compiler" "$R/patches/"
 mkdir -p "$R/toolchain"; cp "$REPO/toolchain/clang.cfg" "$R/toolchain/"
 # The Linux seed: fetch-linux-seed.sh prints its usr, a toolchain whose clang, swiftc and libswiftCore.so the build takes.
-printf '#!/bin/sh\necho "fetch-linux-seed $*" >> "%s/log"\necho "%s/seed/usr"\n' "$T" "$T" > "$R/fetch-linux-seed.sh"
+# Each fetch extracts it afresh, so its ld.lld is again its own lld: one built for Ubuntu 24.04's libxml2.so.2
+# and ICU 74, which cannot start on a newer Linux. Its clang runs the ld.lld beside it, as the real one does.
+printf '#!/bin/sh\necho "fetch-linux-seed $*" >> "%s/log"\nln -sf lld "%s/seed/usr/bin/ld.lld"\necho "%s/seed/usr"\n' "$T" "$T" "$T" > "$R/fetch-linux-seed.sh"
 mkdir -p "$T/seed/usr/bin" "$T/seed/usr/lib/swift/linux"
-for t in clang clang++ swiftc; do printf '#!/bin/sh\n' > "$T/seed/usr/bin/$t"; done
+for t in clang++ swiftc; do printf '#!/bin/sh\n' > "$T/seed/usr/bin/$t"; done
+cat > "$T/seed/usr/bin/clang" <<F
+#!/bin/sh
+echo "seed-clang \$*" >> "$T/log"
+[ "\$*" = "-fuse-ld=lld -Wl,--version -o /dev/null" ] || exit 0
+exec "\${0%/*}/ld.lld" --version
+F
+printf '#!/bin/sh\necho "ld.lld: error while loading shared libraries: libxml2.so.2: cannot open shared object file" >&2\nexit 127\n' > "$T/seed/usr/bin/lld"
 printf '#!/bin/sh\necho "Swift version 6.4.2 (swift.org seed)"\n' > "$T/seed/usr/bin/swift-frontend"
 chmod +x "$T/seed/usr/bin/"*; echo seedcore > "$T/seed/usr/lib/swift/linux/libswiftCore.so"
 printf '#!/bin/sh\necho "%s/clang22"\n' "$T" > "$R/fetch-clang22.sh"
@@ -130,6 +140,11 @@ case "$*" in
   *) exit 9 ;;
 esac
 F
+cat > "$T/tpl/lld" <<'F'
+#!/bin/sh
+[ -z "${FAKE_LLD_BROKEN:-}" ] || { echo "lld: cannot start" >&2; exit 127; }
+case "${0##*/}:$*" in ld.lld:--version) echo "LLD 21.1.6 (compatible with GNU linkers)" ;; *) exit 9 ;; esac
+F
 cat > "$T/tpl/swift-frontend" <<'F'
 #!/bin/sh
 echo "Swift version 6.4.2 (linux frontend)"; echo "Target: ${FAKE_FE_TARGET:-x86_64-apple-macosx10.9}"
@@ -140,7 +155,7 @@ cat > "$T/bin/ninja" <<F
 { echo "ninja"; for a in "\$@"; do echo "  \$a"; done; } >> "$T/log"
 case "\$2" in
   */llvm-linux) mkdir -p "\$2/bin" "\$2/lib/clang/21/include"; echo hdr > "\$2/lib/clang/21/include/stddef.h"
-                cp "$T/tpl/clang" "\$2/bin/clang"; echo lld > "\$2/bin/lld"; echo dsymutil > "\$2/bin/dsymutil" ;;
+                cp "$T/tpl/clang" "\$2/bin/clang"; cp "$T/tpl/lld" "\$2/bin/lld"; echo dsymutil > "\$2/bin/dsymutil" ;;
   */swift-linux) mkdir -p "\$2/bin" "\$2/lib/swift/migrator" "\$2/lib/swift/linux"; echo mig > "\$2/lib/swift/migrator/macos4.json"
                  cp "$T/tpl/swift-frontend" "\$2/bin/swift-frontend" ;;
 esac
@@ -471,6 +486,12 @@ lacks linux "guard "
 lacks linux "llvm-x86"
 if grep -q '^git ' "$T/linux.log"; then fail "linux ran git"; fi
 grep -qx '    host: Swift version 6.4.2 (swift.org seed)' "$T/linux.out" || fail "linux: did not print the seed's version: $(cat "$T/linux.out")"
+[ "$(readlink "$T/seed/usr/bin/ld.lld")" = "$W/llvm-linux/bin/lld" ] \
+  || fail "linux: the seed's ld.lld is [$(readlink "$T/seed/usr/bin/ld.lld")], not step 1's lld"
+_ck="$(grep -nxF 'seed-clang -fuse-ld=lld -Wl,--version -o /dev/null' "$T/linux.log" | head -n 1 | cut -d: -f1)"
+_sw="$(grep -nxF '  <T>/w/swift-linux' "$T/linux.log" | head -n 1 | cut -d: -f1)"
+[ -n "$_ck" ] && [ -n "$_sw" ] && [ "$_ck" -lt "$_sw" ] \
+  || fail "linux: the seed's clang did not link with lld before the Swift build was configured (lines ${_ck:-none}, ${_sw:-none})"
 P="$W/toolchain-linux"
 for f in bin/swift-frontend bin/clang bin/clang.cfg bin/clang++.cfg bin/ld64.lld bin/dsymutil lib/swift/migrator/macos4.json \
          lib/clang/21/include/stddef.h; do
@@ -502,6 +523,11 @@ if (export FAKE_UNAME=Linux FAKE_FE_TARGET=x86_64-apple-macosx10.3-2-t2-noble; r
   fail "passed a swift-frontend whose default target is x86_64-apple-macosx10.3-2-t2-noble"; fi
 grep -q "swift-frontend's default target is not x86_64-apple-macosx10.9" "$T/linuxfe.out" || fail "linuxfe: $(cat "$T/linuxfe.out")"
 if grep -q '^OK:' "$T/linuxfe.out"; then fail "linuxfe printed OK"; fi
+echo "   a seed clang that cannot run lld as ld.lld is refused before the Swift build is configured"
+if (export FAKE_UNAME=Linux FAKE_LLD_BROKEN=1; run linuxlld cross --host linux); then fail "built with an lld that does not run"; fi
+grep -q "FAIL: the seed's clang cannot link with lld" "$T/linuxlld.out" || fail "linuxlld: $(cat "$T/linuxlld.out")"
+lacks linuxlld "  <T>/w/swift-linux"
+if grep -q '^OK:' "$T/linuxlld.out"; then fail "linuxlld printed OK"; fi
 echo "   no uuid-dev: refused before anything is fetched or configured"
 if (export FAKE_UNAME=Linux FAKE_NO_UUID=1; run linuxnouuid cross --host linux); then fail "built with no uuid-dev"; fi
 grep -q 'FAIL: .*uuid-dev' "$T/linuxnouuid.out" || fail "linuxnouuid: $(cat "$T/linuxnouuid.out")"

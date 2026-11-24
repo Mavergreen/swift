@@ -407,7 +407,17 @@ linux)
   #                              nothing here needs;
   #   SWIFT_USE_LINKER=lld, --gc-sections  the default gold, without dead stripping, keeps ASTContextBridging's
   #                              references to ASTGen's swift_Basic_* functions, which SWIFT_BUILD_SWIFT_SYNTAX=OFF
-  #                              leaves undefined (ld64 strips them on a Mac); the seed's ld.lld is beside its clang.
+  #                              leaves undefined (ld64 strips them on a Mac).
+  # platform: the seed's lld is built for Ubuntu 24.04 and needs its libxml2.so.2 and ICU 74, which a newer
+  #           Linux (Ubuntu 26.04, GitHub's ubuntu-latest) does not have, so there it cannot start. The seed's
+  #           clang runs the ld.lld beside it, ahead of PATH, so that name becomes step 1's lld: the same LLVM
+  #           source, built here without libxml2. The seed is extracted afresh on every run.
+  ln -sf "$L/bin/lld" "$SEED/bin/ld.lld" || { echo "FAIL: could not point the seed's ld.lld at $L/bin/lld"; exit 1; }
+  LLD_V="$("$SEED/bin/clang" -fuse-ld=lld -Wl,--version -o /dev/null 2>&1)" || :
+  case "$LLD_V" in
+    LLD\ *) ;;
+    *) printf '%s\n' "$LLD_V"; echo "FAIL: the seed's clang cannot link with lld ($SEED/bin/ld.lld -> $L/bin/lld)"; exit 1 ;;
+  esac
   linux_cmake -S "$SC" -B "$S" \
     -DCMAKE_Swift_COMPILER="$SEED/bin/swiftc" \
     -DLLVM_DIR="$L/lib/cmake/llvm" -DClang_DIR="$L/lib/cmake/clang" \
