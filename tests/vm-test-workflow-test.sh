@@ -45,6 +45,9 @@ check() {
     || { echo "vm-test does not fetch and verify Longboat"; return 1; }
   grep -q 'SWIFTC=/usr/local/mavergreen/bin/swiftc .*sh make-selftest\.sh' "$T/job" || { echo "vm-test does not build the self-test with the installed swiftc"; return 1; }
   grep -q 'sh swift-runtime-selftest/run-selftest\.sh --gate' "$T/job" || { echo "vm-test does not run the self-test's gate"; return 1; }
+  # platform: 10.9's sh (bash 3.2.53) has a set -e that does not stop for a failing ( ... && ... ) subshell, so the
+  #           gate's subshell carries its own exit: without it a failing gate ran on to the smoke and the step passed.
+  grep -q 'run-selftest\.sh --gate ) || exit 1$' "$T/job" || { echo "a failing gate does not fail vm-test's step"; return 1; }
   grep -q 'SELFTEST_SUPPORT="\$PWD/dist/selftest-support" .*sh make-selftest\.sh' "$T/job" \
     || { echo "vm-test does not build upstream's tests into the bundle (SELFTEST_SUPPORT=dist/selftest-support)"; return 1; }
   awk '/run-selftest\.sh --loads/ { l = NR } /run-selftest\.sh --gate/ { g = NR } END { exit !(l && l <= g) }' "$T/job" \
@@ -69,7 +72,7 @@ mutant "vm-test does not upgrade from the previous release" 's| prev/swift-runti
 mutant "the previous release goes unfetched" 's|gh release download "\$prev"|echo "$prev"|'
 mutant "the upgraded receipts are not checked" 's/\[ "\$got" = "\$SWIFT_FULL_VERSION" \]/true/'
 mutant "the family install is not checked" 's|/usr/local/bin/mavergreen check$|true|'
-mutant "clang22 is installed only after the gate" '/^            install clang22\/mavericks-clang-22-native-\*\.pkg$/d; s|^\(              sh swift-runtime-selftest/run-selftest.sh --gate )\)$|\1\
+mutant "clang22 is installed only after the gate" '/^            install clang22\/mavericks-clang-22-native-\*\.pkg$/d; s|^\(              sh swift-runtime-selftest/run-selftest.sh --gate ) \|\| exit 1\)$|\1\
             install clang22/mavericks-clang-22-native-*.pkg|'
 mutant "Longboat is not installed before clang22" '/^            install longboat\/longboat-\[0-9\]\*\.pkg$/d'
 mutant "the 10.9 SDK is not installed before clang22" '/longboat sdk install 10\.9$/d'
@@ -84,6 +87,7 @@ mutant "libcxx22 goes unverified" 's/| sha256sum -c -/| cat/'
 mutant "the self-test is built by another swiftc" 's|SWIFTC=/usr/local/mavergreen/bin/swiftc |SWIFTC=/tmp/swiftc |'
 mutant "the gate is not run" 's/run-selftest\.sh --gate/run-selftest.sh/'
 mutant "the bundle has no upstream tests" 's|SELFTEST_SUPPORT="\$PWD/dist/selftest-support" ||'
+mutant "a failing gate does not fail the step" 's/run-selftest\.sh --gate ) || exit 1$/run-selftest.sh --gate )/'
 mutant "--loads is not run" 's/run-selftest\.sh --loads &&/true \&\&/'
 mutant "build-cross uploads no self-test support" '/^            \${{ env.SWIFT_BUILD }}\/dist\/selftest-support$/d'
 mutant "publish does not wait for vm-test" 's/^    needs: \[collect, scan, vm-test\]$/    needs: [collect, scan]/'
