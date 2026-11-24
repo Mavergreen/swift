@@ -1,5 +1,4 @@
 // selftest: also -swift-version 6
-// selftest: needs the SDK view
 // foundation_overlay_test.swift — the Foundation, CoreFoundation and CoreGraphics overlays (Swift 5.4's) on 10.9.
 //
 // `import Foundation` here is libswiftFoundation.dylib's module over 10.9's own Foundation.framework, read
@@ -9,7 +8,9 @@
 // localizedDescription (which once recursed forever under another SDK view), Codable through JSON and property
 // lists (XML and binary) and the DecodingErrors a bad document throws, a file URL with a space and a non-ASCII
 // name, a Gregorian date in GMT, a file written, measured and removed with FileManager, NSString's API on
-// String, and CGRect's null and infinite rects by their Swift names. Nothing a program writes loads libswiftCoreFoundation or libswiftCoreGraphics, so each of the three
+// String, CGRect's null and infinite rects by their Swift names, an observer block added for a
+// Notification.Name and fired by a post of it, an NSCache of NSString keys and NSNumber values, and Bundle(for:)
+// as a Bundle, not an optional one (the SDK view declares +bundleForClass: nonnull). Nothing a program writes loads libswiftCoreFoundation or libswiftCoreGraphics, so each of the three
 // overlay dylibs is dlopened by its @rpath name, and must come from the directory libswiftCore came from.
 // What 10.9's Foundation lacks is not tried: JSONEncoder's .sortedKeys says macOS 10.13, so on 10.9 a
 // one-key object is encoded without it (an object of one key has one order). The 10.9 headers carry no
@@ -197,8 +198,37 @@ func cgRectConstants() {
   check(CGRect.null.union(r) == r, "cgRectConstants: CGRect.null.union(r) is \(CGRect.null.union(r)), not r")
 }
 
+// --- an observer block, added for a Notification.Name, fired by a post of that name (no queue: on the posting thread)
+nonisolated(unsafe) var notified = 0
+func notificationName() {
+  let name = Notification.Name("foundation_overlay_test.x")
+  let token = NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in notified += 1 }
+  NotificationCenter.default.post(name: name, object: nil)
+  NotificationCenter.default.post(name: Notification.Name("foundation_overlay_test.other"), object: nil)
+  check(notified == 1, "notificationName: the observer ran \(notified) times, not once")
+  NotificationCenter.default.removeObserver(token)
+  NotificationCenter.default.post(name: name, object: nil)
+  check(notified == 1, "notificationName: the observer ran after it was removed")
+}
+
+// --- NSCache, generic over its key and value classes
+func cacheGeneric() {
+  let cache = NSCache<NSString, NSNumber>()
+  cache.setObject(NSNumber(value: 42), forKey: "k")
+  check(cache.object(forKey: "k")?.intValue == 42, "cacheGeneric: k holds \(String(describing: cache.object(forKey: "k")))")
+  check(cache.object(forKey: "absent") == nil, "cacheGeneric: an absent key holds a value")
+}
+
+// --- Bundle(for:): a Bundle, so .bundlePath needs no unwrapping; a class of this program's is in the main bundle
+final class BundleProbe: NSObject {}
+func bundleForClass() {
+  let b = Bundle(for: BundleProbe.self)
+  let _: Bundle.Type = type(of: b)  // compiles only if b is a Bundle, not a Bundle? (+bundleForClass: imported as init!)
+  check(b == Bundle.main, "bundleForClass: \(String(describing: b.bundlePath)), not the main bundle's \(String(describing: Bundle.main.bundlePath))")
+}
+
 overlayDylibs(); bridgingBothWays(); bridgingCopiesMutable(); errorRoundTrip(); errorDescription()
 codableJSON(); codablePlist(); decodingErrors(); urlNonASCII(); dateCalendar(); fileManager(); stringAPI()
-cgRectConstants()
+cgRectConstants(); notificationName(); cacheGeneric(); bundleForClass()
 if failures > 0 { print("foundation_overlay_test FAILED (\(failures))"); exit(1) }
 print("foundation_overlay_test: OK")

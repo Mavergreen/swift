@@ -262,6 +262,12 @@ grep -qxF -e "  -DMAVERGREEN_CONCURRENCY_LINK_FLAGS=$R/swift/work/recaulk-concur
 # SwiftStdlib version is 10.9 there), and the shipped overlays' build_overlay never does.
 if awk '/^build_overlay\(\) \{/,/^}/' "$REPO/build.sh" | grep -q -e '--runtime-floor'; then fail "build_overlay passes --runtime-floor: a shipped module's availability would be 10.9"; fi
 awk '/^build_overlay\(\) \{/,/^}/' "$REPO/build.sh" | grep -q 'build-module.sh' || fail "no build_overlay calling build-module.sh in build.sh"
+# spec: "The overlays" -- one SDK view for the whole module graph: every overlay, as every program, is compiled
+#       against recaulk-materialize's view, its sdk/MacOSX10.9.sdk and its overlay.json.
+awk '/^build_overlay\(\) \{/,/^}/' "$REPO/build.sh" | grep -qF -e '--sdk "$SDK_VIEW_SDK" --sdk-view "$SDK_VIEW_VFS"' \
+  || fail "build_overlay does not compile against the SDK view"
+grep -q '^"$RECAULK_PREFIX/bin/recaulk-materialize" --sdk "$SDK_PLAIN" --out "$SDK_VIEW" --profile "$SDK_VIEW_PROFILE"' "$REPO/build.sh" \
+  || fail "build.sh does not make the SDK view with Recaulk's recaulk-materialize"
 # Step 5b builds the overlays in the order they import each other, Foundation's three after Dispatch: CoreFoundation,
 # CoreGraphics, then Foundation, which links 10.9's Foundation and CoreFoundation frameworks, as CoreGraphics links
 # ApplicationServices (10.9's CoreGraphics is inside it); Foundation's two Objective-C files go to its link; step 7
@@ -333,13 +339,17 @@ chmod +x "$S5/tc/bin/"* "$S5/py" "$S5/here/scripts/build-module.sh"
 support() {  # $1 = the probe's answer; the cut's output in $T/out, and UPSTREAM_LISTS's last line
   : > "$T/log"
   ( set -eu; export FAKE_LOG="$T/log" FAKE_PROBE="$1"
-    ROOT="$S5/root" HERE="$S5/here" TC="$S5/tc" PY="$S5/py" ARCH=x86_64 DEPLOYMENT=10.9 SDK_OVERLAYS="$S5/sdk" PM_C="" CXX_LIBCXX=""
+    ROOT="$S5/root" HERE="$S5/here" TC="$S5/tc" PY="$S5/py" ARCH=x86_64 DEPLOYMENT=10.9 SDK_OVERLAYS="$S5/sdk" SDK_VIEW_SDK="$S5/sdk" SDK_VIEW_VFS="$S5/sdk/overlay.json" PM_C="" CXX_LIBCXX=""
     RES="$S5/res" LLD=/usr/bin/true
     . "$T/support.sh"; echo "UPSTREAM_LISTS=$UPSTREAM_LISTS" ) > "$T/out" 2>&1
 }
 support pass || fail "step 5b's test support failed with a compiler that declares async for 10.9: $(cat "$T/out")"
 grep -q '^swiftc .*-typecheck' "$T/log" || fail "step 5b did not probe the host compiler: $(cat "$T/log")"
 grep -q 'test support: with Concurrency' "$T/out" || fail "step 5b did not say it builds test support with Concurrency: $(cat "$T/out")"
+for m in SwiftPrivate SwiftPrivateLibcExtras SwiftPrivateThreadExtras StdlibUnittest; do
+  grep -q "^build-module.sh .*--name $m .*--sdk $S5/sdk --sdk-view $S5/sdk/overlay.json" "$T/log" \
+    || fail "$m is not built against the SDK view: $(cat "$T/log")"
+done
 for m in SwiftPrivate SwiftPrivateLibcExtras SwiftPrivateThreadExtras StdlibUnittest; do
   grep -q "^build-module.sh .*--name $m .*--runtime-floor" "$T/log" || fail "with Concurrency, $m is built without --runtime-floor: $(cat "$T/log")"
 done

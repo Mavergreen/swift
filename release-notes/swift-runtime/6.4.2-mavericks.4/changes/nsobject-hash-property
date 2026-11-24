@@ -1,0 +1,1 @@
+On 10.9 a Swift subclass of NSObject now overrides hash as a property, override var hash: Int, as on later macOS.

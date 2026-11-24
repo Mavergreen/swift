@@ -233,23 +233,4 @@ if ( unset SWIFT_RUNTIME_PREFIX; PATH="$T/bin:$PATH" SWIFTC="$T/fake-swiftc" SEL
 grep -q 'darwin-Foo' "$T/err" || fail "did not name the clash: $(cat "$T/err")"
 [ ! -f "$T/calls" ] || fail "compiled before refusing the clash: $(cat "$T/calls")"
 
-# lib.sh's selftest_corpus_without_view: what SWIFTC= mode builds while the toolchain's swiftc lacks the SDK view
-# (toolchain-smoke-test.sh): every test but those whose leading comment lines hold `// selftest: needs the SDK view`,
-# whose names it prints, sorted; a marker past the leading comments is no marker. In this repo, the tests that
-# import Foundation and objc_overlay_test (whose hash override is the view's property) are the marked ones.
-. "$REPO/lib.sh"
-mkdir -p "$T/cv/src"
-printf '%s\n' '// selftest: also -swift-version 6' '// selftest: needs the SDK view' 'import Foundation' > "$T/cv/src/b.swift"
-printf '%s\n' '// selftest: needs the SDK view' 'print(1)' > "$T/cv/src/a.swift"
-printf '%s\n' '// a plain test' 'print(2)' '// selftest: needs the SDK view' > "$T/cv/src/c.swift"
-printf '%s\n' 'print(3)' > "$T/cv/src/d.swift"
-left="$(selftest_corpus_without_view "$T/cv/src" "$T/cv/out")" || fail "selftest_corpus_without_view failed"
-[ "$left" = " a.swift b.swift" ] || fail "it left out [$left], not [ a.swift b.swift]"
-[ "$(ls "$T/cv/out" | tr '\n' ' ')" = "c.swift d.swift " ] || fail "the corpus holds $(ls "$T/cv/out" | tr '\n' ' ')"
-cmp -s "$T/cv/src/c.swift" "$T/cv/out/c.swift" || fail "c.swift was not copied as it is"
-left="$(selftest_corpus_without_view "$REPO/tests" "$T/cv/repo")" || fail "selftest_corpus_without_view failed on tests/"
-[ "$left" = " foundation_overlay_test.swift objc_overlay_test.swift" ] || fail "in tests/, it left out [$left]"
-for f in "$T"/cv/repo/*.swift; do
-  if grep -q '^import Foundation$' "$f"; then fail "${f##*/} imports Foundation, and is not marked as needing the SDK view"; fi
-done
 echo "PASS"

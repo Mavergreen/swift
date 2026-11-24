@@ -72,9 +72,7 @@ authors):
   * libswiftDarwin from swift-6.2-RELEASE's stdlib/public/Platform (pins.env's
     SWIFT62_SHA), unmodified;
   * libswiftObjectiveC from swift-5.4-RELEASE's stdlib/public/Darwin/ObjectiveC
-    (pins.env's SWIFT54_SHA), with the local patch in ./patches/overlays:
-  0001  -hash is a method in the 10.9 SDK — call NSObject's hash() where the
-        overlay, written for a later SDK, reads a hash property.
+    (pins.env's SWIFT54_SHA), unmodified;
   * libswiftDispatch from swift-5.4-RELEASE's stdlib/public/Darwin/Dispatch
     (pins.env's SWIFT54_SHA), with the local patches to the Dispatch overlay's
     sources listed below.
@@ -340,6 +338,12 @@ and libswift_Concurrency and libswiftDispatch the APIs named above, under this l
   WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+Both toolchain packages also contain Recaulk's recaulk-materialize program and its data,
+unmodified: lib/swift/sdk-view/bin/recaulk-materialize and
+lib/swift/sdk-view/share/sdk-metadata/recipes.json and profiles.json (the release pinned
+in pins.env, under Recaulk's license above). Their swiftc runs it to make, in the user's
+cache, a view of the user's own Mac OS X 10.9 SDK; neither package contains SDK files.
 
 Both toolchain packages also contain Recaulk's static library itself, unmodified:
 lib/recaulk/librecaulk.a (the release pinned in pins.env, under Recaulk's license

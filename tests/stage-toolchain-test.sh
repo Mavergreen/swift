@@ -14,7 +14,9 @@
 #   fetch-recaulk.sh prints) go to lib/recaulk with its version, which must be pins.env's RECAULK_VERSION;
 #   its dispatch/dispatch.h and pthread/qos.h go to lib/swift/recaulk-importer, with the module map that
 #   lists them and the same VERSION, and Dispatch.apinotes, Foundation.apinotes and CoreGraphics.apinotes
-#   (overlay-sources.sh's) to lib/swift/apinotes.
+#   (overlay-sources.sh's) to lib/swift/apinotes. Its bin/recaulk-materialize and share/sdk-metadata's
+#   recipes.json and profiles.json go to lib/swift/sdk-view at those paths, with swift-foundation.stamp, the line
+#   that tool prints for --print-stamp --profile swift-foundation given those two by absolute path.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -70,7 +72,8 @@ cp -R "$W/recaulk" "$T/rk-old"; fake_recaulk_plist 19990101.1 > "$T/rk-old/maver
 if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$T/rk-old" "$T/out-rk" 2> "$T/err"; then fail "staged Recaulk 19990101.1"; fi
 grep -q "19990101.1" "$T/err" && grep -q "$RECAULK_VERSION" "$T/err" || fail "did not name both Recaulk versions: $(cat "$T/err")"
 [ ! -e "$T/out-rk" ] || fail "wrote a payload before refusing Recaulk 19990101.1"
-for f in lib/librecaulk.a share/recaulk/notices.tsv mavergreen.plist include/recaulk/dispatch/dispatch.h include/recaulk/pthread/qos.h; do
+for f in lib/librecaulk.a share/recaulk/notices.tsv mavergreen.plist include/recaulk/dispatch/dispatch.h include/recaulk/pthread/qos.h \
+         bin/recaulk-materialize share/sdk-metadata/recipes.json share/sdk-metadata/profiles.json; do
   rm -rf "$T/rk-part"; cp -R "$W/recaulk" "$T/rk-part"; rm "$T/rk-part/$f"
   if SWIFT_WORK="$W" sh "$REPO/scripts/stage-toolchain.sh" --recaulk "$T/rk-part" "$T/out-rk" 2> "$T/err"; then fail "staged a Recaulk without $f"; fi
   grep -q "$T/rk-part/$f" "$T/err" || fail "did not name the missing $f: $(cat "$T/err")"
@@ -108,6 +111,8 @@ want="$(printf '%s\n' "$P/bin/clang" "$P/bin/clang.cfg" "$P/bin/clang++.cfg" "$P
   "$P/lib/swift/recaulk-importer/Dispatch.modulemap" \
   "$P/lib/swift/recaulk-importer/VERSION" "$P/lib/swift/recaulk-importer/dispatch/dispatch.h" \
   "$P/lib/swift/recaulk-importer/pthread/qos.h" \
+  "$P/lib/swift/sdk-view/bin/recaulk-materialize" "$P/lib/swift/sdk-view/swift-foundation.stamp" \
+  "$P/lib/swift/sdk-view/share/sdk-metadata/recipes.json" "$P/lib/swift/sdk-view/share/sdk-metadata/profiles.json" \
   "$P/lib/swift/macosx/SwiftOnoneSupport.swiftmodule/x86_64-apple-macos.swiftmodule" \
   "$P/lib/swift/macosx/Darwin.swiftmodule/x86_64-apple-macos.swiftmodule" \
   "$P/lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule" \
@@ -147,6 +152,15 @@ cmp -s "$W/recaulk/include/recaulk/dispatch/dispatch.h" "$RI/dispatch/dispatch.h
 cmp -s "$W/recaulk/include/recaulk/pthread/qos.h" "$RI/pthread/qos.h" || fail "recaulk-importer/pthread/qos.h is not --recaulk's"
 cmp -s "$REPO/toolchain/Dispatch.modulemap" "$RI/Dispatch.modulemap" || fail "recaulk-importer/Dispatch.modulemap is not toolchain/Dispatch.modulemap"
 [ "$(cat "$RI/VERSION")" = "$RECAULK_VERSION" ] || fail "recaulk-importer/VERSION is $(cat "$RI/VERSION"), not $RECAULK_VERSION"
+# What swiftc makes every program's SDK view with: Recaulk's tool and data, and the stamp it printed for them.
+SV="$T/out/$P/lib/swift/sdk-view"
+cmp -s "$W/recaulk/bin/recaulk-materialize" "$SV/bin/recaulk-materialize" && [ -x "$SV/bin/recaulk-materialize" ] \
+  || fail "lib/swift/sdk-view/bin/recaulk-materialize is not --recaulk's, executable"
+for j in recipes profiles; do
+  cmp -s "$W/recaulk/share/sdk-metadata/$j.json" "$SV/share/sdk-metadata/$j.json" || fail "lib/swift/sdk-view's $j.json is not --recaulk's"
+done
+[ "$(cat "$SV/swift-foundation.stamp")" = '{"profile":"swift-foundation","recipes":"recaulk/share/sdk-metadata/recipes.json","profiles":"recaulk/share/sdk-metadata/profiles.json"}' ] \
+  || fail "lib/swift/sdk-view/swift-foundation.stamp is not the tool's --print-stamp line: $(cat "$SV/swift-foundation.stamp")"
 for an in Dispatch Foundation CoreGraphics; do
   [ "$(cat "$T/out/$P/lib/swift/apinotes/$an.apinotes")" = "overlays/src/apinotes/$an.apinotes" ] \
     || fail "lib/swift/apinotes/$an.apinotes is not overlay-sources.sh's"

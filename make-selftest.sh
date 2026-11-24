@@ -11,18 +11,14 @@
 #          in Swift 6 mode, after the first build's flags, into bin/<name>-swift6 and bin/<name>-swift6-Onone,
 #          for a test whose code must compile as a Swift 6 client too; any other flags there fail the bundle.
 #          A test whose first line is `// selftest: skip: <reason>` is built
-#          in neither mode, saying why (none is so marked today). A leading comment line
-#          `// selftest: needs the SDK view` marks a test that compiles only against the SDK view the
-#          Foundation overlays were built with (SDK_VIEW below); it is built like any other here, and
-#          tests/toolchain-smoke-test.sh leaves it out of the corpus it builds while the toolchain's own
-#          swiftc does not apply that view.
+#          in neither mode, saying why (none is so marked today).
 #          Two compilers:
 #            default          the swift.org toolchain build.sh expanded, for x86_64-apple-macosx10.9,
 #                             -no-stdlib-rpath and one rpath, $SWIFT_RUNTIME_PREFIX/lib/swift
 #                             (default /usr/local/mavergreen/swift-runtime). Run after build.sh. As
-#                             build-module.sh compiles the overlays: against the 10.9 SDK (shipyard's
-#                             fetch_sdk.sh, with SDKSettings.json), whose ObjC declarations the tests are
-#                             written to (-hash is a method there, a property in a modern SDK), with
+#                             build-module.sh compiles the overlays: against the SDK view build.sh made
+#                             (SDK_VIEW below), whose ObjC declarations the tests are written to, as the
+#                             toolchain's swiftc shows them to every program, with
 #                             -resource-dir the stdlib build's lib/swift, so the Swift, Darwin and
 #                             ObjectiveC modules imported, and the dylibs linked, are this build's, never
 #                             an SDK's; -runtime-compatibility-version none, as that tree has no
@@ -42,11 +38,13 @@
 #                             ($WORK/overlays/recaulk-importer, $WORK/overlays/src/apinotes: the overlays'
 #                             own, patched), when there; the tests that import Dispatch need both, and so do
 #                             those that import Foundation, whose Swift names come from its API notes.
-#                             SDK_VIEW=<file> is the SDK view (a clang VFS overlay) the importer reads the
-#                             10.9 headers through, after Recaulk's: unset, the one the CoreFoundation,
-#                             CoreGraphics and Foundation overlays were built with,
-#                             $WORK/overlays/sdk-metadata/overlay.json, or, when that is not there, none,
-#                             with a warning naming it. SWIFTC= mode passes none: that swiftc's own.
+#                             SDK_VIEW=<dir> is the SDK view (recaulk-materialize's --out) the tests compile
+#                             against: its sdk/MacOSX10.9.sdk is the SDK, and its overlay.json the clang VFS
+#                             overlay the importer reads the 10.9 headers through, after Recaulk's, as the
+#                             toolchain's swiftc passes them. Unset, the one every overlay was built with,
+#                             $WORK/overlays/sdk-view, or, when that is not there, none: the bare 10.9 SDK
+#                             (fetch_sdk.sh's, with SDKSettings.json), with a warning naming it. SWIFTC= mode
+#                             passes none: that swiftc applies its own.
 #                             Each run's module cache is its own, as the importer's is keyed on none of these.
 #            SWIFTC=<swiftc>  exactly `$SWIFTC -O|-Onone <file> -o <out>`: this repo's own toolchain,
 #                             on 10.9, whose defaults supply target, SDK and rpath. With SWIFT_RUNTIME_PREFIX
@@ -106,7 +104,6 @@ else
   TC="${TC:-${SWIFT_WORK:-$SWIFT_BUILD/work}/toolchain/usr}"
   [ -x "$TC/bin/swiftc" ] || { echo "make-selftest: no swiftc at $TC/bin/swiftc -- run build.sh first" >&2; exit 1; }
   . "$REPO/msc.sh"   # -> $SHIPYARD (fetch_sdk.sh)
-  SDK="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$SHIPYARD/fetch_sdk.sh")" || { echo "make-selftest: could not fetch the 10.9 SDK" >&2; exit 1; }
   RES="${SWIFT_WORK:-$SWIFT_BUILD/work}/stdlib-build/lib/swift"
   [ -f "$RES/macosx/x86_64/libswiftCore.dylib" ] || { echo "make-selftest: no stdlib build at $RES -- run build.sh first" >&2; exit 1; }
   RUNTIME_LIB="${SWIFT_RUNTIME_PREFIX:-/usr/local/mavergreen/swift-runtime}/lib/swift"
@@ -117,25 +114,30 @@ else
   VFSD="$(mktemp -d "${TMPDIR:-/tmp}/make-selftest-vfs.XXXXXX")"; trap 'rm -rf "$VFSD"' EXIT
   IMPFLAGS="-module-cache-path $VFSD/module-cache"
   # What build.sh left for the importer, where the variables are not set: its Dispatch overlay's Recaulk importer
-  # directory and the overlays' patched API notes (Dispatch's, Foundation's and CoreGraphics'), the ones they were built with.
+  # directory, the overlays' patched API notes (Dispatch's, Foundation's and CoreGraphics'), and the SDK view, the
+  # ones they were built with.
   WORK="${SWIFT_WORK:-$SWIFT_BUILD/work}"
   [ -n "${RECAULK_IMPORTER:-}" ] || ! [ -d "$WORK/overlays/recaulk-importer" ] || RECAULK_IMPORTER="$WORK/overlays/recaulk-importer"
   [ -n "${APINOTES:-}" ] || ! [ -d "$WORK/overlays/src/apinotes" ] || APINOTES="$WORK/overlays/src/apinotes"
+  # spec: "The overlays" -- the SDK view every overlay was built against (build.sh's SDK_VIEW): their binary
+  #       swiftmodules name clang declarations as that view shows them, so a test compiled against the bare 10.9
+  #       headers could fail to read them, or quietly see less API.
+  [ -n "${SDK_VIEW:-}" ] || ! [ -d "$WORK/overlays/sdk-view" ] || SDK_VIEW="$WORK/overlays/sdk-view"
+  if [ -n "${SDK_VIEW:-}" ]; then
+    [ -d "$SDK_VIEW/sdk/MacOSX10.9.sdk" ] && [ -f "$SDK_VIEW/overlay.json" ] \
+      || { echo "make-selftest: SDK_VIEW=$SDK_VIEW is no SDK view (no sdk/MacOSX10.9.sdk and overlay.json)" >&2; exit 1; }
+    SDK="$SDK_VIEW/sdk/MacOSX10.9.sdk"
+  else
+    echo "make-selftest: warning: no $WORK/overlays/sdk-view (the overlays' SDK view), so the tests see the bare 10.9 headers" >&2
+    SDK="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$SHIPYARD/fetch_sdk.sh")" || { echo "make-selftest: could not fetch the 10.9 SDK" >&2; exit 1; }
+  fi
+  # In the order the toolchain's swiftc passes them: the importer's overlay, rooted at that SDK, then the view's.
   if [ -n "${RECAULK_IMPORTER:-}" ]; then
     [ -d "$RECAULK_IMPORTER" ] || { echo "make-selftest: RECAULK_IMPORTER=$RECAULK_IMPORTER is no directory" >&2; exit 1; }
     recaulk_vfs_yaml "$SDK" "$RECAULK_IMPORTER" "$VFSD/recaulk-vfs.yaml" || { echo "make-selftest: could not write the importer's overlay for $SDK" >&2; exit 1; }
     IMPFLAGS="$IMPFLAGS -Xcc -ivfsoverlay -Xcc $VFSD/recaulk-vfs.yaml"
   fi
-  # spec: "The overlays" -- the SDK view CoreFoundation, CoreGraphics and Foundation were built against (build.sh's
-  #       FOUNDATION_VFS): their binary swiftmodules name clang declarations as that view shows them, so a test
-  #       compiled against the bare 10.9 headers could fail to read them, or quietly see less API.
-  [ -n "${SDK_VIEW:-}" ] || ! [ -f "$WORK/overlays/sdk-metadata/overlay.json" ] || SDK_VIEW="$WORK/overlays/sdk-metadata/overlay.json"
-  if [ -n "${SDK_VIEW:-}" ]; then
-    [ -f "$SDK_VIEW" ] || { echo "make-selftest: SDK_VIEW=$SDK_VIEW is no file" >&2; exit 1; }
-    IMPFLAGS="$IMPFLAGS -Xcc -ivfsoverlay -Xcc $SDK_VIEW"
-  else
-    echo "make-selftest: warning: no $WORK/overlays/sdk-metadata/overlay.json (the overlays' SDK view), so the tests see the bare 10.9 headers" >&2
-  fi
+  [ -z "${SDK_VIEW:-}" ] || IMPFLAGS="$IMPFLAGS -Xcc -ivfsoverlay -Xcc $SDK_VIEW/overlay.json"
   if [ -n "${APINOTES:-}" ]; then
     [ -d "$APINOTES" ] || { echo "make-selftest: APINOTES=$APINOTES is no directory" >&2; exit 1; }
     IMPFLAGS="$IMPFLAGS -Xcc -iapinotes-modules -Xcc $APINOTES"

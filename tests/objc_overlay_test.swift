@@ -1,10 +1,10 @@
-// selftest: needs the SDK view
 // objc_overlay_test.swift — the ObjectiveC overlay (swift-5.4's) on 10.9.
 //
 // #selector and Selector, autoreleasepool, ObjCBool and NSObject's ==, Hashable and description, from
 // libswiftObjectiveC.dylib over libobjc. The bare 10.9 SDK declares NSObject's -hash a method; the SDK view
-// the Foundation overlays are built with, which every client compiles against, declares it a property, as
-// later SDKs do, so the override is `override var hash: Int`. Exits non-zero on any wrong answer.
+// every overlay is built against, and the toolchain's swiftc compiles every program against, declares it a
+// property, as later SDKs do, so the override is `override var hash: Int`, and the overlay's Hashable reads
+// that property. Exits non-zero on any wrong answer.
 import ObjectiveC
 
 var failures = 0

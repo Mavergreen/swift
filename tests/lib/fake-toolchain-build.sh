@@ -5,7 +5,9 @@
 #          and llvm-x86 (arm64: swift-arm64 and llvm-arm64), build-builtins.sh's builtins-x86, the
 #          llvm-project checkout, overlays/src/apinotes (overlay-sources.sh's Dispatch.apinotes, Foundation.apinotes and CoreGraphics.apinotes); each file holds its own relative path. Called for both hosts, the two
 #          share the rest. And <work-dir>/recaulk, a Recaulk prefix as fetch-recaulk.sh prints one, at
-#          $REPO/pins.env's RECAULK_VERSION, with its include/recaulk/dispatch/dispatch.h and pthread/qos.h (the caller sets REPO). Run stage-toolchain.sh over it with
+#          $REPO/pins.env's RECAULK_VERSION, with its include/recaulk/dispatch/dispatch.h and pthread/qos.h, its
+#          share/sdk-metadata's recipes.json and profiles.json, and a bin/recaulk-materialize that answers only
+#          --print-stamp (fake_recaulk_materialize) (the caller sets REPO). Run stage-toolchain.sh over it with
 #          SWIFT_WORK=<work-dir> and --recaulk <work-dir>/recaulk. Shared, so a test
 #          that needs a staged payload gets the one stage-toolchain.sh really lays out, not a copy that
 #          could drift from it.
@@ -46,10 +48,12 @@ fake_toolchain_build() {
     $_fs/share/swift/diagnostics/generated llvm-project/llvm/LICENSE.TXT \
     builtins-x86/lib/darwin/libclang_rt.osx.a recaulk/lib/librecaulk.a recaulk/share/recaulk/notices.tsv \
     recaulk/include/recaulk/dispatch/dispatch.h recaulk/include/recaulk/pthread/qos.h \
+    recaulk/share/sdk-metadata/recipes.json recaulk/share/sdk-metadata/profiles.json \
     overlays/src/apinotes/Dispatch.apinotes overlays/src/apinotes/Foundation.apinotes overlays/src/apinotes/CoreGraphics.apinotes; do
     mkdir -p "$(dirname "$_fw/$_ff")"; echo "$_ff" > "$_fw/$_ff"
   done
   fake_recaulk_plist "$(sed -n 's/^RECAULK_VERSION="\([^"]*\)".*/\1/p' "$REPO/pins.env")" > "$_fw/recaulk/mavergreen.plist"
+  mkdir -p "$_fw/recaulk/bin" && fake_recaulk_materialize > "$_fw/recaulk/bin/recaulk-materialize" && chmod 755 "$_fw/recaulk/bin/recaulk-materialize"
   unset _fw _ff _fs _fl
 }
 
@@ -58,4 +62,15 @@ fake_recaulk_plist() {
   printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0">' '<dict>' \
     '  <key>identifier</key>' '  <string>dev.mavergreen.recaulk</string>' \
     '  <key>version</key>' "  <string>$1</string>" '</dict>' '</plist>'
+}
+
+# fake_recaulk_materialize -- a bin/recaulk-materialize that answers --print-stamp --profile <name> --recipes <abs>
+# --profiles <abs> with one line naming the profile and both files' contents; any other use, or a relative path,
+# is a usage error (2), as the real one's.
+fake_recaulk_materialize() {
+  printf '%s\n' '#!/bin/sh' 'p=""; r=""; f=""; s=""' \
+    'while [ $# -gt 0 ]; do case "$1" in --print-stamp) s=1; shift ;; --profile) p="$2"; shift 2 ;;' \
+    '  --recipes) r="$2"; shift 2 ;; --profiles) f="$2"; shift 2 ;; *) echo "recaulk-materialize: $1?" >&2; exit 2 ;; esac; done' \
+    'case "$s:$r:$f" in 1:/*:/*) ;; *) echo "recaulk-materialize: usage" >&2; exit 2 ;; esac' \
+    'printf "{\"profile\":\"%s\",\"recipes\":\"%s\",\"profiles\":\"%s\"}\n" "$p" "$(cat "$r")" "$(cat "$f")"'
 }

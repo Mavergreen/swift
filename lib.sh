@@ -174,99 +174,6 @@ recaulk_importer_layout() {
     && cp "$2" "$4/Dispatch.modulemap" && echo "$3" > "$4/VERSION"
 }
 
-# recaulk_sdk_metadata_profile <profiles.json> <name> -- prints, one per line and in the file's order, the
-# recipe ids of profile <name> in <profiles.json> (Recaulk's share/sdk-metadata/profiles.json, schema 1:
-# {"schema":1,"profiles":{"<name>":{"description":...,"recipes":[<id>...]}}}), as read by
-# ${CMAKE:-shipyard-cmake} -P's string(JSON). It fails closed, printing nothing: when the file is missing or
-# is not JSON, its schema is not the number 1, <name> is not a profile in it, or the profile's recipes are
-# missing, empty, or hold anything but a plain id ([A-Za-z0-9._-]), which a caller may word-split.
-# spec: shipyard's mavericks_materialize_sdk_metadata takes IDS, so a caller passes these to
-#       recaulk_sdk_metadata_vfs; when it takes PROFILE <name>, the name goes to it instead and this goes.
-recaulk_sdk_metadata_profile() {
-  [ $# -eq 2 ] || { echo "recaulk_sdk_metadata_profile: usage: <profiles.json> <name>" >&2; return 1; }
-  [ -f "$1" ] || { echo "recaulk_sdk_metadata_profile: no $1" >&2; return 1; }
-  case "$2" in ''|*[!A-Za-z0-9._-]*) echo "recaulk_sdk_metadata_profile: '$2' is not a profile name" >&2; return 1 ;; esac
-  _rsp_t="$(mktemp -d "${TMPDIR:-/tmp}/sdk-metadata-profile.XXXXXX")" || return 1
-  cat > "$_rsp_t/p.cmake" <<'CMAKE'
-file(READ "${JSON}" j)
-string(JSON t ERROR_VARIABLE e TYPE "${j}" schema)
-if(e OR NOT t STREQUAL "NUMBER")
-  message(FATAL_ERROR "${JSON} has no numeric schema")
-endif()
-string(JSON s GET "${j}" schema)
-if(NOT s STREQUAL "1")
-  message(FATAL_ERROR "${JSON} is schema ${s}, not 1")
-endif()
-string(JSON t ERROR_VARIABLE e TYPE "${j}" profiles "${NAME}" recipes)
-if(e OR NOT t STREQUAL "ARRAY")
-  message(FATAL_ERROR "${JSON} has no profile ${NAME} with a recipes list")
-endif()
-string(JSON n LENGTH "${j}" profiles "${NAME}" recipes)
-if(n EQUAL 0)
-  message(FATAL_ERROR "${JSON}'s profile ${NAME} lists no recipes")
-endif()
-math(EXPR last "${n} - 1")
-set(ids "")
-foreach(i RANGE ${last})
-  string(JSON t TYPE "${j}" profiles "${NAME}" recipes ${i})
-  string(JSON id GET "${j}" profiles "${NAME}" recipes ${i})
-  if(NOT t STREQUAL "STRING" OR NOT id MATCHES "^[A-Za-z0-9._-]+$")
-    message(FATAL_ERROR "${JSON}'s profile ${NAME} lists '${id}', not a recipe id")
-  endif()
-  string(APPEND ids "${id}\n")
-endforeach()
-file(WRITE "${OUT}" "${ids}")
-CMAKE
-  if "${CMAKE:-shipyard-cmake}" -DJSON="$1" -DNAME="$2" -DOUT="$_rsp_t/ids" -P "$_rsp_t/p.cmake" >&2 && [ -s "$_rsp_t/ids" ]; then
-    cat "$_rsp_t/ids"; rm -rf "$_rsp_t"; return 0
-  fi
-  rm -rf "$_rsp_t"; echo "recaulk_sdk_metadata_profile: could not read profile $2 of $1" >&2; return 1
-}
-
-# recaulk_sdk_metadata_vfs <sdk> <recipes.json> <out-dir> <id>... -- materializes the Recaulk sdk-metadata
-# recipes <id>... of <recipes.json> (Recaulk's share/sdk-metadata) with shipyard's
-# mavericks_materialize_sdk_metadata (MavericksSDKMetadata.cmake, beside $SHIPYARD; run by ${CMAKE:-shipyard-cmake}
-# -P): the edited headers and <out-dir>/overlay.json, a clang VFS overlay (-Xcc -ivfsoverlay) naming each header
-# under <sdk>, fetch_sdk.sh's with-sdk-settings-json view that build.sh compiles the overlays against. <out-dir>
-# is replaced; nothing is left there when a recipe fails its check or a name is not moved under <sdk>.
-# spec: temporary -- shipyard's function refuses the view itself (its System and usr are links out of it), so
-#       the recipes are materialized over the SDK the view's System resolves into, and each header's name is
-#       moved under <sdk>. When shipyard reads the view, this function becomes the one call.
-recaulk_sdk_metadata_vfs() {
-  _rsm_sdk="$1"; _rsm_recipes="$2"; _rsm_out="$3"; shift 3
-  _rsm_mod="${SHIPYARD:-}/../MavericksSDKMetadata.cmake"
-  [ -f "$_rsm_mod" ] || { echo "recaulk_sdk_metadata_vfs: no $_rsm_mod -- set SHIPYARD (msc.sh) to a shipyard with it" >&2; return 1; }
-  [ $# -gt 0 ] || { echo "recaulk_sdk_metadata_vfs: no recipe ids" >&2; return 1; }
-  _rsm_sys="$(CDPATH='' cd -P -- "$_rsm_sdk/System" 2>/dev/null && pwd -P)" \
-    || { echo "recaulk_sdk_metadata_vfs: no $_rsm_sdk/System" >&2; return 1; }
-  _rsm_plain="${_rsm_sys%/System}"
-  [ "$_rsm_plain" != "$_rsm_sys" ] && [ -d "$_rsm_plain/usr/include" ] \
-    || { echo "recaulk_sdk_metadata_vfs: $_rsm_sdk/System resolves to $_rsm_sys, not an SDK's System" >&2; return 1; }
-  case "$_rsm_plain$_rsm_sdk$_rsm_out" in *'|'*|*'"'*|*'
-'*) echo "recaulk_sdk_metadata_vfs: a | quote or newline in a path" >&2; return 1 ;; esac
-  # The paths as a basic regular expression and as a sed replacement, delimited by |.
-  _rsm_re="$(printf '%s\n' "$_rsm_plain" | sed 's/[][\\.*^$]/\\&/g')"
-  _rsm_rep="$(printf '%s\n' "$_rsm_sdk" | sed 's/[\\&]/\\&/g')"
-  _rsm_sre="$(printf '%s\n' "$_rsm_sdk" | sed 's/[][\\.*^$]/\\&/g')"
-  _rsm_name='"name"[[:space:]]*:[[:space:]]*"'
-  rm -rf "$_rsm_out" || return 1
-  _rsm_t="$(mktemp -d "${TMPDIR:-/tmp}/sdk-metadata.XXXXXX")" || return 1
-  printf '%s\n' "include(\"$_rsm_mod\")" \
-    'mavericks_materialize_sdk_metadata(VFS SDK "${SDK}" RECIPES "${RECIPES}" IDS ${IDS} OUTPUT_DIR "${OUT}")' > "$_rsm_t/m.cmake"
-  _rsm_ids="$(printf '%s;' "$@")"
-  if "${CMAKE:-shipyard-cmake}" -DSDK="$_rsm_plain" -DRECIPES="$_rsm_recipes" -DIDS="${_rsm_ids%;}" -DOUT="$_rsm_out" -P "$_rsm_t/m.cmake" >&2 \
-    && sed "s|\\($_rsm_name\\)$_rsm_re/|\\1$_rsm_rep/|g" "$_rsm_out/overlay.json" > "$_rsm_t/overlay.json"; then
-    if ! grep -q "$_rsm_name$_rsm_sre/" "$_rsm_t/overlay.json"; then
-      echo "recaulk_sdk_metadata_vfs: no header in $_rsm_out/overlay.json is named under $_rsm_plain, to move under $_rsm_sdk" >&2
-    elif grep -Fq "\"$_rsm_plain/" "$_rsm_t/overlay.json"; then
-      echo "recaulk_sdk_metadata_vfs: $_rsm_out/overlay.json still names a path under $_rsm_plain" >&2
-    else
-      mv "$_rsm_t/overlay.json" "$_rsm_out/overlay.json" && rm -rf "$_rsm_t" && return 0
-    fi
-  fi
-  rm -rf "$_rsm_t" "$_rsm_out"; echo "recaulk_sdk_metadata_vfs: could not materialize $* over $_rsm_plain" >&2; return 1
-}
-
 # patch_source <dir> <patch>... -- applies each <patch> (an absolute path, -p0 paths as patches/ holds
 # them) to the source tree <dir>, in order, with the OS's patch: OS X 10.9's GNU patch 2.5.8 and a modern
 # Mac's BSD patch 2.0 write the same bytes. Each is first tried with --dry-run, so one that does not
@@ -714,36 +621,19 @@ compiler_patches() {
   [ "$_cp_n" -gt 0 ] || { echo "compiler_patches: no $1 patches in $2" >&2; return 1; }
 }
 
-# selftest_corpus_without_view <tests-dir> <out-dir> -- copies each <tests-dir>/*.swift into <out-dir> but those
-# whose leading comment lines hold `// selftest: needs the SDK view` (make-selftest.sh's usage), and prints the
-# names of those it leaves out, each after a space, on one line: the corpus a swiftc that does not apply the SDK
-# view the Foundation overlays were built with can build.
-selftest_corpus_without_view() {
-  mkdir -p "$2" || return 1
-  _cv_left=""
-  for _cv_f in "$1"/*.swift; do
-    [ -f "$_cv_f" ] || continue
-    if sed -n '/^\/\//!q; p' "$_cv_f" | grep -qx '// selftest: needs the SDK view'; then
-      _cv_left="$_cv_left ${_cv_f##*/}"
-    else
-      cp "$_cv_f" "$2/" || return 1
-    fi
-  done
-  printf '%s\n' "$_cv_left"
-}
-
 # toolchain_digest <toolchain-prefix> -- one line of `<path>=<sha256>` entries, one space apart, sorted by
 # <path> (relative to the prefix), for every file under toolchain_stdlib_trees with lib/clang/<v>/lib: the
 # stdlib's dylibs, the swiftmodules whose inlinable code lands in every program a toolchain builds, the shims,
 # the API notes (Dispatch's, Foundation's and CoreGraphics') and Recaulk's dispatch declarations (what the
-# importer shows every program of Dispatch), the builtins archive, and Recaulk's archive (which the ld
+# importer shows every program of Dispatch), Recaulk's recaulk-materialize, data and stamp (every program's SDK
+# view), the builtins archive, and Recaulk's archive (which the ld
 # wrapper links into every program) with its notices and version. The two toolchain pkgs must carry them byte for
 # byte: in CI build-cross builds them once and stages them in the cross toolchain, and build stages the
 # cross pkg's copy in the native one, so a difference is a staging fault; each job digests what it
 # staged, and collect compares the two. Fails, naming it, when an anchor is missing (the nine dylibs; Swift's,
 # Darwin's, ObjectiveC's, Dispatch's, CoreFoundation's, CoreGraphics', Foundation's, _Concurrency's and
 # _Builtin_float's swiftmodule; the shims' module.modulemap; the three API notes; Recaulk's dispatch.h for the
-# importer; the builtins archive; Recaulk's archive and notices), or a tree holds a link, a
+# importer; the SDK view's stamp; the builtins archive; Recaulk's archive and notices), or a tree holds a link, a
 # path with a space, or a file that cannot be hashed: two jobs that each printed nothing, or less than
 # the whole trees, must never compare equal.
 toolchain_digest() {
@@ -765,11 +655,11 @@ toolchain_digest() {
                lib/swift/macosx/ObjectiveC.swiftmodule/x86_64-apple-macos.swiftmodule lib/swift/shims/module.modulemap \
                lib/swift/apinotes/Dispatch.apinotes lib/swift/apinotes/Foundation.apinotes \
                lib/swift/apinotes/CoreGraphics.apinotes lib/swift/recaulk-importer/dispatch/dispatch.h \
-               "$_td_cl/darwin/libclang_rt.osx.a" lib/recaulk/librecaulk.a lib/recaulk/notices.tsv; do
+               lib/swift/sdk-view/swift-foundation.stamp "$_td_cl/darwin/libclang_rt.osx.a" lib/recaulk/librecaulk.a lib/recaulk/notices.tsv; do
     [ -f "$1/$_td_f" ] || { echo "toolchain_digest: no $1/$_td_f" >&2; return 1; }
   done
   _td_list="$(cd "$1" && find $(toolchain_stdlib_trees "$_td_cl") ! -type d)" \
-    || { echo "toolchain_digest: could not list $1's stdlib, shims, apinotes, importer, builtins and Recaulk" >&2; return 1; }
+    || { echo "toolchain_digest: could not list $1's stdlib, shims, apinotes, importer, SDK view, builtins and Recaulk" >&2; return 1; }
   _td_list="$(printf '%s\n' "$_td_list" | LC_ALL=C sort)"
   _td_line=""
   while IFS= read -r _td_f; do
@@ -793,7 +683,7 @@ toolchain_digest_whole() {
   case "$1" in
     ' '*|*' '|*'  '*) echo "toolchain_digest: the line holds an empty entry" >&2; return 1 ;;
   esac
-  _tw_core=""; _tw_onone=""; _tw_mod=""; _tw_map=""; _tw_rt=""; _tw_dar=""; _tw_objc=""; _tw_dmod=""; _tw_omod=""; _tw_disp=""; _tw_dimod=""; _tw_conc=""; _tw_cmod=""; _tw_bmod=""; _tw_rk=""; _tw_rkn=""; _tw_apn=""; _tw_imp=""
+  _tw_core=""; _tw_onone=""; _tw_mod=""; _tw_map=""; _tw_rt=""; _tw_dar=""; _tw_objc=""; _tw_dmod=""; _tw_omod=""; _tw_disp=""; _tw_dimod=""; _tw_conc=""; _tw_cmod=""; _tw_bmod=""; _tw_rk=""; _tw_rkn=""; _tw_apn=""; _tw_imp=""; _tw_sv=""
   _tw_cf=""; _tw_cg=""; _tw_fd=""; _tw_cfmod=""; _tw_cgmod=""; _tw_fdmod=""; _tw_fdapn=""; _tw_cgapn=""
   while IFS= read -r _tw_e; do
     _tw_h="${_tw_e#*=}"
@@ -825,6 +715,7 @@ toolchain_digest_whole() {
       lib/swift/apinotes/Foundation.apinotes) _tw_fdapn=1 ;;
       lib/swift/apinotes/CoreGraphics.apinotes) _tw_cgapn=1 ;;
       lib/swift/recaulk-importer/dispatch/dispatch.h) _tw_imp=1 ;;
+      lib/swift/sdk-view/swift-foundation.stamp) _tw_sv=1 ;;
       lib/clang/*/lib/darwin/libclang_rt.osx.a) _tw_rt=1 ;;
       lib/recaulk/librecaulk.a) _tw_rk=1 ;;
       lib/recaulk/notices.tsv) _tw_rkn=1 ;;
@@ -856,6 +747,7 @@ EOF
   [ -n "$_tw_fdapn" ] || _tw_miss="$_tw_miss lib/swift/apinotes/Foundation.apinotes"
   [ -n "$_tw_cgapn" ] || _tw_miss="$_tw_miss lib/swift/apinotes/CoreGraphics.apinotes"
   [ -n "$_tw_imp" ] || _tw_miss="$_tw_miss lib/swift/recaulk-importer/dispatch/dispatch.h"
+  [ -n "$_tw_sv" ] || _tw_miss="$_tw_miss lib/swift/sdk-view/swift-foundation.stamp"
   [ -n "$_tw_rt" ] || _tw_miss="$_tw_miss lib/clang/<v>/lib/darwin/libclang_rt.osx.a"
   [ -n "$_tw_rk" ] || _tw_miss="$_tw_miss lib/recaulk/librecaulk.a"
   [ -n "$_tw_rkn" ] || _tw_miss="$_tw_miss lib/recaulk/notices.tsv"
@@ -1030,12 +922,13 @@ stdlib_layout() {
 # toolchain's build makes alike wherever it runs and that two toolchain pkgs must carry byte for byte, one
 # per line: lib/swift/macosx and lib/swift/shims (the stdlib), lib/swift/apinotes and lib/swift/recaulk-importer
 # (Dispatch.apinotes and Recaulk's dispatch declarations, which the importer reads for every program that imports
-# Dispatch), lib/recaulk (Recaulk's archive, which every program links), then each <clang-lib-dir> given (the
+# Dispatch), lib/swift/sdk-view (Recaulk's recaulk-materialize, its recipes and profiles and the stamp, with which
+# swiftc makes every program's SDK view), lib/recaulk (Recaulk's archive, which every program links), then each <clang-lib-dir> given (the
 # builtins archive's lib/clang/<v>/lib, which the caller names: toolchain_digest the one its resource dir
 # is, toolchain_release_files every one there is). One definition for both, so what is digested and what
 # is compared cannot drift apart.
 toolchain_stdlib_trees() {
-  printf '%s\n' lib/swift/macosx lib/swift/shims lib/swift/apinotes lib/swift/recaulk-importer lib/recaulk
+  printf '%s\n' lib/swift/macosx lib/swift/shims lib/swift/apinotes lib/swift/recaulk-importer lib/swift/sdk-view lib/recaulk
   for _ts_c in "$@"; do printf '%s\n' "$_ts_c"; done
 }
 

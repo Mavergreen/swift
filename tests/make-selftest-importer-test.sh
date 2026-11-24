@@ -4,10 +4,11 @@
 #   make-selftest.sh's default mode (the swift.org compiler, whose swiftc is not this repo's wrapper) must hand
 #   the compiler `-Xcc -ivfsoverlay -Xcc <yaml>` when RECAULK_IMPORTER names a toolchain's
 #   lib/swift/recaulk-importer, the YAML lib.sh's recaulk_vfs_yaml writes for the 10.9 SDK and that directory,
-#   then `-Xcc -ivfsoverlay -Xcc <json>` when SDK_VIEW names the SDK view the overlays were built with (unset, the
-#   build root's overlays/sdk-metadata/overlay.json, when there; when not, a one-line warning naming it), and
+#   then `-Xcc -ivfsoverlay -Xcc <json>` when SDK_VIEW names the SDK view the overlays were built with (a directory
+#   recaulk-materialize made: -sdk its sdk/MacOSX10.9.sdk, which the YAML is then written for, and its overlay.json;
+#   unset, the build root's overlays/sdk-view, when there; when not, a one-line warning naming it), and
 #   `-Xcc -iapinotes-modules -Xcc <dir>` when APINOTES does, on every compile; none, when none is set and the build root has no overlays/ (else that root's importer directory, SDK view and apinotes); every compile has its own private -module-cache-path, which is removed;
-#   a name that is no directory (no file, for SDK_VIEW) is refused before anything is compiled; and no temporary YAML is left behind.
+#   a name that is no directory (no SDK view, for SDK_VIEW) is refused before anything is compiled; and no temporary YAML is left behind.
 #   A fake compiler records its arguments and reads the YAML while it runs. SKIPs without a shipyard.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -34,7 +35,7 @@ run() {  # run <env assignments>... -- the default mode over the fake toolchain
 rm -f "$T/argv"
 run || { cat "$T/log"; fail "make-selftest.sh failed with no importer"; }
 ! grep -q -e '-ivfsoverlay\|-iapinotes-modules' "$T/argv" || fail "importer flags without the variables: $(cat "$T/argv")"
-[ "$(grep -c "$T/work/overlays/sdk-metadata/overlay.json" "$T/log")" = 1 ] \
+[ "$(grep -c "$T/work/overlays/sdk-view" "$T/log")" = 1 ] \
   || fail "no one-line warning naming the missing SDK view: $(cat "$T/log")"
 
 rm -f "$T/argv" "$T/yaml-seen"
@@ -58,24 +59,28 @@ while IFS= read -r line; do
 done < "$T/argv"
 [ -s "$T/yaml-seen" ] || fail "the compiler read no YAML from the build root's importer"
 [ -z "$(ls -A "$T/tmp")" ] || fail "a temporary file is left in TMPDIR: $(ls -A "$T/tmp")"
-grep -q "$T/work/overlays/sdk-metadata/overlay.json" "$T/log" || fail "no warning naming the build root's missing SDK view: $(cat "$T/log")"
+grep -q "$T/work/overlays/sdk-view" "$T/log" || fail "no warning naming the build root's missing SDK view: $(cat "$T/log")"
 
-# The SDK view the overlays were built with: the build root's, after the importer's YAML, and SDK_VIEW overrides it.
-mkdir -p "$T/work/overlays/sdk-metadata"; echo '{}' > "$T/work/overlays/sdk-metadata/overlay.json"; echo '{}' > "$T/other-view.json"
+# The SDK view the overlays were built with: the build root's, its SDK the compile's and the YAML's, its overlay
+# after the importer's YAML; SDK_VIEW overrides it.
+V="$T/work/overlays/sdk-view"; OV="$T/other-view"
+mkdir -p "$V/sdk/MacOSX10.9.sdk" "$OV/sdk/MacOSX10.9.sdk"; echo '{}' > "$V/overlay.json"; echo '{}' > "$OV/overlay.json"
 rm -f "$T/argv" "$T/yaml-seen"
 run || { cat "$T/log"; fail "make-selftest.sh failed with the build root's SDK view"; }
 [ "$(grep -c . "$T/argv")" = 2 ] || fail "not two compiles (-O, -Onone): $(cat "$T/argv")"
 while IFS= read -r line; do
-  case "$line" in *"<-Xcc><-ivfsoverlay><-Xcc><"*"><-Xcc><-ivfsoverlay><-Xcc><$T/work/overlays/sdk-metadata/overlay.json><-Xcc><-iapinotes-modules><-Xcc><$T/work/overlays/src/apinotes>"*) ;;
+  case "$line" in *"<-sdk><$V/sdk/MacOSX10.9.sdk>"*) ;; *) fail "a compile is not against the view's SDK: $line" ;; esac
+  case "$line" in *"<-Xcc><-ivfsoverlay><-Xcc><"*"><-Xcc><-ivfsoverlay><-Xcc><$V/overlay.json><-Xcc><-iapinotes-modules><-Xcc><$T/work/overlays/src/apinotes>"*) ;;
     *) fail "a compile lacks the build root's SDK view after the importer's YAML: $line" ;; esac
 done < "$T/argv"
-[ -s "$T/yaml-seen" ] && ! cmp -s "$T/yaml-seen" "$T/work/overlays/sdk-metadata/overlay.json" || fail "the importer's YAML is not the first overlay"
-! grep -q "sdk-metadata/overlay.json" "$T/log" || fail "warned of an SDK view that is there: $(cat "$T/log")"
+recaulk_vfs_yaml "$V/sdk/MacOSX10.9.sdk" "$T/work/overlays/recaulk-importer" "$T/want-view.yaml" || fail "recaulk_vfs_yaml failed"
+cmp -s "$T/want-view.yaml" "$T/yaml-seen" || fail "the importer's YAML is not lib.sh's for the view's SDK: $(cat "$T/yaml-seen")"
+! grep -q "warning" "$T/log" || fail "warned of an SDK view that is there: $(cat "$T/log")"
 rm -f "$T/argv"
-run SDK_VIEW="$T/other-view.json" || { cat "$T/log"; fail "make-selftest.sh failed with SDK_VIEW"; }
+run SDK_VIEW="$OV" || { cat "$T/log"; fail "make-selftest.sh failed with SDK_VIEW"; }
 while IFS= read -r line; do
-  case "$line" in *"<-ivfsoverlay><-Xcc><$T/other-view.json>"*) ;; *) fail "SDK_VIEW did not override the build root's: $line" ;; esac
-  case "$line" in *"$T/work/overlays/sdk-metadata/overlay.json"*) fail "the build root's SDK view, though SDK_VIEW names another: $line" ;; esac
+  case "$line" in *"<-sdk><$OV/sdk/MacOSX10.9.sdk>"*"<-ivfsoverlay><-Xcc><$OV/overlay.json>"*) ;; *) fail "SDK_VIEW did not override the build root's: $line" ;; esac
+  case "$line" in *"$V/"*) fail "the build root's SDK view, though SDK_VIEW names another: $line" ;; esac
 done < "$T/argv"
 rm -rf "$T/work/overlays"
 
@@ -86,7 +91,8 @@ for v in RECAULK_IMPORTER APINOTES; do
   [ ! -e "$T/argv" ] || fail "compiled with $v naming no directory"
 done
 rm -f "$T/argv"
-if run SDK_VIEW="$T/no-such-view.json"; then fail "SDK_VIEW naming no file was accepted"; fi
-grep -q "$T/no-such-view.json" "$T/log" || fail "SDK_VIEW's missing file was not named: $(cat "$T/log")"
-[ ! -e "$T/argv" ] || fail "compiled with SDK_VIEW naming no file"
+mkdir -p "$T/no-view"; echo '{}' > "$T/no-view/overlay.json"
+if run SDK_VIEW="$T/no-view"; then fail "SDK_VIEW naming no SDK view was accepted"; fi
+grep -q "$T/no-view" "$T/log" || fail "SDK_VIEW's missing view was not named: $(cat "$T/log")"
+[ ! -e "$T/argv" ] || fail "compiled with SDK_VIEW naming no SDK view"
 echo PASS

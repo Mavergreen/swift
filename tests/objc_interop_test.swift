@@ -1,11 +1,11 @@
 // objc_interop_test.swift — objc-interop class realization on 10.9: an NSObject subclass, messaged
 // through real Objective-C dispatch. Builds with or without the ObjectiveC overlay: BOOL is Int8 without
-// it (the bare Clang module) and Bool with it (this repo's toolchains since libswiftObjectiveC). The 10.9
-// SDK has no nullability, so against it NSObject's init is failable either way (MyObj() is MyObj?), and
-// its -hash is a method; a newer SDK's init is not failable and its hash is a property. So the instance
-// is held optional and each form is taken as it comes; swift.org's toolchain, with a newer SDK, takes the
-// same lines unchanged, its nil guard dead code, kept so the one source means the same on both. The
-// ObjectiveC overlay's own surface is objc_overlay_test.swift.
+// it (the bare Clang module) and Bool with it (this repo's toolchains since libswiftObjectiveC). The bare
+// 10.9 SDK has no nullability, so against it NSObject's init is failable (MyObj() is MyObj?), and its -hash
+// is a method; the SDK view this repo's swiftc compiles every program against, like a newer SDK, makes init
+// not failable and hash a property. So the instance is held optional and each form is taken as it comes; a
+// compiler given either SDK takes the same lines unchanged, the nil guard dead code against the view, kept so
+// the one source means the same on both. The ObjectiveC overlay's own surface is objc_overlay_test.swift.
 import ObjectiveC
 
 var acc: UInt64 = 0
@@ -14,7 +14,7 @@ func mix(_ n: Int)    { mix(UInt64(truncatingIfNeeded: n)) }
 func mix(_ s: String) { mix(UInt64(truncatingIfNeeded: s.hashValue) ^ UInt64(s.count)) }
 func mix(_ b: Bool)   { mix(UInt64(b ? 0x9E37 : 0x1)) }
 func mix(_ b: Int8)   { mix(b != 0) }   // BOOL, without the overlay
-// The 10.9 SDK declares -hash a method, a newer one a property: o.hash is () -> Int there, Int here.
+// The bare 10.9 SDK declares -hash a method, the view a property: o.hash is () -> Int there, Int here.
 func value(_ f: () -> Int) -> Int { f() }
 func value(_ v: Int) -> Int { v }
 

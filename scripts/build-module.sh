@@ -3,7 +3,7 @@
 #   usage: build-module.sh --name <Module> --link-name <swiftX> --sdk <sdk> --resource-dir <stdlib lib/swift>
 #            --availability <availability-macros.def> --work <dir> --out <dir>
 #            [--I <dir>]... [--link <file>]... [--unexported <list>] [--flag <word>]... [--runtime-floor]
-#            [--recaulk-importer <dir>] [--apinotes <dir>]
+#            [--recaulk-importer <dir>] [--sdk-view <overlay.json>] [--apinotes <dir>]
 #            -- <source.swift>...
 #          Compiles one Swift module beside the stdlib, as the stdlib's CMake compiles its own libraries,
 #          for x86_64-apple-macosx$DEPLOYMENT (pins.env): <out>/<Module>.swiftmodule/x86_64-apple-macos.swiftmodule
@@ -19,7 +19,9 @@
 #          --recaulk-importer, a toolchain's lib/swift/recaulk-importer (stage-toolchain.sh lays it out), gives the
 #          clang importer Recaulk's dispatch declarations, as the toolchain's swiftc gives them to every program:
 #          `-Xcc -ivfsoverlay -Xcc <work>/recaulk-vfs.yaml`, the YAML lib.sh's recaulk_vfs_yaml writes for <sdk>
-#          and <dir>; --apinotes, a directory of Dispatch.apinotes, `-Xcc -iapinotes-modules -Xcc <dir>` (the
+#          and <dir>; --sdk-view, the clang VFS overlay of the SDK view <sdk> is (recaulk-materialize's overlay.json),
+#          `-Xcc -ivfsoverlay -Xcc <overlay.json>` after the importer's, in the order the toolchain's swiftc passes
+#          them to every program; --apinotes, a directory of Dispatch.apinotes, `-Xcc -iapinotes-modules -Xcc <dir>` (the
 #          resource dir is the stdlib build's, which holds none); --runtime-floor, for test support only (never a shipped module): every released SwiftStdlib
 #          version, and its StdlibDeploymentTarget, means macOS $DEPLOYMENT, as compiler patch 0003 reads
 #          the runtime pkg's own modules below 10.14.4, because test support runs only on this runtime,
@@ -41,7 +43,7 @@
 set -eu
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 usage() { sed -n '3,7p' "$0" | sed 's/^#   *//' >&2; exit 2; }
-NAME=""; LINKNAME=""; SDK=""; RES=""; AVAIL=""; WORK=""; OUT=""; INCS=""; LINKS=""; UNX=""; FLAGS=""; FLOOR=""; IMPORTER=""; APINOTES=""
+NAME=""; LINKNAME=""; SDK=""; RES=""; AVAIL=""; WORK=""; OUT=""; INCS=""; LINKS=""; UNX=""; FLAGS=""; FLOOR=""; IMPORTER=""; SDKVIEW=""; APINOTES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --name) NAME="$2"; shift 2 ;;
@@ -57,6 +59,7 @@ while [ $# -gt 0 ]; do
     --flag) FLAGS="$FLAGS $2"; shift 2 ;;
     --runtime-floor) FLOOR=1; shift ;;
     --recaulk-importer) IMPORTER="$2"; shift 2 ;;
+    --sdk-view) SDKVIEW="$2"; shift 2 ;;
     --apinotes) APINOTES="$2"; shift 2 ;;
     --) shift; break ;;
     *) echo "build-module.sh: unknown argument '$1'" >&2; usage ;;
@@ -73,6 +76,7 @@ for f in "$@"; do [ -f "$f" ] || { echo "build-module.sh: $NAME has no source $f
 [ ! -d "$SDK/usr/lib/swift" ] || { echo "build-module.sh: $SDK has usr/lib/swift, Apple's Swift modules" >&2; exit 1; }
 [ -d "$RES/macosx" ] || { echo "build-module.sh: $RES has no macosx/ (the stdlib's Swift module)" >&2; exit 1; }
 [ -z "$IMPORTER" ] || [ -d "$IMPORTER" ] || { echo "build-module.sh: no importer directory $IMPORTER" >&2; exit 1; }
+[ -z "$SDKVIEW" ] || [ -f "$SDKVIEW" ] || { echo "build-module.sh: no SDK view overlay $SDKVIEW" >&2; exit 1; }
 [ -z "$APINOTES" ] || [ -d "$APINOTES" ] || { echo "build-module.sh: no apinotes directory $APINOTES" >&2; exit 1; }
 for v in "$UNX" ${LINKS}; do
   case "$v" in ""|-Xlinker) ;; *) [ -f "$v" ] || { echo "build-module.sh: no link input $v" >&2; exit 1; } ;; esac
@@ -120,11 +124,12 @@ if [ -n "$IMPORTER" ]; then
   recaulk_vfs_yaml "$SDK" "$IMPORTER" "$WORK/recaulk-vfs.yaml" || { echo "build-module.sh: could not write the importer's overlay for $SDK" >&2; exit 1; }
   IMPFLAGS="-Xcc -ivfsoverlay -Xcc $WORK/recaulk-vfs.yaml"
 fi
+[ -z "$SDKVIEW" ] || IMPFLAGS="$IMPFLAGS -Xcc -ivfsoverlay -Xcc $SDKVIEW"
 [ -z "$APINOTES" ] || IMPFLAGS="$IMPFLAGS -Xcc -iapinotes-modules -Xcc $APINOTES"
 UNXFLAGS=""; [ -z "$UNX" ] || UNXFLAGS="-Xlinker -unexported_symbols_list -Xlinker $UNX"
 # shellcheck disable=SC2086  # every word is space-free: the build root (lib.sh refuses whitespace), the
 #                              SDK cache, the toolchain prefix, each --flag (one word apiece), and the importer's
-#                              and apinotes' directories
+#                              and apinotes' directories and the SDK view's overlay
 _bm_rc=0
 "$SWIFTC" -sdk "$SDK" -target "$ARCH-apple-macosx$DEPLOYMENT" -resource-dir "$RES" \
   -I "$OUT" $INCS -L "$OUT/$ARCH" -L "$RES/macosx/$ARCH" -L "$RES/macosx" \

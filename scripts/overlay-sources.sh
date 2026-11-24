@@ -104,10 +104,8 @@ done
 
 # Patches are -p0 from a tree root, applied to a copy of the file at its own path (the tree stays
 # upstream's bytes), in OVERLAY_PATCHES' order; a patch the list lacks fails, as build.sh's runtime ones do.
-# 0001 is from the 5.4 root; 0002's file is in the SWIFT_SHA tree (<swift-tree>), not the 5.4 one, so both
+# Most are from the 5.4 root; 0002's file is in the SWIFT_SHA tree (<swift-tree>), not the 5.4 one, so both
 # copies sit under one scratch root, $OUT/.patch, each at its own tree-relative path.
-#  0001 hash is a method -- the 10.9 SDK's NSObject declares -hash a method, later SDKs a @property, so
-#       `hash` becomes `hash()` three times.
 #  0002 apinotes -- Dispatch.apinotes: NoEscape on parameter 1 of dispatch_sync and dispatch_barrier_sync (10.9's
 #       headers lack DISPATCH_NOESCAPE, which a C redeclaration cannot add as far as Swift sees), and
 #       SwiftWrapper: struct on dispatch_block_flags_t (Recaulk declares it a plain integer, not an option set).
@@ -178,7 +176,8 @@ done
 #       that stdlib's copy) hands the initializer's closure nil buffers, whose base addresses 5.4's in-place
 #       bridges, conditional and forced, force-unwrapped: a trap on every {} JSONDecoder reads.
 #  0042 is retired: Recaulk declares -[NSObject init] nonnull, so an untyped let of its result is not optional.
-OVERLAY_PATCHES="0001 0002 0003 0004 0005 0006 0008 0009 0010 0011 0012 0013 0014 0015 0016 0017 0018 0019 0020 0021
+#  0001 is retired: the SDK view every overlay is built against declares NSObject's hash a property, as 5.4 reads it.
+OVERLAY_PATCHES="0002 0003 0004 0005 0006 0008 0009 0010 0011 0012 0013 0014 0015 0016 0017 0018 0019 0020 0021
   0022 0023 0024 0025 0026 0027 0028 0029 0030 0031 0032 0033 0034 0035 0036 0037 0038 0039 0040 0041 0043
   0044 0045 0046 0047 0048"
 PATCHES_DIR="$HERE/patches/overlays"
@@ -207,7 +206,6 @@ done
 for n in $OVERLAY_PATCHES; do
   for p in "$PATCHES_DIR/$n"-*.patch; do patch_source "$OUT/.patch" "$p" || exit 1; done
 done
-grep -q 'Mavericks: the 10.9 SDK declares -hash a method' "$P/ObjectiveC.swift" || { echo "overlay-sources.sh: overlay patch 0001 (hash) not applied" >&2; exit 1; }
 AP="$OUT/.patch/apinotes/Dispatch.apinotes"
 [ "$(grep -c '^    NoEscape: true$' "$AP")" = 2 ] && grep -q '^  SwiftWrapper: struct$' "$AP" || { echo "overlay-sources.sh: overlay patch 0002 (Dispatch.apinotes) not applied" >&2; exit 1; }
 [ "$(grep -c '^  NullabilityOfRet: N$' "$AP")" = 2 ] || { echo "overlay-sources.sh: overlay patch 0014 (Dispatch.apinotes) not applied" >&2; exit 1; }

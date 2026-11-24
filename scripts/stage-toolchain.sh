@@ -16,7 +16,11 @@
 #          VERSION, in lib/swift/recaulk-importer (what the swiftc wrapper's VFS overlay shows the clang
 #          importer, instead of the SDK's Dispatch module map alone); Dispatch.apinotes, Foundation.apinotes and
 #          CoreGraphics.apinotes, overlay-sources.sh's patched copies ($SWIFT_WORK/overlays/src/apinotes, or the
-#          staged toolchain --stdlib names), in lib/swift/apinotes,
+#          staged toolchain --stdlib names), in lib/swift/apinotes; its bin/recaulk-materialize and
+#          share/sdk-metadata/recipes.json and profiles.json, in lib/swift/sdk-view at those same relative paths,
+#          with swift-foundation.stamp, the line `recaulk-materialize --print-stamp --profile swift-foundation`
+#          prints for them (what the swiftc wrapper materializes every program's SDK view with, and holds that
+#          view to; no SDK bytes are staged),
 #          the resource dir's apinotes the driver reads without a flag (skipped with the overlays under --overlays-optional);
 #          the swiftc and ld wrappers; shipyard's SDK fetcher and the two scripts it sources; clang's
 #          clang.cfg and clang++.cfg. STAGE_HOST x86_64 (the default) is the native toolchain,
@@ -101,7 +105,8 @@ done
 if [ -z "$RECAULK" ]; then
   RECAULK="$(sh "$HERE/fetch-recaulk.sh")" || { echo "stage-toolchain: could not fetch Recaulk $RECAULK_VERSION" >&2; exit 1; }
 fi
-for f in lib/librecaulk.a share/recaulk/notices.tsv mavergreen.plist include/recaulk/dispatch/dispatch.h include/recaulk/pthread/qos.h; do
+for f in lib/librecaulk.a share/recaulk/notices.tsv mavergreen.plist include/recaulk/dispatch/dispatch.h include/recaulk/pthread/qos.h \
+         bin/recaulk-materialize share/sdk-metadata/recipes.json share/sdk-metadata/profiles.json; do
   [ -f "$RECAULK/$f" ] || { echo "stage-toolchain: no $RECAULK/$f -- is $RECAULK a Recaulk prefix?" >&2; exit 1; }
 done
 RK_V="$(sed -n '/<key>version<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' "$RECAULK/mavergreen.plist")"
@@ -146,6 +151,18 @@ cp "$RECAULK/share/recaulk/notices.tsv" "$P/lib/recaulk/notices.tsv"
 echo "$RK_V" > "$P/lib/recaulk/VERSION"
 recaulk_importer_layout "$RECAULK" "$HERE/toolchain/Dispatch.modulemap" "$RK_V" "$P/lib/swift/recaulk-importer" \
   || { echo "stage-toolchain: could not lay out $P/lib/swift/recaulk-importer" >&2; exit 1; }
+# spec: "The overlays" -- every program sees the SDK view the overlays were built with: Recaulk's profile of this
+#       name over the user's own 10.9 SDK, which the swiftc wrapper materializes with this copy of Recaulk's tool
+#       and data (never an installed Recaulk, whose release could differ), and holds to the stamp written here.
+SDK_VIEW_PROFILE=swift-foundation
+mkdir -p "$P/lib/swift/sdk-view/bin" "$P/lib/swift/sdk-view/share/sdk-metadata"
+SV="$(cd "$P/lib/swift/sdk-view" && pwd -P)"   # absolute: the tool refuses relative --recipes and --profiles
+cp "$RECAULK/bin/recaulk-materialize" "$SV/bin/recaulk-materialize"
+cp "$RECAULK/share/sdk-metadata/recipes.json" "$RECAULK/share/sdk-metadata/profiles.json" "$SV/share/sdk-metadata/"
+chmod 755 "$SV/bin/recaulk-materialize"
+"$SV/bin/recaulk-materialize" --print-stamp --profile "$SDK_VIEW_PROFILE" --recipes "$SV/share/sdk-metadata/recipes.json" \
+  --profiles "$SV/share/sdk-metadata/profiles.json" > "$SV/$SDK_VIEW_PROFILE.stamp" && [ -s "$SV/$SDK_VIEW_PROFILE.stamp" ] \
+  || { echo "stage-toolchain: $SV/bin/recaulk-materialize printed no stamp for the profile $SDK_VIEW_PROFILE" >&2; exit 1; }
 # shellcheck disable=SC2086  # space-free paths: lib.sh refuses a build root with whitespace
 if [ -n "$APINOTES" ]; then mkdir -p "$P/lib/swift/apinotes" && cp $APINOTES "$P/lib/swift/apinotes/"; fi
 cp "$SB/share/swift/compatibility-symbols" "$P/share/swift/"

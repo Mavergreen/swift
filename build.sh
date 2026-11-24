@@ -374,20 +374,22 @@ RECAULK_DARWIN_A="$ROOT/recaulk-darwin.a"; RECAULK_DARWIN_UNX="$ROOT/recaulk-dar
 echo "    Recaulk $RECAULK_VERSION for Darwin: $RECAULK_DARWIN_SYMBOLS, $(grep -c . "$RECAULK_DARWIN_UNX") globals, all unexported"
 PYTHON="${PY:-python3}" sh "$HERE/scripts/overlay-sources.sh" "$ROOT/swift-6.2" "$ROOT/swift-5.4" "$ROOT/swift-4.0" "$ROOT/swift" "$ROOT/swift/utils/gyb" "$OVS" \
   || { echo "FAIL: could not lay out the overlays' sources"; exit 1; }
-# spec: "The overlays" -- the Foundation overlay's shims and sources are written against declarations the 10.9
-#       headers lack (NS_ASSUME_NONNULL, the collections' lightweight generics, ...), which Recaulk's
-#       sdk-metadata recipes declare over 10.9's own headers: materialized here, by lib.sh's
-#       recaulk_sdk_metadata_vfs, as a clang VFS overlay of the SDK the overlays are compiled against.
-#       Which recipes is Recaulk's to say: its profile of this name, in share/sdk-metadata/profiles.json.
-# spec: shipyard's materializer takes recipe ids, so lib.sh's recaulk_sdk_metadata_profile reads the profile's;
-#       when it takes PROFILE <name>, this name is what it is passed and that read goes.
-FOUNDATION_SDK_METADATA_PROFILE="swift-foundation"
-FOUNDATION_SDK_METADATA="$(recaulk_sdk_metadata_profile "$RECAULK_PREFIX/share/sdk-metadata/profiles.json" "$FOUNDATION_SDK_METADATA_PROFILE")" \
-  || { echo "FAIL: could not read the sdk-metadata profile $FOUNDATION_SDK_METADATA_PROFILE from Recaulk $RECAULK_VERSION's $RECAULK_PREFIX/share/sdk-metadata/profiles.json: no such file, not JSON, not schema 1, no such profile, or recipes that are not plain ids (above)"; exit 1; }
-# shellcheck disable=SC2086  # space-free recipe ids, which recaulk_sdk_metadata_profile holds them to
-recaulk_sdk_metadata_vfs "$SDK_OVERLAYS" "$RECAULK_PREFIX/share/sdk-metadata/recipes.json" "$ROOT/overlays/sdk-metadata" \
-  $FOUNDATION_SDK_METADATA || { echo "FAIL: could not materialize Recaulk's sdk-metadata profile $FOUNDATION_SDK_METADATA_PROFILE"; exit 1; }
-echo "    Recaulk $RECAULK_VERSION sdk-metadata profile $FOUNDATION_SDK_METADATA_PROFILE: $ROOT/overlays/sdk-metadata/overlay.json"
+# spec: "The overlays" -- the overlays are written against declarations the 10.9 headers lack (NS_ASSUME_NONNULL,
+#       the collections' lightweight generics, NSObject's hash a property, ...), which Recaulk's sdk-metadata
+#       profile of this name declares over 10.9's own headers. Recaulk's recaulk-materialize, from the release just
+#       fetched, makes that SDK view from the fetched SDK: the SDK every overlay and test-support module is compiled
+#       against, and its clang VFS overlay, after the importer's. stage-toolchain.sh ships the same tool and data,
+#       with which every toolchain's swiftc makes the same view for every program: one view for the whole module
+#       graph, as a module built against another view of NSObject than its client's names what the client lacks.
+SDK_VIEW_PROFILE="swift-foundation"
+SDK_PLAIN="$(sh "$SHIPYARD/fetch_sdk.sh")" || { echo "FAIL: could not fetch the 10.9 SDK"; exit 1; }
+SDK_VIEW="$ROOT/overlays/sdk-view"
+rm -rf "$SDK_VIEW" "$ROOT/overlays/sdk-metadata"; mkdir -p "$ROOT/overlays"
+"$RECAULK_PREFIX/bin/recaulk-materialize" --sdk "$SDK_PLAIN" --out "$SDK_VIEW" --profile "$SDK_VIEW_PROFILE" \
+  --recipes "$RECAULK_PREFIX/share/sdk-metadata/recipes.json" --profiles "$RECAULK_PREFIX/share/sdk-metadata/profiles.json" \
+  || { echo "FAIL: Recaulk $RECAULK_VERSION's recaulk-materialize could not make the SDK view $SDK_VIEW_PROFILE of $SDK_PLAIN (above)"; exit 1; }
+SDK_VIEW_SDK="$SDK_VIEW/sdk/MacOSX10.9.sdk"; SDK_VIEW_VFS="$SDK_VIEW/overlay.json"
+echo "    Recaulk $RECAULK_VERSION SDK view $SDK_VIEW_PROFILE: $SDK_VIEW_SDK, $SDK_VIEW_VFS"
 # host_object <object> clang|clang++ <source> [<flag>...] -- <source> compiled by the host clang against the
 # 10.9 SDK, with the stdlib's threading package and the runtime's headers, the build root prefix-mapped.
 host_object() {
@@ -403,7 +405,7 @@ host_object() {
 build_overlay() {
   _bo_m="$1"; _bo_l="$2"; shift 2
   SWIFT_WORK="$ROOT" SWIFTC="$TC/bin/swiftc" LLD="$LLD" sh "$HERE/scripts/build-module.sh" \
-    --name "$_bo_m" --link-name "$_bo_l" --sdk "$SDK_OVERLAYS" --resource-dir "$RES" \
+    --name "$_bo_m" --link-name "$_bo_l" --sdk "$SDK_VIEW_SDK" --sdk-view "$SDK_VIEW_VFS" --resource-dir "$RES" \
     --availability "$ROOT/swift/utils/availability-macros.def" --work "$OVW/$_bo_m" --out "$RES/macosx" "$@" \
     || { echo "FAIL: could not build the $_bo_m overlay"; exit 1; }
   echo "    $_bo_m: $RES/macosx/$_bo_m.swiftmodule, $RES/macosx/$ARCH/lib$_bo_l.dylib"
@@ -458,23 +460,20 @@ build_overlay Dispatch swiftDispatch --I "$D/shims" --recaulk-importer "$DISPATC
   "$D/Block.swift" "$D/Data.swift" "$D/Dispatch.swift" "$D/IO.swift" "$D/Private.swift" "$D/Queue.swift" \
   "$D/Source.swift" "$D/Time.swift"
 # spec: "The overlays" -- CoreFoundation, CoreGraphics and Foundation, in the order they import each other, each
-#       against the SDK view Foundation's sources need (the profile above, which also edits CoreFoundation's
-#       headers, so all three see one view) and Dispatch's importer and API notes (CoreFoundation's clang module
+#       against the SDK view, as every overlay, and Dispatch's importer and API notes (CoreFoundation's clang module
 #       imports Dispatch's); Foundation and CoreGraphics read their API notes from the same directory. Each
 #       links the 10.9 frameworks 5.4's CMake names (FRAMEWORK_DEPENDS); 10.9's CoreGraphics is inside
 #       ApplicationServices, which re-exports it. Foundation takes 5.4's flags (-sil-inline-generics,
 #       -sil-partial-specialization) and the shims of CoreFoundation's that its own shims include.
-FOUNDATION_VFS="$ROOT/overlays/sdk-metadata/overlay.json"
 # spec: "The overlays" -- Foundation's two Objective-C files, compiled as 5.4's CMake compiled them, without ARC:
 #       DataThunks.m defines __NSDataWriteToURL, which Data.write(to:) calls; BundleLookup.mm holds only an
 #       embedded-OS category, so it compiles to nothing for macOS, as it did in 5.4.
 host_object "$ROOT/overlays/obj/DataThunks.m.o" clang "$OVS/Foundation/DataThunks.m" -x objective-c
 host_object "$ROOT/overlays/obj/BundleLookup.mm.o" clang++ "$OVS/Foundation/BundleLookup.mm" -x objective-c++ -std=c++17 -fno-exceptions -fno-rtti
 build_overlay CoreFoundation swiftCoreFoundation --I "$OVS/CoreFoundation/shims" --recaulk-importer "$DISPATCH_IMPORTER" \
-  --apinotes "$OVS/apinotes" --flag -Xcc --flag -ivfsoverlay --flag -Xcc --flag "$FOUNDATION_VFS" \
-  --flag -framework --flag CoreFoundation -- "$OVS/CoreFoundation/CoreFoundation.swift"
+  --apinotes "$OVS/apinotes" --flag -framework --flag CoreFoundation -- "$OVS/CoreFoundation/CoreFoundation.swift"
 build_overlay CoreGraphics swiftCoreGraphics --recaulk-importer "$DISPATCH_IMPORTER" --apinotes "$OVS/apinotes" \
-  --flag -Xcc --flag -ivfsoverlay --flag -Xcc --flag "$FOUNDATION_VFS" --flag -framework --flag ApplicationServices -- \
+  --flag -framework --flag ApplicationServices -- \
   "$OVS/CoreGraphics/CoreGraphics.swift" "$OVS/CoreGraphics/Private.swift" "$OVS/CoreGraphics/CGFloat.swift"
 # Every .swift overlay-sources.sh laid out for Foundation, in C collation, so the compile is the same on every host;
 # none (an unmatched glob, which would be passed on as the literal ./*.swift) fails before any compile.
@@ -484,7 +483,7 @@ FOUNDATION_SOURCES="$(cd "$OVS/Foundation" && printf '%s\n' ./*.swift | LC_ALL=C
 *}" ] || { echo "FAIL: $OVS/Foundation holds no .swift sources -- overlay-sources.sh laid out none"; exit 1; }
 # shellcheck disable=SC2086  # the laid-out Foundation sources, space-free names (overlay-sources.sh's)
 build_overlay Foundation swiftFoundation --I "$OVS/CoreFoundation/shims" --I "$OVS/Foundation/shims" --recaulk-importer "$DISPATCH_IMPORTER" \
-  --apinotes "$OVS/apinotes" --flag -Xcc --flag -ivfsoverlay --flag -Xcc --flag "$FOUNDATION_VFS" \
+  --apinotes "$OVS/apinotes" \
   --flag -Xllvm --flag -sil-inline-generics --flag -Xllvm --flag -sil-partial-specialization \
   --flag -framework --flag Foundation --flag -framework --flag CoreFoundation \
   --link "$ROOT/overlays/obj/DataThunks.m.o" --link "$ROOT/overlays/obj/BundleLookup.mm.o" -- $FOUNDATION_SOURCES
@@ -550,7 +549,7 @@ build_support() {
   _bs_m="$1"; shift
   # shellcheck disable=SC2086  # SUPPORT_FLOOR: one word, or none
   SWIFT_WORK="$ROOT" SWIFTC="$TC/bin/swiftc" LLD="$LLD" sh "$HERE/scripts/build-module.sh" \
-    --name "$_bs_m" --link-name "swift$_bs_m" --sdk "$SDK_OVERLAYS" --resource-dir "$RES" \
+    --name "$_bs_m" --link-name "swift$_bs_m" --sdk "$SDK_VIEW_SDK" --sdk-view "$SDK_VIEW_VFS" --resource-dir "$RES" \
     --availability "$ROOT/swift/utils/availability-macros.def" --work "$SUW/work/$_bs_m" --out "$SUP" $SUPPORT_FLOOR "$@" \
     || { echo "FAIL: could not build the test-support module $_bs_m"; exit 1; }
 }

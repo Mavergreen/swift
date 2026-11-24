@@ -4,7 +4,9 @@
 #   usage: swiftc [swiftc arguments]
 #          Swift for Mavericks: the Swift compiler driver with this toolchain's OS X 10.9 defaults
 #          (target, SDK, linker, runtime location). Your arguments follow the defaults, so yours win
-#          wherever the driver takes the last value.
+#          wherever the driver takes the last value. The SDK is SDKROOT, or the one fetch_sdk.sh fetches,
+#          seen as the toolchain's overlays were built against it: the SDK view lib/swift/sdk-view's
+#          recaulk-materialize makes from it once, in ~/Library/Caches/mavergreen-swift/sdk-view.
 set -e
 self="$0"
 # platform: 10.9's readlink has no -f, so a linked swiftc (the family link farm's, or one in
@@ -20,15 +22,64 @@ PREFIX="$(dirname "$BIN")"
 LIBEXEC="$PREFIX/libexec/mavergreen-swift"
 SDK="${SDKROOT:-}"
 if [ -z "$SDK" ]; then
-  # Swift's driver reads the SDK version only from SDKSettings.json, which the 10.9 SDK lacks: without it
-  # every link records SDK 0. The variable asks fetch_sdk.sh for the copy that has one.
-  SDK="$(MAVERICKS_SDK_SETTINGS_JSON=1 sh "$LIBEXEC/fetch_sdk.sh")" || { echo "swiftc: could not obtain the Mac OS X 10.9 SDK" >&2; exit 1; }
+  SDK="$(sh "$LIBEXEC/fetch_sdk.sh")" || { echo "swiftc: could not obtain the Mac OS X 10.9 SDK" >&2; exit 1; }
 fi
 [ -d "$SDK" ] || { echo "swiftc: no Mac OS X 10.9 SDK at '$SDK'" >&2; exit 1; }
+# platform: shipyard's with-sdk-settings-json SDK (fetch_sdk.sh's MAVERICKS_SDK_SETTINGS_JSON=1) and a view made
+#           here link their System and usr into the SDK they show, and recaulk-materialize reads only an SDK whose
+#           headers are inside it: so the SDK is that link's physical parent, by its real path.
+SRC="$SDK"
+if [ -L "$SDK/System" ]; then SRC="$SDK/System/.."; fi
+SRC="$(CDPATH= cd -P -- "$SRC" && pwd -P)" || { echo "swiftc: could not resolve the SDK '$SDK'" >&2; exit 1; }
+IMPORTER="$PREFIX/lib/swift/recaulk-importer"
+[ -d "$IMPORTER" ] || { echo "swiftc: no $IMPORTER -- this toolchain's Recaulk declarations are missing" >&2; exit 1; }
+# spec: "The overlays" -- every program sees the SDK the overlays were built against: Recaulk's profile of this
+#       name, materialized from the user's own SDK by the toolchain's copy of recaulk-materialize and its data
+#       (lib/swift/sdk-view; never an installed Recaulk), and held to the stamp staged beside them.
+SV="$PREFIX/lib/swift/sdk-view"; PROFILE=swift-foundation; STAMPF="$SV/$PROFILE.stamp"
+MAT="$SV/bin/recaulk-materialize"
+# mat <argument>... -- the tool, always given this toolchain's profile and data, by absolute paths.
+mat() { "$MAT" "$@" --profile "$PROFILE" --recipes "$SV/share/sdk-metadata/recipes.json" --profiles "$SV/share/sdk-metadata/profiles.json"; }
+for f in "$MAT" "$STAMPF" "$SV/share/sdk-metadata/recipes.json" "$SV/share/sdk-metadata/profiles.json"; do
+  [ -s "$f" ] || { echo "swiftc: no $f -- this toolchain's SDK view is incomplete; reinstall the toolchain" >&2; exit 1; }
+done
+[ -x "$MAT" ] || { echo "swiftc: $MAT is not executable -- reinstall the toolchain" >&2; exit 1; }
+STAMP="$(cat "$STAMPF")"
+# platform: the cache is under $HOME; where there is no HOME, or it is no directory or is not writable (a sandboxed
+#           build, a read-only home), under ${TMPDIR:-/tmp}/mavergreen-swift-<uid>, mode 700 and ours, so another
+#           user cannot plant a view or a YAML there. Nothing is written into the toolchain, which may be read-only.
+CACHE=""
+if [ -n "${HOME:-}" ] && mkdir -p "$HOME/Library/Caches/mavergreen-swift/sdk-view" 2>/dev/null \
+   && [ -w "$HOME/Library/Caches/mavergreen-swift/sdk-view" ]; then
+  CACHE="$HOME/Library/Caches/mavergreen-swift"
+else
+  _d="${TMPDIR:-/tmp}/mavergreen-swift-$(id -u)"
+  if mkdir -m 700 -p "$_d" 2>/dev/null && [ -O "$_d" ] && mkdir -p "$_d/sdk-view" 2>/dev/null && [ -w "$_d/sdk-view" ]; then CACHE="$_d"; fi
+fi
+[ -n "$CACHE" ] || { echo "swiftc: could not write the SDK view or the importer's overlay under \$HOME/Library/Caches or ${TMPDIR:-/tmp}" >&2; exit 1; }
+# One view per stamp and SDK: its directory is the SHA-256 of the stamp's line and the SDK's real path (Recaulk's
+# cache key). platform: 10.9 has no shasum without perl, but has openssl.
+KEY="$(printf '%s\n%s\n' "$STAMP" "$SRC" | openssl dgst -sha256 2>/dev/null | awk '{ print $NF }')"
+case "$KEY" in *[!0-9a-f]*|'') KEY="" ;; esac
+[ "${#KEY}" -eq 64 ] || { echo "swiftc: openssl could not hash the SDK view's key" >&2; exit 1; }
+VIEW="$CACHE/sdk-view/$KEY"
+if [ -e "$VIEW" ]; then
+  # A complete view costs the tool one read of its stamp.json; one made for another stamp or SDK is refused.
+  mat --sdk "$SRC" --out "$VIEW" >&2 \
+    || { echo "swiftc: the SDK view $VIEW is not the one this toolchain's stamp names ($STAMPF): delete $VIEW and compile again" >&2; exit 1; }
+else
+  # The tool and its data must print the stamp this toolchain was staged with; then it builds the view beside
+  # VIEW and renames it into place, so two first compiles never see half of one.
+  [ "$(mat --print-stamp)" = "$STAMP" ] \
+    || { echo "swiftc: $MAT and its data do not print this toolchain's stamp ($STAMPF) -- reinstall the toolchain" >&2; exit 1; }
+  mat --sdk "$SRC" --out "$VIEW" >&2 || { echo "swiftc: could not make the SDK view of $SRC in $VIEW (above)" >&2; exit 1; }
+fi
+VSDK="$VIEW/sdk/MacOSX10.9.sdk"
+[ -d "$VSDK" ] && [ -f "$VIEW/overlay.json" ] || { echo "swiftc: the SDK view $VIEW has no sdk/MacOSX10.9.sdk or overlay.json: delete $VIEW and compile again" >&2; exit 1; }
 # spec: INGREDIENTS.md "Recaulk in every program" -- the importer reads Recaulk's dispatch declarations, not the
 #       SDK's alone, through a clang VFS overlay (lib.sh's recaulk_vfs_yaml, whose lines these are: this
-#       script cannot source lib.sh once installed). Its roots are the SDK's absolute path, so the YAML is
-#       written for each SDK. recaulk_vfs_yaml <sdk> <importer> <out.yaml>
+#       script cannot source lib.sh once installed). Its roots are the view's SDK path, so the YAML is
+#       written for each view. recaulk_vfs_yaml <sdk> <importer> <out.yaml>
 recaulk_vfs_yaml() {
   case "$1$2" in *\'*|*'
 '*) echo "swiftc: a quote or newline in '$1' or '$2' cannot be written to a YAML string" >&2; return 1 ;; esac
@@ -40,43 +91,25 @@ recaulk_vfs_yaml() {
     "      'contents': [ { 'name': 'qos.h', 'type': 'file', 'external-contents': '$2/pthread/qos.h' } ] }" \
     '  ]' '}' > "$3"
 }
-IMPORTER="$PREFIX/lib/swift/recaulk-importer"
-recaulk_vfs_yaml "$SDK" "$IMPORTER" /dev/null || exit 1
-[ -d "$IMPORTER" ] || { echo "swiftc: no $IMPORTER -- this toolchain's Recaulk declarations are missing" >&2; exit 1; }
+recaulk_vfs_yaml "$VSDK" "$IMPORTER" /dev/null || exit 1
 # platform: exec replaces this shell, so a trap would never remove a temporary file after a successful exec;
-#           the YAML is therefore a cache, one per user, SDK and toolchain (cksum of both paths names it),
-#           written to a temporary name beside its final one and renamed over it (atomic, so a concurrent
-#           swiftc never reads half of one, and each run leaves the file the right content for its own SDK even
-#           if two keys collided). The trap covers a failure before the rename; after it nothing is left.
-#           The cache is under $HOME; where there is no HOME, or it is no directory or is not writable (a
-#           sandboxed build, a read-only home), under ${TMPDIR:-/tmp}/mavergreen-swift-<uid>, mode 700 and
-#           ours, so another user cannot plant a YAML there.
-VFSKEY="$(printf '%s\n%s\n' "$SDK" "$IMPORTER" | cksum | sed 's/ /-/')"
-VFS=""
+#           the YAML is therefore a cache, one per view and toolchain (cksum of both paths names it), written to a
+#           temporary name beside its final one and renamed over it (atomic, so a concurrent swiftc never reads
+#           half of one, and each run leaves the file the right content for its own view even if two keys
+#           collided). The trap covers a failure before the rename; after it nothing is left.
+VFSKEY="$(printf '%s\n%s\n' "$VSDK" "$IMPORTER" | cksum | sed 's/ /-/')"
+VFS="$CACHE/importer-$VFSKEY.yaml"; VFSTMP="$CACHE/.importer-$VFSKEY.$$"
 trap 'rm -f "$VFSTMP"' EXIT
-# vfs_cache <dir> -- writes the YAML into <dir> (made if need be), sets VFS; fails if it cannot.
-vfs_cache() {
-  VFSTMP="$1/.importer-$VFSKEY.$$"
-  { recaulk_vfs_yaml "$SDK" "$IMPORTER" "$VFSTMP" && mv -f "$VFSTMP" "$1/importer-$VFSKEY.yaml"; } 2>/dev/null \
-    || { rm -f "$VFSTMP"; return 1; }
-  VFS="$1/importer-$VFSKEY.yaml"
-}
-if [ -n "${HOME:-}" ] && mkdir -p "$HOME/Library/Caches/mavergreen-swift" 2>/dev/null; then
-  vfs_cache "$HOME/Library/Caches/mavergreen-swift" || :
-fi
-if [ -z "$VFS" ]; then
-  _d="${TMPDIR:-/tmp}/mavergreen-swift-$(id -u)"
-  mkdir -m 700 -p "$_d" 2>/dev/null && [ -O "$_d" ] && vfs_cache "$_d" || :
-fi
-[ -n "$VFS" ] || { echo "swiftc: could not write the importer's overlay under \$HOME/Library/Caches or ${TMPDIR:-/tmp}" >&2; exit 1; }
+{ recaulk_vfs_yaml "$VSDK" "$IMPORTER" "$VFSTMP" && mv -f "$VFSTMP" "$VFS"; } 2>/dev/null \
+  || { echo "swiftc: could not write the importer's overlay $VFS" >&2; exit 1; }
 SWIFT_AVOID_WARNING_USING_OLD_DRIVER=1; export SWIFT_AVOID_WARNING_USING_OLD_DRIVER
 # _Concurrency is imported implicitly, as Apple's swiftc does: the runtime pkg carries libswift_Concurrency.
 # _StringProcessing is not shipped, so its implicit import stays off.
 exec "$BIN/swift-frontend" --driver-mode=swiftc \
   -target x86_64-apple-macosx10.9 \
-  -sdk "$SDK" -tools-directory "$LIBEXEC" \
+  -sdk "$VSDK" -tools-directory "$LIBEXEC" \
   -runtime-compatibility-version none \
   -Xfrontend -disable-implicit-string-processing-module-import \
   -no-stdlib-rpath -Xlinker -rpath -Xlinker /usr/local/mavergreen/swift-runtime/lib/swift \
-  -Xcc -ivfsoverlay -Xcc "$VFS" \
+  -Xcc -ivfsoverlay -Xcc "$VFS" -Xcc -ivfsoverlay -Xcc "$VIEW/overlay.json" \
   "$@"

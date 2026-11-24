@@ -10,10 +10,10 @@
 #   SWIFT_STDLIB_ENABLE_STRICT_AVAILABILITY (build.sh); with --runtime-floor (test support, which runs only
 #   on this runtime) every released SwiftStdlib version, and its StdlibDeploymentTarget, is macOS 10.9, so a
 #   10.9 client may call its @available(SwiftStdlib 5.1) declarations, and 9999 stays as it is; a missing
-#   source must fail naming the file; --recaulk-importer and --apinotes must reach the compile as
-#   `-Xcc -ivfsoverlay -Xcc <work>/recaulk-vfs.yaml`, a YAML naming the SDK and the importer, and as
-#   `-Xcc -iapinotes-modules -Xcc <dir>` (a recording driver stands in, so Dispatch's headers are not needed), and
-#   a missing directory fails naming it; a module with a call the compiler warns recurses forever must be refused,
+#   source must fail naming the file; --recaulk-importer, --sdk-view and --apinotes must reach the compile as
+#   `-Xcc -ivfsoverlay -Xcc <work>/recaulk-vfs.yaml`, a YAML naming the SDK and the importer, then
+#   `-Xcc -ivfsoverlay -Xcc <overlay.json>`, and `-Xcc -iapinotes-modules -Xcc <dir>` (a recording driver stands
+#   in, so Dispatch's headers are not needed), and a missing directory or overlay fails naming it; a module with a call the compiler warns recurses forever must be refused,
 #   its warning shown and no dylib left; --flag must hand a word to the compile; and two build roots must give the same bytes (the prefix maps,
 #   and compiler patch 0004, without which an escaping-closure check carried the length of the source's path).
 #   SKIPs (77) without SWIFT_HOST_TOOLCHAIN, a shipyard, or a host that can run that toolchain. Reads with
@@ -110,21 +110,22 @@ done
 [ "$(grep -c . "$RSP")" -eq 6 ] || fail "--runtime-floor: not six definitions: $(cat "$RSP")"
 client > "$T/log5" 2>&1 || { cat "$T/log5"; fail "a 10.9 client could not call a --runtime-floor Tiny's SwiftStdlib 5.1 declaration"; }
 
-echo "-- --recaulk-importer and --apinotes reach the compile (a recording driver)"
-mkdir -p "$T/imp" "$T/apn"
+echo "-- --recaulk-importer, --sdk-view and --apinotes reach the compile, the importer's overlay first (a recording driver)"
+mkdir -p "$T/imp" "$T/apn"; echo '{}' > "$T/view.json"
 printf '%s\n' '#!/bin/sh' 'for a in "$@"; do echo "$a"; done > "$0.argv"' > "$T/recorder"; chmod +x "$T/recorder"
 src "$T/r3"
 rm -f "$T/recorder.argv"
 MAVERICKS_BUILD_ROOT="$T/r3" SWIFT_WORK="$T/r3/work" SWIFTC="$T/recorder" sh "$BM" --name Tiny --link-name swiftTiny --sdk "$SDK" \
   --resource-dir "$HTC/lib/swift" --availability "$T/r3/work/avail.def" --work "$T/r3/work/tmp" --out "$T/r3/work/out" \
-  --recaulk-importer "$T/imp" --apinotes "$T/apn" -- "$T/r3/work/src/Tiny.swift" > "$T/log6" 2>&1 \
-  || { cat "$T/log6"; fail "build-module.sh --recaulk-importer --apinotes failed"; }
+  --recaulk-importer "$T/imp" --sdk-view "$T/view.json" --apinotes "$T/apn" -- "$T/r3/work/src/Tiny.swift" > "$T/log6" 2>&1 \
+  || { cat "$T/log6"; fail "build-module.sh --recaulk-importer --sdk-view --apinotes failed"; }
 ARGV="$T/recorder.argv"
-printf '%s\n' "$(cat "$ARGV")" | awk -v y="$T/r3/work/tmp/recaulk-vfs.yaml" '
-  p1 == "-Xcc" && p2 == "-ivfsoverlay" && $0 == y { v = 1 }
+printf '%s\n' "$(cat "$ARGV")" | awk -v y="$T/r3/work/tmp/recaulk-vfs.yaml" -v w="$T/view.json" '
+  p1 == "-Xcc" && p2 == "-ivfsoverlay" && $0 == y { v = NR }
+  p1 == "-Xcc" && p2 == "-ivfsoverlay" && $0 == w { sv = NR }
   p1 == "-Xcc" && p2 == "-iapinotes-modules" && $0 == "'"$T"'/apn" { a = 1 }
   { p2 = p1; p1 = $0 }
-  END { exit !(v && a) }' || fail "the compile's argv lacks -Xcc -ivfsoverlay -Xcc <work>/recaulk-vfs.yaml, or -Xcc -iapinotes-modules -Xcc <dir>: $(cat "$ARGV")"
+  END { exit !(v && sv > v && a) }' || fail "the compile's argv lacks -Xcc -ivfsoverlay -Xcc <work>/recaulk-vfs.yaml, then -Xcc -ivfsoverlay -Xcc <view>, or -Xcc -iapinotes-modules -Xcc <dir>: $(cat "$ARGV")"
 [ -f "$T/r3/work/tmp/recaulk-vfs.yaml" ] || fail "no YAML in --work"
 grep -qF "'$SDK/usr/include/dispatch'" "$T/r3/work/tmp/recaulk-vfs.yaml" || fail "the YAML does not name the SDK: $(cat "$T/r3/work/tmp/recaulk-vfs.yaml")"
 grep -qF "'$T/imp/dispatch/dispatch.h'" "$T/r3/work/tmp/recaulk-vfs.yaml" || fail "the YAML does not name the importer: $(cat "$T/r3/work/tmp/recaulk-vfs.yaml")"
@@ -139,6 +140,10 @@ for o in --recaulk-importer --apinotes; do
     "$o" "$T/no-such-dir" -- "$T/r3/work/src/Tiny.swift" > "$T/log6" 2>&1; then fail "built with $o naming no directory"; fi
   grep -q "$T/no-such-dir" "$T/log6" || fail "$o's missing directory was not named: $(cat "$T/log6")"
 done
+if MAVERICKS_BUILD_ROOT="$T/r3" SWIFT_WORK="$T/r3/work" SWIFTC="$T/recorder" sh "$BM" --name Tiny --link-name swiftTiny --sdk "$SDK" \
+  --resource-dir "$HTC/lib/swift" --availability "$T/r3/work/avail.def" --work "$T/r3/work/tmp" --out "$T/r3/work/out" \
+  --sdk-view "$T/no-such.json" -- "$T/r3/work/src/Tiny.swift" > "$T/log6" 2>&1; then fail "built with --sdk-view naming no file"; fi
+grep -q "$T/no-such.json" "$T/log6" || fail "--sdk-view's missing file was not named: $(cat "$T/log6")"
 
 echo "-- a module whose code calls itself forever is refused, naming the call (the compiler only warns)"
 printf '%s\n' 'public struct Loops { public var d: String { return self.d } }' > "$T/r1/work/src/Loops.swift"

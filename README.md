@@ -44,9 +44,12 @@ functions macOS 10.10 and 10.12 added: `dispatchPrecondition`, `DispatchWorkItem
 how the restored APIs behave on 10.9 (and, on 10.10 and 10.11, that an initially inactive queue drops its QoS). Recaulk's Dispatch declarations follow the SDK `swiftc` uses by default,
 or `SDKROOT`'s; a program built with its own `-sdk` gets that SDK's own Dispatch module map, without them.
 
-The 10.9 SDK differs from later ones where a Swift class overrides `NSObject`: `hash` is a method there,
-so write `override func hash() -> Int`, not `override var hash: Int`. It also has no nullability, so
-`NSObject()` has the type `NSObject?` (checked with the cross toolchain against the 10.9 SDK).
+`swiftc` reads the 10.9 SDK as this release's overlays were built against it: with Recaulk's declarations
+over its headers (nullability, generics, properties), made once from your SDK into
+`~/Library/Caches/mavergreen-swift/sdk-view`. So a Swift class overrides `NSObject`'s `hash` as a property,
+`override var hash: Int`, and `NSObject()` is not optional, as with later SDKs; a program built with its own
+`-sdk` reads that SDK's headers alone. If `swiftc` says the view there does not match its stamp, delete the
+directory it names.
 
 A program built with `-O` on 6.4.1-mavericks.8 or earlier carries a float-parsing bug (`Double("1.1")`
 crashed, `Float(String)` hung) inlined into the program itself; recompile it with this release.
