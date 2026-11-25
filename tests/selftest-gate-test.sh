@@ -257,6 +257,16 @@ for smp in "$T/no-such-sample" "$T/failing-sample"; do
   case "$out" in *'not sampling'*|*'failed'*) ;; *) fail "sample $smp: no line saying so: $out" ;; esac
 done
 
+echo "-- a sample that never exits is killed, and the run still ends as a timeout, within the cap"
+printf '#!/bin/sh\nsleep 300\n' > "$T/hung-sample"; chmod +x "$T/hung-sample"
+b="$(bundle sleeper)"; rc=0; start="$(date +%s)"
+out="$(SELFTEST_SAMPLE="$T/hung-sample" SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_TIMEOUT=1 sh "$b/run-selftest.sh" 2>&1)" || rc=$?
+took=$(( $(date +%s) - start ))
+[ "$rc" = 1 ] || fail "hung sample: rc=$rc: $out"
+[ "$took" -le 35 ] || fail "hung sample: took ${took}s, wanted <= 35: $out"
+case "$out" in *'FAIL: sleeper -- run 1 of 1 timed out after 1 s'*) ;; *) fail "hung sample: FAIL line changed: $out" ;; esac
+case "$out" in *'did not finish'*) ;; *) fail "hung sample: not reported: $out" ;; esac
+
 echo "-- a run that passes is never sampled"
 rm -f "$T/samplelog"; b="$(bundle ok)"; rc=0
 out="$(FAKE_SAMPLE_LOG="$T/samplelog" SWIFT_RUNTIME_PREFIX="$T/prefix" sh "$b/run-selftest.sh" 2>&1)" || rc=$?

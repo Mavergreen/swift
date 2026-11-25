@@ -123,15 +123,24 @@ limited() {
       for my $l (split /\n/, $ps) { push @pids, $1 if $l =~ /^\s*(\d+)\s+(\d+)\s*$/ && $2 == $pid }
       unless (@pids) { print $E "timed out; not sampling: no live process in the group\n"; return }
       make_path($dir); my $each = int(24 / @pids); $each = 3 if $each > 3; $each = 1 if $each < 1;
-      my $t0 = time;   # (about 30 s at the very most: stop starting samples once 24 s are spent)
+      # platform: the test has already outrun its limit, so 142 is right whether or not a sample comes of this.
+      # Freeze the group first, so the snapshots agree and nothing finishes in the window; sample(1) is
+      # not known to attach to a stopped process, so an empty sample is reported as such.
+      kill "STOP", -$pid;
+      my $t0 = time;   # (30 s at the very most: each sample is killed when its share runs out, none starts after 24 s)
       for my $p (@pids) {
         last if time - $t0 > 24;
         my $f = "$dir/sample-$p.txt"; my $k = fork;
         unless (defined $k) { print $E "timed out; sampling pid $p failed: no fork\n"; next }
-        if ($k == 0) { open STDOUT, ">", $f or exit 127; open STDERR, ">&STDOUT"; exec {$sample} $sample, $p, $each or exit 127 }
-        waitpid $k, 0;
+        if ($k == 0) { setpgrp(0, 0); open STDOUT, ">", $f or exit 127; open STDERR, ">&STDOUT"; exec {$sample} $sample, $p, $each or exit 127 }
+        setpgrp($k, $k);
+        my $limit = $each + 2; $limit = 30 - (time - $t0) if $limit > 30 - (time - $t0);
+        my ($end, $got) = (time + $limit, 0);
+        until ($got = waitpid($k, 1)) { last if time >= $end; select(undef, undef, undef, 0.1) }   # 1 is WNOHANG
+        unless ($got) { kill "KILL", -$k; kill "KILL", $k; waitpid $k, 0; print $E "timed out; $sample $p did not finish in $limit s, killed\n"; next }
         if ($? != 0) { print $E "timed out; $sample $p failed (status $?)\n"; next }
         open my $in, "<", $f or next; my @l = <$in>; close $in;
+        unless (-s $f) { print $E "timed out; $sample $p produced nothing\n"; next }
         my ($i) = grep { $l[$_] =~ /^Sort by top of stack/ } 0 .. $#l;
         my @x; if (defined $i) { for my $j ($i .. $#l) { last if @x && $l[$j] =~ /^\s*$/ || $l[$j] =~ /^Binary Images/; push @x, $l[$j] } } else { @x = @l }
         @x = @x[0 .. 149] if @x > 150;
