@@ -113,11 +113,11 @@ limited() {
     # sample_group: where is every live process of the test group stuck? Whole samples go to files under
     # $SELFTEST_SAMPLES, an excerpt of each to stderr (CI keeps the job log, nothing else of ours); a
     # missing or failing sample is one line and changes nothing: the kill and the 142 follow as ever.
+    my $E;   # (the log handle: closed by the handler after sample_group, with PIPE still ignored)
     sub sample_group {
       # fd 3 is the gate itself stderr: a run stderr is captured for its FAIL line, the excerpt must reach the job log
-      open(my $E, ">&3") or $E = \*STDERR;
+      open($E, ">&3") or $E = \*STDERR;
       select((select($E), $| = 1)[0]);   # (unbuffered: an excerpt must be out before the kill)
-      local $SIG{PIPE} = "IGNORE";   # (a closed log must not kill us while the group is stopped; set here, not before the exec)
       my $sample = $ENV{SELFTEST_SAMPLE} || "/usr/bin/sample";
       my $dir = $ENV{SELFTEST_SAMPLES} || "samples";
       unless (-x $sample) { print $E "timed out; not sampling: $sample is not available\n"; return }
@@ -149,7 +149,9 @@ limited() {
         print $E "timed out; sample of pid $p ($f):\n", @x, "\n";
       }
     }
-    local $SIG{ALRM} = sub { sample_group() if $sampling; kill "KILL", -$pid; waitpid $pid, 0; exit 142 };
+    # PIPE is ignored from before the STOP until after $E is closed: a closed log must not kill us while the group is
+    # stopped. Set here, in the handler, never before the fork: an ignored signal would survive the exec into the test.
+    local $SIG{ALRM} = sub { if ($sampling) { $SIG{PIPE} = "IGNORE"; sample_group(); close $E if $E && fileno($E) != 2 } kill "KILL", -$pid; waitpid $pid, 0; exit 142 };
     # a signal that would end us while the group is stopped (sample_group) must end the group too
     for my $sig (qw(INT TERM HUP)) { $SIG{$sig} = sub { kill "KILL", -$pid; exit 128 + ($sig eq "INT" ? 2 : $sig eq "HUP" ? 1 : 15) } }
     alarm $t; waitpid $pid, 0; my $st = $?; alarm 0;

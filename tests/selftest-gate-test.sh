@@ -258,9 +258,15 @@ for smp in "$T/no-such-sample" "$T/failing-sample"; do
 done
 
 echo "-- a log that is closed while the group is stopped (SIGPIPE) must not leave the group stopped"
-rm -f "$T/pid"; b="$(bundle forker)"
-SELFTEST_PIDFILE="$T/pid" SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_TIMEOUT=1 sh "$b/run-selftest.sh" 2>&1 | { exec 0<&-; :; } || :
-kid="$(cat "$T/pid")"; [ -n "$kid" ] || fail "closed log: forker wrote no pid"
+# hupper: as forker, but its child ignores SIGHUP: a stopped group orphaned by a dead perl would otherwise be hung up and
+# continued by the kernel, hiding the bug. pipeperl: a perl whose SIGPIPE is the default, whatever this shell inherited.
+sed 's/pid_t p=fork(); if(p==0){/pid_t p=fork(); if(p==0){signal(SIGHUP,SIG_IGN); /; s/#include <stdio.h>/#include <stdio.h>\n#include <signal.h>/' "$T/forker.c" > "$T/hupper.c"
+cc -o "$T/hupper" "$T/hupper.c"
+printf '#!/bin/sh\nexec /usr/bin/perl -e '"'"'$SIG{PIPE}="DEFAULT"; exec "/usr/bin/perl", @ARGV'"'"' -- "$@"\n' > "$T/pipeperl"
+chmod +x "$T/pipeperl"
+rm -f "$T/pid"; b="$(bundle hupper)"
+SELFTEST_PERL="$T/pipeperl" SELFTEST_PIDFILE="$T/pid" SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_TIMEOUT=1 sh "$b/run-selftest.sh" 2>&1 | { exec 0<&-; :; } || :
+kid="$(cat "$T/pid")"; [ -n "$kid" ] || fail "closed log: hupper wrote no pid"
 if kill -0 "$kid" 2>/dev/null; then kill -9 "$kid"; fail "closed log: the child $kid outlived the run (group left stopped?)"; fi
 
 echo "-- a sample that never exits is killed, and the run still ends as a timeout, within the cap"
