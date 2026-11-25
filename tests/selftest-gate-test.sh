@@ -109,6 +109,11 @@ sim cxx_two "$CORE_LINE" "$CXX_LINE" "dyld: loaded: $T/stray/libc++.1.dylib"
 sim cxx_none "$CORE_LINE" "dyld: loaded: /usr/lib/libc++.1.dylib"
 sim cxx_stray "$CORE_LINE" "dyld: loaded: $T/stray/libc++.1.dylib"
 sim cxx_unloaded "$CORE_LINE" "$CXX_LINE" "dyld: loaded: $T/stray/libc++.1.dylib" "dyld: unloaded: $T/stray/libc++.1.dylib"
+# cxx_child: a test that spawns itself; the child inherits DYLD_PRINT_LIBRARIES and prints the same one again.
+# cxx_respelled: the one file, named by Core's rpath and by its plain path.
+sim cxx_child "$CORE_LINE" "$CXX_LINE" "$CORE_LINE" "$CXX_LINE"
+sim cxx_child_two "$CORE_LINE" "$CXX_LINE" "$CORE_LINE" "$CXX_LINE" "dyld: loaded: $T/stray/libc++.1.dylib"
+sim cxx_respelled "$CORE_LINE" "$CXX_LINE" "dyld: loaded: $T/libcxx22/lib/libc++.1.dylib"
 # real_*: real programs linking the fake runtime, for the cases that take dyld's own output.
 cc -o "$T/real_ok" "$T/useCore.c" -L"$T/prefix/lib/swift" -lswiftCore -Wl,-rpath,"$T/prefix/lib/swift"
 cc -o "$T/real_stray" "$T/useBoth.c" -L"$T/stray" -lswiftDarwin -L"$T/prefix/lib/swift" -lswiftCore \
@@ -349,6 +354,10 @@ fi
 echo "-- --loads: one libc++ besides the OS's stays loaded, libcxx22's from beside the prefix"
 if [ -n "$HOST_SWIFT" ]; then echo "   skipped: $SKIP_WHY"; else
 run "$(bundle cxx_unloaded)" --loads; [ "$rc" = 0 ] || fail "cxx_unloaded: rc=$rc: $out"
+run "$(bundle cxx_child)" --loads; [ "$rc" = 0 ] || fail "cxx_child: rc=$rc: $out"
+run "$(bundle cxx_respelled)" --loads; [ "$rc" = 0 ] || fail "cxx_respelled: rc=$rc: $out"
+run "$(bundle cxx_child_two)" --loads; [ "$rc" = 1 ] || fail "cxx_child_two: rc=$rc: $out"
+case "$out" in *'FAIL: cxx_child_two'*'2 libc++.1.dylib images'*) ;; *) fail "cxx_child_two: the count not named: $out" ;; esac
 run "$(bundle cxx_two)" --loads; [ "$rc" = 1 ] || fail "cxx_two: rc=$rc: $out"
 case "$out" in *'FAIL: cxx_two'*'2 libc++.1.dylib images'*) ;; *) fail "cxx_two: the count not named: $out" ;; esac
 run "$(bundle cxx_none)" --loads; [ "$rc" = 1 ] || fail "cxx_none: rc=$rc: $out"

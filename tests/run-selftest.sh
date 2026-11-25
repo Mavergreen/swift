@@ -219,17 +219,19 @@ run_one() {
     [ "$ok" = 0 ] || [ "$core" = 1 ] || { ok=0; why="no libswiftCore.dylib loaded from $RTDIR (DYLD_PRINT_LIBRARIES showed none)"; }
     # spec: INGREDIENTS.md "One C++ runtime" -- one libc++ of the family's in the process, libcxx22's, besides
     #       the OS's own /usr/lib one, which 10.9's libobjc loads. dyld prints nothing when it hands out an image
-    #       it already has, and `unloaded:` when it drops a copy it mapped, so loaded minus unloaded is the count.
+    #       it already has, and `unloaded:` when it drops a copy it mapped. It maps a file once per process, so the
+    #       same file printed again is another process (a test that spawns itself passes DYLD_PRINT_LIBRARIES on)
+    #       or a reload, never a second copy: count files, each loaded minus unloaded, under its physical path.
     if [ "$ok" = 1 ]; then
       cxx="$(printf '%s\n' "$err" | sed -n 's/^\([^/]*\)\(\/[^ ]*\/libc++\.1\.dylib\).*$/\1 \2/p' | grep -v -e ' /usr/lib/' -e ' /System/' || :)"
-      nl="$(printf '%s\n' "$cxx" | grep -c -v -e unloaded -e '^$' || :)"; nu="$(printf '%s\n' "$cxx" | grep -c unloaded || :)"
-      if [ "$((nl - nu))" != 1 ]; then ok=0; why="$((nl - nu)) libc++.1.dylib images besides the OS's stayed loaded, not 1:$(printf '%s' "$cxx" | tr '\n' ';')"
-      else
-        here=0
-        for p in $(printf '%s\n' "$cxx" | grep -v unloaded | sed 's/^.* //'); do
-          [ "$(cd -P "$(dirname "$p")" 2>/dev/null && pwd || dirname "$p")" != "$CXXDIR_P" ] || here=1
-        done
-        [ "$here" = 1 ] || { ok=0; why="libc++.1.dylib did not load from $CXXDIR:$(printf '%s' "$cxx" | tr '\n' ';')"; }
+      kept="$(printf '%s\n' "$cxx" | while IFS= read -r l; do
+          [ -n "$l" ] || continue
+          p="${l##* }"; d="$(cd -P "$(dirname "$p")" 2>/dev/null && pwd || dirname "$p")"
+          if [ "${l#*unloaded}" != "$l" ]; then echo "- $d"; else echo "+ $d"; fi
+        done | awk '{ s = substr($0, 1, 1); n[substr($0, 3)] += (s == "+") ? 1 : -1 } END { for (f in n) if (n[f] > 0) print f }')"
+      nk="$(printf '%s\n' "$kept" | grep -c -v '^$' || :)"
+      if [ "$nk" != 1 ]; then ok=0; why="$nk libc++.1.dylib images besides the OS's stayed loaded, not 1:$(printf '%s' "$cxx" | tr '\n' ';')"
+      elif [ "$kept" != "$CXXDIR_P" ]; then ok=0; why="libc++.1.dylib did not load from $CXXDIR:$(printf '%s' "$cxx" | tr '\n' ';')"
       fi
     fi
     label="loads"
