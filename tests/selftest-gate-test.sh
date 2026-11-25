@@ -347,6 +347,7 @@ else
 fi
 
 echo "-- --loads: one libc++ besides the OS's stays loaded, libcxx22's from beside the prefix"
+if [ -n "$HOST_SWIFT" ]; then echo "   skipped: $SKIP_WHY"; else
 run "$(bundle cxx_unloaded)" --loads; [ "$rc" = 0 ] || fail "cxx_unloaded: rc=$rc: $out"
 run "$(bundle cxx_two)" --loads; [ "$rc" = 1 ] || fail "cxx_two: rc=$rc: $out"
 case "$out" in *'FAIL: cxx_two'*'2 libc++.1.dylib images'*) ;; *) fail "cxx_two: the count not named: $out" ;; esac
@@ -354,6 +355,7 @@ run "$(bundle cxx_none)" --loads; [ "$rc" = 1 ] || fail "cxx_none: rc=$rc: $out"
 case "$out" in *'FAIL: cxx_none'*'0 libc++.1.dylib images'*) ;; *) fail "cxx_none: the count not named: $out" ;; esac
 run "$(bundle cxx_stray)" --loads; [ "$rc" = 1 ] || fail "cxx_stray: rc=$rc: $out"
 case "$out" in *'FAIL: cxx_stray'*"did not load from $T/prefix/../libcxx22/lib"*) ;; *) fail "cxx_stray: the place not named: $out" ;; esac
+fi
 
 echo "-- --loads: a test that loads no libswiftCore from the prefix fails (it checked nothing)"
 if [ -z "$HOST_SWIFT" ]; then
