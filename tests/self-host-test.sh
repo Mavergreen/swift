@@ -12,7 +12,8 @@
 #   Swift toolchain, or an installed clang22 whose receipt is not pins.env's CLANG22_VERSION (unless
 #   CLANG22_PREFIX is set by hand, which it warns about), before running anything; stop at the first
 #   step that fails, naming it; record every step's wall time; and print a gate that tests stage 2's
-#   runtime. Every script it runs is a fake that records its environment and arguments, pkgutil too.
+#   runtime. Each stage that runs (pre, toolchain, runtime) has a link to the installed libcxx22 beside its
+#   prefix. Every script it runs is a fake that records its environment and arguments, pkgutil too.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -66,6 +67,8 @@ F
 { echo '#!/bin/sh'; record build.sh; printf "W='%s'\n" "$W"
   cat <<'F'
 [ -z "${FAKE_FAIL_BUILD:-}" ] || exit 3
+[ "$(readlink "$SWIFT_HOST_TOOLCHAIN/../libcxx22")" = /usr/local/mavergreen/libcxx22 ] \
+  || { echo "fake build.sh: no link to the installed libcxx22 beside $SWIFT_HOST_TOOLCHAIN" >&2; exit 5; }
 mkdir -p "$W/stdlib-build/lib/swift/macosx" && echo stdlib > "$W/stdlib-build/lib/swift/macosx/stdlib"
 mkdir -p "$SWIFT_RUNTIME_OUT" && echo runtime > "$SWIFT_RUNTIME_OUT/runtime"
 F
@@ -130,6 +133,12 @@ EOF
 diff "$T/want" "$T/seq.log" || fail "the sequence differs from the one wanted (above: < wanted, > run)"
 grep -qx 'FIXED POINT: stage 2 = stage 3' "$T/seq.out" || fail "no fixed point reported: $(cat "$T/seq.out")"
 for n in 1 2 3; do [ ! -e "$T/root/swift/self-host/s$n/pre" ] || fail "left stage $n's pre toolchain"; done
+# A stage's stdlib finds libc++ in its own usr/local/mavergreen/libcxx22/lib: the installed libcxx22, linked beside each
+# stage that runs (the pre toolchains, checked by the fake build.sh), outside the prefix that is compared.
+for n in 1 2 3; do for d in toolchain runtime; do
+  [ "$(readlink "$T/root/swift/self-host/s$n/$d/usr/local/mavergreen/libcxx22")" = /usr/local/mavergreen/libcxx22 ] \
+    || fail "stage $n's $d has no link to the installed libcxx22"
+done; done
 [ "$(wc -l < "$T/root/swift/self-host/times" | tr -d ' ')" = 14 ] || fail "times holds not 14 steps: $(cat "$T/root/swift/self-host/times")"
 awk -F '\t' '$1 !~ /^[0-9]+$/ { bad = 1 } END { exit bad }' "$T/root/swift/self-host/times" || fail "a time is not whole seconds: $(cat "$T/root/swift/self-host/times")"
 grep -q 'SWIFTC=.*/self-host/s2/toolchain/usr/local/mavergreen/swift-toolchain/bin/swiftc' "$T/seq.out" || fail "did not print the gate's command"

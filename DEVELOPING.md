@@ -91,11 +91,17 @@ CMake where shipyard is, with a probe that names no SDK, and CMake then asks `xc
 ```sh
 ./build-llvm.sh     # LLVM build support and lld, with clang-22: about 31 min the first time
 ./build.sh          # the runtime, with the installed toolchain: about 5 min
-S="$MAVERICKS_BUILD_ROOT/swift"; R="$S/payload/runtime/usr/local/mavergreen/swift-runtime"
+S="$MAVERICKS_BUILD_ROOT/swift"; R="$S/gate-runtime/usr/local/mavergreen/swift-runtime"
+rm -rf "$S/gate-runtime"; mkdir -p "${R%/*}"; cp -R "$S/payload/runtime/usr/local/mavergreen/swift-runtime" "$R"
+ln -s /usr/local/mavergreen/libcxx22 "${R%/*}/libcxx22"
 SWIFTC=/usr/local/mavergreen/bin/swiftc SWIFT_RUNTIME_PREFIX="$R" SELFTEST_SUPPORT="$S/payload/selftest-support" \
   DIST="$S/dist" sh make-selftest.sh
 ( cd "$S/dist" && tar -xzf swift-runtime-selftest.tar.gz && SWIFT_RUNTIME_PREFIX="$R" sh swift-runtime-selftest/run-selftest.sh --gate )
 ```
+
+The runtime finds libcxx22's libc++ through an rpath relative to its own directory (INGREDIENTS.md "One C++
+runtime"), at `../libcxx22` beside its prefix, so the gate runs a copy beside a link to the installed
+libcxx22, never the payload itself, which `package.sh` packages whole.
 
 `make-selftest.sh` there compiles every `tests/*.swift` with the installed toolchain, so that toolchain
 must have compiler patch 0003 (INGREDIENTS.md): an earlier release refuses `typed_throws_test.swift`,
@@ -153,7 +159,8 @@ the second one, file for file:
   nothing checks it. Stage 3 is what makes the check independent of the seed.
 
 The stages land in `$MAVERICKS_BUILD_ROOT/swift/self-host/s<N>/` (`toolchain/`, the package's payload,
-and `runtime/`). `self-host.sh` prints the gate's commands at the end: the self-test bundle built by
+and `runtime/`), each with a link to the installed libcxx22 beside its prefix, where its stdlib's rpath
+looks. `self-host.sh` prints the gate's commands at the end: the self-test bundle built by
 stage 2's `swiftc`, run against stage 2's runtime.
 
 Budget on a 6-core Mac Pro (Xeon E5-1650 v2, 12 threads), from nothing:

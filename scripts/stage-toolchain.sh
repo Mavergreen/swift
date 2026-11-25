@@ -29,8 +29,10 @@
 #          bytes in both. <out-dir> persists between builds, so its usr/ is removed first;
 #          <out-dir>/Library belongs to package-toolchain.sh and is left alone. A stdlib without an
 #          overlay or without Concurrency is refused unless --overlays-optional (self-host.sh's pre toolchain only) says to
-#          stage it without them.
-#          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, STAGE_HOST.
+#          stage it without them. libswiftCore, libswiftSwiftOnoneSupport and libswift_Concurrency are staged
+#          with the rpath that reaches the installed libcxx22 from lib/swift/macosx (lib.sh's
+#          libcxx_rpath_retarget), which makes them differ from the runtime pkg's copies in that one string.
+#          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, STAGE_HOST, MAVERICKS_MODE, OTOOL, PERL.
 set -eu
 usage() { echo "usage: [STAGE_HOST=x86_64|arm64] stage-toolchain.sh [--overlays-optional] [--frontend <dir>] [--stdlib <dir>] [--builtins <file>] [--recaulk <prefix>] <out-dir>" >&2; exit 2; }
 FRONTEND=""; STDLIB=""; BUILTINS=""; RECAULK=""; OVERLAYS_OPTIONAL=""
@@ -99,6 +101,19 @@ for o in Darwin ObjectiveC Dispatch CoreFoundation CoreGraphics Foundation _Conc
   fi
 done
 
+# spec: INGREDIENTS.md "One C++ runtime" -- the stdlib's C++ dylibs reach libcxx22 by @rpath, through an
+#       rpath made for the runtime pkg's lib/swift; the toolchain's lib/swift/macosx is one directory deeper,
+#       so the copies staged here take lib.sh's LIBCXX_RPATH_TOOLCHAIN (libcxx_rpath_retarget). They are read
+#       with mavericks-clang-22's llvm-otool on both hosts (OTOOL names another): 10.9 has no otool without
+#       the Command Line Tools.
+if [ -z "${OTOOL:-}" ]; then
+  C22="$(clang22_prefix "${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}" "$HERE")" \
+    || { echo "stage-toolchain: no usable mavericks-clang-22, whose llvm-otool reads the stdlib's dylibs" >&2; exit 1; }
+  OTOOL="$C22/bin/llvm-otool"
+fi
+export OTOOL
+DYLDINFO=""   # macho_rpaths reads with OTOOL
+
 # spec: INGREDIENTS.md "Recaulk in every program" -- the toolchain carries the Recaulk release pins.env
 #       names, the one the runtime's subsets come from, so both toolchains link the same bytes into every
 #       program; its pkg's mavergreen.plist says which release a prefix is.
@@ -136,6 +151,21 @@ cp -R "$STDLIB/macosx/Swift.swiftmodule" "$STDLIB/macosx/SwiftOnoneSupport.swift
 cp "$STDLIB/macosx/layouts-x86_64.yaml" "$DYLIBS/libswiftCore.dylib" "$DYLIBS/libswiftSwiftOnoneSupport.dylib" "$P/lib/swift/macosx/"
 for o in $MODULES; do cp -R "$STDLIB/macosx/$o.swiftmodule" "$P/lib/swift/macosx/"; done
 for lib in $LIBS_STAGED; do cp "$DYLIBS/$lib" "$P/lib/swift/macosx/"; done
+# The C++ dylibs' rpath moves to the toolchain's (above). One that loads @rpath/libc++.1.dylib through any
+# other rpath is refused; one that names libcxx22 by its absolute path, as releases before
+# 22.1.8-mavericks.28's did, is staged as it is only under --overlays-optional (self-host.sh's pre toolchain,
+# from a seed: it runs, and never ships).
+for lib in libswiftCore.dylib libswiftSwiftOnoneSupport.dylib libswift_Concurrency.dylib; do
+  f="$P/lib/swift/macosx/$lib"
+  [ -f "$f" ] || continue   # Concurrency, under --overlays-optional
+  libcxx_rpath_retarget "$f" || exit 1
+  deps="$("$OTOOL" -L "$f")" || { echo "stage-toolchain: could not list $f's libraries" >&2; exit 1; }
+  if printf '%s\n' "$deps" | grep -q '^[[:space:]]*@rpath/libc++\.1\.dylib '; then
+    libcxx_link_check "$f" "$LIBCXX_RPATH_TOOLCHAIN" || { echo "stage-toolchain: $f cannot reach libcxx22 from $P/lib/swift/macosx" >&2; exit 1; }
+  elif [ -z "$OVERLAYS_OPTIONAL" ]; then
+    libcxx_link_check "$f" "" || { echo "stage-toolchain: $f is an earlier release's; only --overlays-optional stages it" >&2; exit 1; }
+  fi
+done
 cp -R "$STDLIB/shims" "$P/lib/swift/shims"
 # clang finds its resource headers at <bin>/../lib/clang/<v>; Swift at lib/swift/clang, as in swift.org toolchains.
 cp -R "$CLANG_INC" "$P/lib/clang/$CLANG_V/include"

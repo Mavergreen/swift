@@ -242,8 +242,8 @@ done
 LCX="$T/clang-cache/$CLANG22_VERSION/libcxx22/lib/libc++.1.dylib"
 grep -qxF -e "  -DCMAKE_CXX_FLAGS=$(grep -m1 '^  -DCMAKE_C_FLAGS=' "$T/log" | sed 's/^  -DCMAKE_C_FLAGS=//') -nostdinc++ -isystem $C22/include/c++/v1 -ffile-prefix-map=$C22/include/c++/v1=/mavergreen-libcxx22/include" "$T/log" \
   || fail "the stdlib's C++ does not compile against clang22's libc++ headers alone: $(grep CMAKE_CXX_FLAGS "$T/log")"
-grep -q -e "^  -DCMAKE_SHARED_LINKER_FLAGS=.* -nostdlib++ $LCX -Wl,-syslibroot,$R/swift/work/libcxx22-root $R/swift/work/recaulk-runtime.a -Wl,-unexported_symbols_list,$R/swift/work/recaulk-runtime.unexported\$" "$T/log" \
-  || fail "the runtime does not link libcxx22's libc++ by path, alone, then Recaulk's subset, hidden: $(grep CMAKE_SHARED_LINKER_FLAGS "$T/log")"
+grep -q -e "^  -DCMAKE_SHARED_LINKER_FLAGS=.* -nostdlib++ $LCX -Wl,-rpath,@loader_path/../../../../mavergreen/libcxx22/lib $R/swift/work/recaulk-runtime.a -Wl,-unexported_symbols_list,$R/swift/work/recaulk-runtime.unexported\$" "$T/log" \
+  || fail "the runtime does not link libcxx22's libc++ by path, alone, with the rpath that reaches it installed, then Recaulk's subset, hidden: $(grep CMAKE_SHARED_LINKER_FLAGS "$T/log")"
 # The subset is the APIs named and what they need, never the archive's other APIs.
 [ "$(tr '\n' ' ' < "$R/swift/work/recaulk-runtime.unexported")" = "___recaulk_fma ___recaulk_libm_exact_sum ___recaulk_resolve ___recaulk_truncl _fma _fmal _objc_readClassPair _os_system_version_get_current_version _truncl " ] \
   || fail "Recaulk's subset: $(cat "$R/swift/work/recaulk-runtime.unexported")"

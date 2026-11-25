@@ -27,8 +27,13 @@ cc -dynamiclib -o "$T/notgmalloc.dylib" "$T/notgm.c"
 printf 'int core_f(void){return 0;}\n' > "$T/core.c"; printf 'int darwin_f(void){return 0;}\n' > "$T/darwin.c"
 printf 'int support_f(void){return 0;}\n' > "$T/support.c"
 printf '#include <unistd.h>\nint main(void){sleep(5); return 0;}\n' > "$T/sleeper.c"
-mkdir -p "$T/prefix/lib/swift" "$T/stray" "$T/supportlib"
-cc -dynamiclib -install_name @rpath/libswiftCore.dylib -o "$T/prefix/lib/swift/libswiftCore.dylib" "$T/core.c"
+mkdir -p "$T/prefix/lib/swift" "$T/stray" "$T/supportlib" "$T/libcxx22/lib"
+# libcxx22 beside the prefix, as installed: Core links its @rpath libc++ through an rpath relative to itself.
+printf 'int cxx_f(void){return 0;}\n' > "$T/cxx.c"
+cc -dynamiclib -install_name @rpath/libc++.1.dylib -o "$T/libcxx22/lib/libc++.1.dylib" "$T/cxx.c"
+cc -dynamiclib -install_name @rpath/libc++.1.dylib -o "$T/stray/libc++.1.dylib" "$T/cxx.c"
+cc -dynamiclib -install_name @rpath/libswiftCore.dylib -o "$T/prefix/lib/swift/libswiftCore.dylib" "$T/core.c" \
+  "$T/libcxx22/lib/libc++.1.dylib" -Wl,-rpath,@loader_path/../../../libcxx22/lib
 cc -dynamiclib -install_name @rpath/libswiftDarwin.dylib -o "$T/prefix/lib/swift/libswiftDarwin.dylib" "$T/darwin.c"
 cc -dynamiclib -install_name @rpath/libswiftDarwin.dylib -o "$T/stray/libswiftDarwin.dylib" "$T/darwin.c"
 cc -dynamiclib -install_name @rpath/libswiftTestSupport.dylib -o "$T/supportlib/libswiftTestSupport.dylib" "$T/support.c"
@@ -77,17 +82,26 @@ sim() {
 HOST_SWIFT="$( { DYLD_PRINT_LIBRARIES=1 "$T/ok" 2>&1 >/dev/null; [ -z "${SELFTEST_GATE_TEST_FAKE_OS_SWIFT:-}" ] || echo "dyld[1]: <UUID> /usr/lib/swift/libswiftCore.dylib"; } | grep libswift || :)"
 SKIP_WHY="the host's dyld loads the OS Swift runtime into every process (macOS 26+); --loads is exercised on 10.9 by vm-test"
 CORE_LINE="dyld: loaded: $T/prefix/lib/swift/libswiftCore.dylib"   # 10.9's dyld's form
+CXX_LINE="dyld: loaded: $T/prefix/lib/swift/../../../libcxx22/lib/libc++.1.dylib"   # as Core's rpath spells it
 # loads_ok: Core from the prefix. loads_stray: Darwin from a stray dir (Core from the prefix).
 # support_ok / support_stray: Core from the prefix, a non-shipped libswift* from the bundle's lib/ or a stray dir.
-sim loads_ok "$CORE_LINE"
-sim loads_stray "$CORE_LINE" "dyld: loaded: $T/stray/libswiftDarwin.dylib"
-sim support_ok "$CORE_LINE" "dyld: loaded: @exe@/../lib/libswiftTestSupport.dylib"
-sim support_stray "$CORE_LINE" "dyld: loaded: $T/stray/libswiftTestSupport.dylib"
+sim loads_ok "$CORE_LINE" "$CXX_LINE" "dyld: loaded: /usr/lib/libc++.1.dylib"
+sim loads_stray "$CORE_LINE" "$CXX_LINE" "dyld: loaded: $T/stray/libswiftDarwin.dylib"
+sim support_ok "$CORE_LINE" "$CXX_LINE" "dyld: loaded: @exe@/../lib/libswiftTestSupport.dylib"
+sim support_stray "$CORE_LINE" "$CXX_LINE" "dyld: loaded: $T/stray/libswiftTestSupport.dylib"
 # os_support / os_shipped: loads_ok plus, in a modern dyld's form, an OS libswift* image.
-sim os_support "dyld[1]: <UUID> $T/prefix/lib/swift/libswiftCore.dylib" "dyld[1]: <UUID> /usr/lib/libswiftPrespecialized.dylib"
-sim os_shipped "dyld[1]: <UUID> $T/prefix/lib/swift/libswiftCore.dylib" "dyld[1]: <UUID> /usr/lib/libswiftCore.dylib"
-sim up_core "$CORE_LINE"
-sim up_support "$CORE_LINE" "dyld: loaded: @exe@/../../lib/libswiftTestSupport.dylib"
+sim os_support "dyld[1]: <UUID> $T/prefix/lib/swift/libswiftCore.dylib" "dyld[1]: <UUID> $T/libcxx22/lib/libc++.1.dylib" \
+  "dyld[1]: <UUID> /usr/lib/libswiftPrespecialized.dylib"
+sim os_shipped "dyld[1]: <UUID> $T/prefix/lib/swift/libswiftCore.dylib" "dyld[1]: <UUID> $T/libcxx22/lib/libc++.1.dylib" \
+  "dyld[1]: <UUID> /usr/lib/libswiftCore.dylib"
+sim up_core "$CORE_LINE" "$CXX_LINE"
+sim up_support "$CORE_LINE" "$CXX_LINE" "dyld: loaded: @exe@/../../lib/libswiftTestSupport.dylib"
+# cxx_two: a second libc++ stays loaded. cxx_none: none of the family's. cxx_stray: the one, from elsewhere.
+# cxx_unloaded: a second one mapped, then dropped (dyld's `unloaded:`), leaving one.
+sim cxx_two "$CORE_LINE" "$CXX_LINE" "dyld: loaded: $T/stray/libc++.1.dylib"
+sim cxx_none "$CORE_LINE" "dyld: loaded: /usr/lib/libc++.1.dylib"
+sim cxx_stray "$CORE_LINE" "dyld: loaded: $T/stray/libc++.1.dylib"
+sim cxx_unloaded "$CORE_LINE" "$CXX_LINE" "dyld: loaded: $T/stray/libc++.1.dylib" "dyld: unloaded: $T/stray/libc++.1.dylib"
 # real_*: real programs linking the fake runtime, for the cases that take dyld's own output.
 cc -o "$T/real_ok" "$T/useCore.c" -L"$T/prefix/lib/swift" -lswiftCore -Wl,-rpath,"$T/prefix/lib/swift"
 cc -o "$T/real_stray" "$T/useBoth.c" -L"$T/stray" -lswiftDarwin -L"$T/prefix/lib/swift" -lswiftCore \
@@ -267,6 +281,15 @@ elif [ -z "$os_swift" ]; then
 else
   echo "   this host's dyld loads OS Swift into a program that links libswiftCore ($(echo $os_swift)); not exercised"
 fi
+
+echo "-- --loads: one libc++ besides the OS's stays loaded, libcxx22's from beside the prefix"
+run "$(bundle cxx_unloaded)" --loads; [ "$rc" = 0 ] || fail "cxx_unloaded: rc=$rc: $out"
+run "$(bundle cxx_two)" --loads; [ "$rc" = 1 ] || fail "cxx_two: rc=$rc: $out"
+case "$out" in *'FAIL: cxx_two'*'2 libc++.1.dylib images'*) ;; *) fail "cxx_two: the count not named: $out" ;; esac
+run "$(bundle cxx_none)" --loads; [ "$rc" = 1 ] || fail "cxx_none: rc=$rc: $out"
+case "$out" in *'FAIL: cxx_none'*'0 libc++.1.dylib images'*) ;; *) fail "cxx_none: the count not named: $out" ;; esac
+run "$(bundle cxx_stray)" --loads; [ "$rc" = 1 ] || fail "cxx_stray: rc=$rc: $out"
+case "$out" in *'FAIL: cxx_stray'*"did not load from $T/prefix/../libcxx22/lib"*) ;; *) fail "cxx_stray: the place not named: $out" ;; esac
 
 echo "-- --loads: a test that loads no libswiftCore from the prefix fails (it checked nothing)"
 if [ -z "$HOST_SWIFT" ]; then

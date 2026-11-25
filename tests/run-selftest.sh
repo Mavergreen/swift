@@ -12,8 +12,10 @@
 #            --loads    each test once with DYLD_PRINT_LIBRARIES=1: libswiftCore must load, and
 #                       every libswift*.dylib that the runtime ships (the names in
 #                       $SWIFT_RUNTIME_PREFIX/lib/swift) must load from there, every other libswift*
-#                       (test support) from this bundle's lib/ or the OS's own (/usr/lib, /System). The one mode that sets a DYLD
-#                       variable, and only on the test's own command.
+#                       (test support) from this bundle's lib/ or the OS's own (/usr/lib, /System); and
+#                       exactly one libc++.1.dylib other than the OS's may stay loaded, libcxx22's from
+#                       $SWIFT_RUNTIME_PREFIX/../libcxx22/lib, where the runtime's rpath reaches it. The one
+#                       mode that sets a DYLD variable, and only on the test's own command.
 #          The default and --loads run upstream/bin/* too, once each, after bin/*.
 #          An upstream/bin/<N> (or <N>-Onone) with an upstream/check/<N>.args passes only when each run's
 #          stdout, its exit status checked first, matches upstream/check/<N>.swift under FileCheck with
@@ -127,6 +129,7 @@ if [ "$MODE" = "--loads" ]; then
   # dyld prints the path as it opened it (maybe through a symlink, maybe bin/../lib), so compare physical dirs.
   RTDIR="$PREFIX/lib/swift"; RTDIR_P="$(cd -P "$RTDIR" && pwd)"; SUPDIR="$(pwd -P)/lib"
   shipped="$(cd "$RTDIR" && ls -1 libswift*.dylib 2>/dev/null || :)"
+  CXXDIR="$PREFIX/../libcxx22/lib"; CXXDIR_P="$(cd -P "$CXXDIR" 2>/dev/null && pwd || echo "$CXXDIR")"
 fi
 # run_one <test> <runs> <Guard Malloc runs> : runs one test as MODE says; counts and names it
 run_one() {
@@ -160,6 +163,21 @@ run_one() {
     done
     # A test that printed no libswiftCore load (no DYLD output read, say) proved nothing about where it loads from.
     [ "$ok" = 0 ] || [ "$core" = 1 ] || { ok=0; why="no libswiftCore.dylib loaded from $RTDIR (DYLD_PRINT_LIBRARIES showed none)"; }
+    # spec: INGREDIENTS.md "One C++ runtime" -- one libc++ of the family's in the process, libcxx22's, besides
+    #       the OS's own /usr/lib one, which 10.9's libobjc loads. dyld prints nothing when it hands out an image
+    #       it already has, and `unloaded:` when it drops a copy it mapped, so loaded minus unloaded is the count.
+    if [ "$ok" = 1 ]; then
+      cxx="$(printf '%s\n' "$err" | sed -n 's/^\([^/]*\)\(\/[^ ]*\/libc++\.1\.dylib\).*$/\1 \2/p' | grep -v -e ' /usr/lib/' -e ' /System/' || :)"
+      nl="$(printf '%s\n' "$cxx" | grep -c -v -e unloaded -e '^$' || :)"; nu="$(printf '%s\n' "$cxx" | grep -c unloaded || :)"
+      if [ "$((nl - nu))" != 1 ]; then ok=0; why="$((nl - nu)) libc++.1.dylib images besides the OS's stayed loaded, not 1:$(printf '%s' "$cxx" | tr '\n' ';')"
+      else
+        here=0
+        for p in $(printf '%s\n' "$cxx" | grep -v unloaded | sed 's/^.* //'); do
+          [ "$(cd -P "$(dirname "$p")" 2>/dev/null && pwd || dirname "$p")" != "$CXXDIR_P" ] || here=1
+        done
+        [ "$here" = 1 ] || { ok=0; why="libc++.1.dylib did not load from $CXXDIR:$(printf '%s' "$cxx" | tr '\n' ';')"; }
+      fi
+    fi
     label="loads"
   elif [ "$MODE" = "--gate" ]; then
     n=0

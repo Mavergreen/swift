@@ -56,7 +56,7 @@ else
 fi
 if [ "$PRODUCT" = swift-toolchain ]; then
   # spec: INGREDIENTS.md "One C++ runtime" -- the 10.9 toolchain's stdlib
-  #       dylibs (the runtime's bytes) link libcxx22's libc++ and load on 10.9; the cross toolchain only
+  #       dylibs (the runtime's, but for their rpath) link libcxx22's libc++ and load on 10.9; the cross toolchain only
   #       links against its copies, on a modern Mac, so it requires nothing
   CLANG22_VERSION="$(sed -n 's/^CLANG22_VERSION="\([^"]*\)".*/\1/p' "$HERE/pins.env")"
   [ -n "$CLANG22_VERSION" ] || { echo "no CLANG22_VERSION in $HERE/pins.env" >&2; exit 1; }

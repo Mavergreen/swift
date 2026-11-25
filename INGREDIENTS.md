@@ -15,7 +15,7 @@ was merged in (2026-09) and deleted (2026-10). Its 6.4.0 installer mirror is now
 | swiftlang/llvm-project commit | `LLVM_SWIFT_RELEASE` + `LLVM_SHA` + `LLVM_TARBALL_SHA256` in `pins.env` | ✅ `github-tags` on `swiftlang/llvm-project`, in the same "Swift release" PR; the SHA-256 as for Swift | moves only WITH the Swift pin: `build-llvm.sh` fails unless `LLVM_SWIFT_RELEASE` equals `SWIFT_VERSION` and `LLVM_SHA` is llvm-project's `swift-<SWIFT_VERSION>-RELEASE` |
 | swiftlang/swift-cmark commit | `CMARK_SWIFT_RELEASE` + `CMARK_SHA` + `CMARK_TARBALL_SHA256` in `pins.env` | ✅ `github-tags` on `swiftlang/swift-cmark`, in the same "Swift release" PR; the SHA-256 as for Swift | moves only WITH the Swift pin: `build-toolchain.sh` runs `check_release_pin` on it |
 | mavericks-clang-22 cross toolchain (compiles the 10.9-hosted toolchain and compiler-rt's builtins, and its `llvm-libtool-darwin`, `llvm-ar`, `llvm-ranlib` and `llvm-lipo` make their archives, and its `FileCheck` checks the upstream tests' output in the gate; on OS X 10.9, `self-host.sh` uses the native package of the same release, and vm-test installs it before the gate is built) | `CLANG22_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/clang-22`, `-mavericks.N` versioning | auto-repackages `-mavericks.(N+1)` |
-| libcxx22, the family's shared libc++ (the stdlib's C++ compiles against the pinned clang22's libc++ headers and links libcxx22's `libc++.1.dylib`; the runtime and native toolchain pkgs require it at install) | `CLANG22_VERSION` in `pins.env`: one clang-22 release publishes clang22, clang22-cross and libcxx22 under one version | ✅ with the clang22 pin (`github-releases` on `Mavergreen/clang-22`) | auto-repackages `-mavericks.(N+1)`, and the pkgs then require that libcxx22 or later |
+| libcxx22, the family's shared libc++ (the stdlib's C++ compiles against the pinned clang22's libc++ headers and links libcxx22's `libc++.1.dylib`, by `@rpath`; the runtime and native toolchain pkgs require it at install) | `CLANG22_VERSION` in `pins.env`: one clang-22 release publishes clang22, clang22-cross and libcxx22 under one version | ✅ with the clang22 pin (`github-releases` on `Mavergreen/clang-22`) | auto-repackages `-mavericks.(N+1)`, and the pkgs then require that libcxx22 or later |
 | Recaulk, the family's back-fills of post-10.9 OS APIs (libswiftCore links Recaulk's definitions of the APIs `build.sh`'s `RECAULK_RUNTIME_SYMBOLS` names, and only those, statically, and libswiftDarwin, libswift_Concurrency and libswiftDispatch their own subsets: below; every overlay, the test support and every program the toolchains' `swiftc` compiles read the 10.9 SDK through one SDK view, which Recaulk's `recaulk-materialize` makes from its `share/sdk-metadata/profiles.json` profile `swift-foundation`: `build.sh` runs the pinned Recaulk's, and both toolchains ship that binary, its `recipes.json` and `profiles.json` and the stamp it prints for them under `lib/swift/sdk-view`, where `swiftc` makes the view once per user, SDK and stamp) | `RECAULK_VERSION` in `pins.env` | ✅ `github-releases` on `Mavergreen/recaulk`, `YYYYMMDD.N` versioning | auto-repackages `-mavericks.(N+1)`; nothing is required at install, since the link is static |
 | LLVM and compiler source patches (`patches/llvm/`, `patches/compiler/`: compiler `0003` maps the compiler's runtime table, and the stdlib's own declarations, to OS X 10.9 for targets below 10.14.4, below; `0004` stops an optimized escaping-closure check from passing the length of the source's path, which no prefix map reaches, so libswift_Concurrency is the same bytes from any build root; `0005` makes a `#isolation` default argument the caller's isolation, evaluated at each call as upstream's macro is, where the compiler, built without swift-syntax, had evaluated it in the callee as nil, and with it the stdlib's own `#isolation` defaults, `withTaskGroup`'s among them; `0006` gives an imported property its header's Objective-C type wherever its Swift type cannot be lowered back to one, as an imported method's encoding already is, where the compiler had crashed emitting the ObjC record of an imported protocol a 10.9 program names, NSObject's under the SDK view in Swift 6 mode without Foundation) | this repo | n/a | auto-repackages `-mavericks.(N+1)`: they change what ships |
 | swift.org toolchain `.pkg` (CI's one seed: it compiles the cross toolchain's Swift half, and a first stdlib that only makes that toolchain runnable; everything the release ships is compiled by this repo's own compilers, below) | `TOOLCHAIN_URL`, derived from `SWIFT_VERSION` | ✅ moves with the Swift pin | verified by **signer identity**, not a hash (below) |
@@ -44,11 +44,29 @@ C++ exception runtime: two copies crash when one catches what the other threw, w
 defines a C++ ABI symbol of its own. libobjc on 10.9 itself links the OS's libc++, so a Swift process
 loads both libc++ dylibs; they coexist under different install names, and share the one libc++abi.
 
-The runtime pkg and the native toolchain pkg (whose stdlib dylibs are the runtime's bytes, loaded on 10.9)
+From 22.1.8-mavericks.28 libcxx22's `libc++.1.dylib` is named `@rpath/libc++.1.dylib` (it loads its
+`libc++abi.1.dylib` by `@loader_path`, which ld64.lld follows beside the fetched file, so the link needs no
+second `-syslibroot`). 10.9's dyld loads the first image of that name for every request spelled `@rpath/`,
+whatever file a later rpath would reach, so a process keeps one libc++ while some consumers still name the
+old absolute path, as long as each `@rpath` reaches the installed file. So libswiftCore,
+libswiftSwiftOnoneSupport and libswift_Concurrency (and the libswiftCompatibilitySpan.dylib link to Core)
+link `@rpath/libc++.1.dylib` and carry exactly one LC_RPATH, the installed `/usr/local/mavergreen/libcxx22/lib`
+reached from their own install location: `@loader_path/../../../../mavergreen/libcxx22/lib` from the runtime
+pkg's `lib/swift`, `@loader_path/../../../../../mavergreen/libcxx22/lib` from the toolchains' `lib/swift/macosx`,
+one directory deeper. `build.sh` links the first and refuses any shipped dylib that names libcxx22 by an
+absolute path; `scripts/stage-toolchain.sh` rewrites it to the second in place (both paths fill a 64-byte
+load command, so nothing else moves, and the bytes are what cctools' `install_name_tool -rpath` writes:
+10.9 has none without the Command Line Tools). The toolchains' three dylibs are therefore not the runtime
+pkg's bytes, in that one field; the native and cross toolchains' are still each other's, and `self-host.sh`
+links the installed libcxx22 beside each stage it runs, outside the prefix it compares. No pkg bundles a
+copy of libcxx22 yet: a bundled copy beside a consumer that still names the absolute path would load a
+second libc++.
+
+The runtime pkg and the native toolchain pkg (whose stdlib dylibs are the runtime's, loaded on 10.9)
 require libcxx22 at the pin or later (`--requires "libcxx22>=$CLANG22_VERSION"`: shipyard's generated
 preinstall refuses a missing or older one before installing anything); the cross toolchain only links against its copies, on a modern Mac, and requires nothing. The
-install name `/usr/local/mavergreen/libcxx22/lib/libc++.1.dylib` lasts until the family's flag day, when
-libcxx22 becomes the unlined `libcxx` under `/opt` and this runtime, moving there too, relinks.
+path `/usr/local/mavergreen/libcxx22/lib` lasts until the family's flag day, when libcxx22 becomes the
+unlined `libcxx` under `/opt` and this runtime, moving there too, takes the rpath that reaches it.
 
 ## Recaulk: the OS APIs 10.9 lacks, one owner
 
@@ -512,7 +530,7 @@ believing a release is good; it is not the bar for publishing one.
 guard (`scripts/guard.sh`) reads the `sdk-pin` entries too. These departures are deliberate, and
 each is scoped to the artifact it concerns: the first ten to the stdlib dylibs (libswiftCore,
 libswiftSwiftOnoneSupport and libswift_Concurrency: the runtime pkg's, with the libswiftCompatibilitySpan.dylib link to
-Core, and the same bytes in both toolchain pkgs), the next to the cross toolchain pkg's install floor, the
+Core, and the same bytes but for one rpath in both toolchain pkgs), the next to the cross toolchain pkg's install floor, the
 next to vm-test's upgrade from the newest release, the next ones to the swift.org mirror attached to
 `-mavericks.1` releases, and the last to the release notes' build-ingredients list, where our own patches have no upstream to link.
 
@@ -520,10 +538,10 @@ next to vm-test's upgrade from the newest release, the next ones to the swift.or
 - sdk-pin:*/swift-runtime/lib/swift/libswiftSwiftOnoneSupport.dylib: the same stdlib build and the same reason as libswiftCore.dylib's, above.
 - sdk-pin:*/swift-runtime/lib/swift/libswift_Concurrency.dylib: the same stdlib build and the same reason as libswiftCore.dylib's, above: Concurrency's runtime is C++17 as Core's is, and records sdk 11.3 and minos 10.9 (runtime patch 0012 lowers the 10.15 its build forced).
 - sdk-pin:*/swift-runtime/lib/swift/libswiftCompatibilitySpan.dylib: a link to libswiftCore.dylib in the same directory (scripts/stage-runtime.sh; "The compiler's runtime table", above), so it is libswiftCore's bytes, and the compat guard, given the runtime's lib/swift/*.dylib, follows it and reads Core's sdk 11.3: libswiftCore.dylib's reason, above, verbatim. The toolchains ship no such link (a program's link reaches the name through Core's $ld$previous, not a file).
-- sdk-pin:*/swift-toolchain/lib/swift/macosx/libswiftCore.dylib: the toolchain's stdlib dylibs are the runtime's own bytes, staged from the one stdlib build (scripts/stage-toolchain.sh), so the runtime's reason above applies verbatim. The compiler, lld and clang beside them record the pinned 10.9 SDK and take no exemption.
+- sdk-pin:*/swift-toolchain/lib/swift/macosx/libswiftCore.dylib: the toolchain's stdlib dylibs are the runtime's own bytes but for the one rpath that reaches libcxx22 ("One C++ runtime", above), staged from the one stdlib build (scripts/stage-toolchain.sh), so the runtime's reason above applies verbatim. The compiler, lld and clang beside them record the pinned 10.9 SDK and take no exemption.
 - sdk-pin:*/swift-toolchain/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib: the same stdlib build and the same reason as libswiftCore.dylib's, above.
-- sdk-pin:*/swift-toolchain/lib/swift/macosx/libswift_Concurrency.dylib: the runtime's own bytes too, from the same stdlib build, and the same reason as libswiftCore.dylib's, above; the toolchain ships it so a program's link finds it, as it ships Core's.
-- sdk-pin:*/swift-toolchain-cross/lib/swift/macosx/libswiftCore.dylib: the cross toolchain's stdlib dylibs are the runtime's own bytes too: CI's build-cross job builds the one stdlib, with that cross toolchain, and stages it into all three pkgs, and collect refuses a release whose two toolchains' stdlib and builtins trees differ in a byte, so the runtime's reason above applies verbatim. The compiler, lld and clang beside them are arm64 and record the family's arm64 pin (minOS 11.0, SDK 11.3) and take no exemption.
+- sdk-pin:*/swift-toolchain/lib/swift/macosx/libswift_Concurrency.dylib: the runtime's own bytes too but for that rpath, from the same stdlib build, and the same reason as libswiftCore.dylib's, above; the toolchain ships it so a program's link finds it, as it ships Core's.
+- sdk-pin:*/swift-toolchain-cross/lib/swift/macosx/libswiftCore.dylib: the cross toolchain's stdlib dylibs are the runtime's own bytes too but for that rpath: CI's build-cross job builds the one stdlib, with that cross toolchain, and stages it into all three pkgs, and collect refuses a release whose two toolchains' stdlib and builtins trees differ in a byte, so the runtime's reason above applies verbatim. The compiler, lld and clang beside them are arm64 and record the family's arm64 pin (minOS 11.0, SDK 11.3) and take no exemption.
 - sdk-pin:*/swift-toolchain-cross/lib/swift/macosx/libswiftSwiftOnoneSupport.dylib: the same stdlib build and the same reason as libswiftCore.dylib's, above.
 - sdk-pin:*/swift-toolchain-cross/lib/swift/macosx/libswift_Concurrency.dylib: the runtime's own bytes too, staged from the one stdlib build into all three pkgs and compared byte for byte by collect, as libswiftCore.dylib's are; the same reason as its, above.
 - floor:swift-toolchain-cross-*.pkg: the cross toolchain runs on an Apple-silicon Mac with macOS 11 or later and only targets 10.9, so its archive's install floor is 11.0 (arm64), not 10.9.5; clang22-cross and rust-cross declare the same.

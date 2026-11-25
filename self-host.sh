@@ -75,6 +75,11 @@ W="${SWIFT_WORK:-$SWIFT_BUILD/work}"
 O="$SWIFT_BUILD/self-host"; mkdir -p "$O"; : > "$O/times"
 P=usr/local/mavergreen/swift-toolchain
 B="$W/builtins-x86/lib/darwin/libclang_rt.osx.a"
+# spec: INGREDIENTS.md "One C++ runtime" -- a stage's stdlib dylibs load libcxx22's libc++ by @rpath, through
+#       an rpath that climbs to the stage's usr/local and names mavergreen/libcxx22/lib, which no stage has: so each
+#       stage that runs (a pre toolchain's frontend, a toolchain that builds the next stage, the runtime the
+#       gate tests) gets a link to the installed one there, beside the prefix toolchain_cmp compares.
+libcxx22_beside() { mkdir -p "$1/usr/local/mavergreen" && ln -s /usr/local/mavergreen/libcxx22 "$1/usr/local/mavergreen/libcxx22"; }
 timed() {  # timed <label> <command>... -- runs it, recording its wall seconds in $O/times; a failure stops here
   _tl="$1"; shift
   echo "==> $_tl"
@@ -98,12 +103,15 @@ for N in 1 2 3; do
   # toolchain, which is compared and shipped, takes no such option.
   timed "stage $N: its compiler beside the previous stdlib" \
     sh "$HERE/scripts/stage-toolchain.sh" --overlays-optional --frontend "$W/swift-x86" --stdlib "$prev/lib/swift" --builtins "$B" "$D/pre"
+  libcxx22_beside "$D/pre"
   # No pkg installed a stage, so its release is declared: this checkout's Swift.
   timed "stage $N: its stdlib and runtime (build.sh)" \
     env SWIFT_HOST_TOOLCHAIN="$D/pre/$P" SWIFT_HOST_TOOLCHAIN_VERSION="$SWIFT_VERSION-selfhost.s$N" \
     SWIFT_RUNTIME_OUT="$D/runtime" sh "$HERE/build.sh"
+  libcxx22_beside "$D/runtime"
   timed "stage $N: its toolchain" \
     sh "$HERE/scripts/stage-toolchain.sh" --frontend "$W/swift-x86" --stdlib "$W/stdlib-build/lib/swift" --builtins "$B" "$D/toolchain"
+  libcxx22_beside "$D/toolchain"
   rm -rf "$D/pre"
   prev="$D/toolchain/$P"
 done

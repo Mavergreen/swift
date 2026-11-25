@@ -8,7 +8,8 @@
 #          $REPO/pins.env's RECAULK_VERSION, with its include/recaulk/dispatch/dispatch.h and pthread/qos.h, its
 #          share/sdk-metadata's recipes.json and profiles.json, and a bin/recaulk-materialize that answers only
 #          --print-stamp (fake_recaulk_materialize) (the caller sets REPO). Run stage-toolchain.sh over it with
-#          SWIFT_WORK=<work-dir> and --recaulk <work-dir>/recaulk. Shared, so a test
+#          SWIFT_WORK=<work-dir> and --recaulk <work-dir>/recaulk; it exports OTOOL as
+#          <work-dir>/fake-macho/otool, which finds no library and no rpath in a text fake. Shared, so a test
 #          that needs a staged payload gets the one stage-toolchain.sh really lays out, not a copy that
 #          could drift from it.
 fake_toolchain_build() {
@@ -54,6 +55,17 @@ fake_toolchain_build() {
   done
   fake_recaulk_plist "$(sed -n 's/^RECAULK_VERSION="\([^"]*\)".*/\1/p' "$REPO/pins.env")" > "$_fw/recaulk/mavergreen.plist"
   mkdir -p "$_fw/recaulk/bin" && fake_recaulk_materialize > "$_fw/recaulk/bin/recaulk-materialize" && chmod 755 "$_fw/recaulk/bin/recaulk-materialize"
+  # stage-toolchain.sh reads the stdlib's dylibs with OTOOL. These fakes are text, which links no libc++ and
+  # records no rpath, so for them it says so (-L, -l), and the copies stay as they are; anything else, a
+  # test's own cc-built stand-in or another reader's option, goes to the real otool. Exported, so every
+  # stage-toolchain.sh the caller runs takes it.
+  mkdir -p "$_fw/fake-macho"
+  printf '%s\n' '#!/bin/sh' 'for f in "$@"; do :; done' \
+    'case "$1:$(od -An -tx1 -N4 "$f" 2>/dev/null | tr -d " \n")" in' \
+    '  -L:cffaedfe|-L:cafebabe|-l:cffaedfe|-l:cafebabe) ;; -L:*) echo "$f:"; exit 0 ;; -l:*) exit 0 ;; esac' \
+    'exec otool "$@"' > "$_fw/fake-macho/otool"
+  chmod 755 "$_fw/fake-macho/otool"
+  OTOOL="$_fw/fake-macho/otool"; export OTOOL
   unset _fw _ff _fs _fl
 }
 

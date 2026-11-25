@@ -866,6 +866,60 @@ macho_rpaths() {
   fi
 }
 
+# spec: INGREDIENTS.md "One C++ runtime" -- the runtime's C++ dylibs load libcxx22's libc++ as
+#       @rpath/libc++.1.dylib (its install name from 22.1.8-mavericks.28), through one LC_RPATH: the installed
+#       /usr/local/mavergreen/libcxx22/lib, reached from the dylib's own install location. The runtime pkg's
+#       sit in swift-runtime/lib/swift, the toolchains' copies one directory deeper, in
+#       swift-toolchain[-cross]/lib/swift/macosx, so the two copies differ in that one string. Each climbs
+#       to local/ and names mavergreen/libcxx22/lib from there, so both load commands are 64 bytes and
+#       the toolchain's copy is the runtime's with that one field rewritten in place (libcxx_rpath_retarget).
+LIBCXX_RPATH_RUNTIME='@loader_path/../../../../mavergreen/libcxx22/lib'
+LIBCXX_RPATH_TOOLCHAIN='@loader_path/../../../../../mavergreen/libcxx22/lib'
+
+# libcxx_link_check <dylib> <rpath> -- fails, saying why on stderr, when <dylib> names libcxx22 by any
+# absolute path; and, when <rpath> is not empty, when it does not link @rpath/libc++.1.dylib or its
+# LC_RPATHs are not exactly <rpath>. Reads with ${OTOOL:-otool} and macho_rpaths ($DYLDINFO).
+libcxx_link_check() {
+  [ -f "$1" ] || { echo "libcxx_link_check: no such file: $1" >&2; return 1; }
+  _lc_deps="$("${OTOOL:-otool}" -L "$1" | sed 1d | sed 's/^[[:space:]]*//; s/ (compatibility.*//')" \
+    || { echo "libcxx_link_check: could not list $1's libraries" >&2; return 1; }
+  if printf '%s\n' "$_lc_deps" | grep -q '^/.*/libcxx22/'; then
+    printf '%s\n' "$_lc_deps" >&2; echo "libcxx_link_check: $1 names libcxx22 by an absolute path (listed above)" >&2; return 1
+  fi
+  [ -n "$2" ] || return 0
+  printf '%s\n' "$_lc_deps" | grep -qx '@rpath/libc++\.1\.dylib' \
+    || { printf '%s\n' "$_lc_deps" >&2; echo "libcxx_link_check: $1 does not link @rpath/libc++.1.dylib (listed above)" >&2; return 1; }
+  _lc_rp="$(macho_rpaths "$1")" || { echo "libcxx_link_check: could not read $1's rpaths" >&2; return 1; }
+  [ "$_lc_rp" = "$2" ] \
+    || { echo "libcxx_link_check: $1 has rpaths [$(printf '%s' "$_lc_rp" | tr '\n' ' ')], not [$2]" >&2; return 1; }
+}
+
+# libcxx_rpath_retarget <dylib> -- when <dylib>'s one LC_RPATH is the runtime's (LIBCXX_RPATH_RUNTIME),
+# rewrites it to the toolchain's (LIBCXX_RPATH_TOOLCHAIN), in place; any other dylib is left as it is.
+# platform: an x86_64 Mach-O load command, rewritten by ${PERL:-perl} (10.9 has /usr/bin/perl, and no
+#           install_name_tool without the Command Line Tools). The two paths fill the same 64-byte
+#           command, so nothing else moves: these are the bytes cctools' install_name_tool -rpath writes,
+#           where mavericks-clang-22's llvm-install-name-tool rebuilds the whole string table.
+libcxx_rpath_retarget() {
+  _lr="$(macho_rpaths "$1")" || { echo "libcxx_rpath_retarget: could not read $1's rpaths" >&2; return 1; }
+  [ "$_lr" = "$LIBCXX_RPATH_RUNTIME" ] || return 0
+  "${PERL:-perl}" -e '
+    my ($f, $old, $new) = @ARGV;
+    sub cmd { my ($p) = @_; my $n = (12 + length($p) + 1 + 7) & ~7; return pack("VVV", 0x8000001c, $n, 12) . $p . ("\0" x ($n - 12 - length($p))); }
+    my ($o, $n) = (cmd($old), cmd($new));
+    length($o) == length($n) or die "the two rpaths need load commands of one size, not " . length($o) . " and " . length($n) . "\n";
+    open(my $fh, "+<:raw", $f) or die "cannot open: $!\n";
+    my $b = do { local $/; <$fh> };
+    unpack("V", $b) == 0xfeedfacf or die "not a 64-bit little-endian Mach-O\n";
+    my $end = 32 + unpack("V", substr($b, 20, 4));
+    my ($at, $i, $count) = (-1, 0, 0);
+    while (($i = index($b, $o, $i)) >= 0) { if ($i < $end) { $at = $i; $count++; } $i++; }
+    $count == 1 or die "found the runtime rpath command $count times among the load commands\n";
+    seek($fh, $at, 0) or die "cannot seek: $!\n"; print $fh $n or die "cannot write: $!\n"; close($fh) or die "cannot write: $!\n";
+  ' "$1" "$LIBCXX_RPATH_RUNTIME" "$LIBCXX_RPATH_TOOLCHAIN" \
+    || { echo "libcxx_rpath_retarget: could not rewrite $1's rpath" >&2; return 1; }
+}
+
 # host_swiftc_stamp <toolchain-prefix> -- four lines: `prefix <toolchain-prefix>` (CMake knows the host
 # swiftc by its path), then `<role> <sha256>` for what a toolchain built with that host swiftc compiles
 # its Swift half with and against: the host's swift-frontend, and the Swift.swiftmodule and

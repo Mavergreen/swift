@@ -23,7 +23,7 @@
 #   GitHub's tarball of SWIFT_SHA, verified by SWIFT_TARBALL_SHA256 and patched with the OS's patch;
 #   mavericks-clang-22's llvm-ar and llvm-ranlib make the stdlib's archives (pins.env's CLANG22_VERSION:
 #   cross, fetch-clang22.sh's; native, the installed one, CLANG22_PREFIX); the stdlib's C++ compiles against
-#   that clang22's libc++ headers and links libcxx22's libc++.1.dylib (fetch-libcxx22.sh, the same release),
+#   that clang22's libc++ headers and links libcxx22's libc++.1.dylib by @rpath (fetch-libcxx22.sh, the same release),
 #   the family's one shared libc++, never the SDK's, which on 10.9 is the OS's own; libswiftCore links
 #   Recaulk's definitions of the post-10.9 APIs RECAULK_RUNTIME_SYMBOLS names, statically, from
 #   librecaulk.a (fetch-recaulk.sh, pins.env's RECAULK_VERSION), and nothing else of Recaulk's;
@@ -113,17 +113,14 @@ if [ "$MODE" = native ]; then OTOOL="$X/llvm-otool"; STRINGS="$X/llvm-strings"; 
 # spec: INGREDIENTS.md "One C++ runtime" -- one shared libc++ per process,
 #       the family's, never the OS's: libcxx22's headers from the clang22 above, its dylib by path
 #       (-L would be searched inside the SDK first, -isysroot's doing), and the headers' directory mapped,
-#       since cross and native find them in different places
+#       since cross and native find them in different places. The dylib's install name is
+#       @rpath/libc++.1.dylib, so the link adds the rpath that reaches the installed libcxx22 from the
+#       runtime pkg's lib/swift (lib.sh's LIBCXX_RPATH_RUNTIME); its re-export of libc++abi.1.dylib is by
+#       @loader_path, which ld64.lld follows beside the fetched file, wherever it is
 CXXINC="$(dirname "$X")/include/c++/v1"
 [ -f "$CXXINC/__config" ] || { echo "FAIL: no libc++ headers at $CXXINC (mavericks-clang-22 ships them)"; exit 1; }
 LIBCXX_PREFIX="$(sh "$HERE/fetch-libcxx22.sh")" || { echo "FAIL: could not fetch libcxx22 $CLANG22_VERSION"; exit 1; }
 LIBCXX="$LIBCXX_PREFIX/lib/libc++.1.dylib"
-# platform: ld64.lld follows libc++.1.dylib's re-export of libc++abi.1.dylib by its install name, under each
-#           -syslibroot, and has no -dylib_file; a fetched libcxx22 is not at that name, so a second root
-#           holds it there (CI's runner has no libcxx22 installed; the SDK stays the first root)
-LIBCXX_ROOT="$ROOT/libcxx22-root"
-rm -rf "$LIBCXX_ROOT"; mkdir -p "$LIBCXX_ROOT/usr/local/mavergreen"
-ln -s "$LIBCXX_PREFIX" "$LIBCXX_ROOT/usr/local/mavergreen/libcxx22"
 CXX_LIBCXX="-nostdinc++ -isystem $CXXINC -ffile-prefix-map=$CXXINC=/mavergreen-libcxx22/include"
 # spec: INGREDIENTS.md "Recaulk" -- libswiftCore takes Recaulk's definition of each API named here, and
 #       only those: a forwarder that calls the OS's where it has one (macOS 10.12 and later, for
@@ -323,7 +320,7 @@ shipyard-cmake -G Ninja -S swift -B "$ROOT/stdlib-build" \
   -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON \
   "-DCMAKE_C_FLAGS=$PM_C" "-DCMAKE_CXX_FLAGS=$PM_C $CXX_LIBCXX" \
   "-DCMAKE_EXE_LINKER_FLAGS=$LINK" "-DCMAKE_MODULE_LINKER_FLAGS=$LINK" \
-  "-DCMAKE_SHARED_LINKER_FLAGS=$LINK -resource-dir $ROOT/clang-resource -nostdlib++ $LIBCXX -Wl,-syslibroot,$LIBCXX_ROOT $RECAULK_A -Wl,-unexported_symbols_list,$RECAULK_UNX" \
+  "-DCMAKE_SHARED_LINKER_FLAGS=$LINK -resource-dir $ROOT/clang-resource -nostdlib++ $LIBCXX -Wl,-rpath,$LIBCXX_RPATH_RUNTIME $RECAULK_A -Wl,-unexported_symbols_list,$RECAULK_UNX" \
   -DLLVM_DIR="$LLVMB/lib/cmake/llvm" \
   -DLLVM_BUILD_LIBRARY_DIR="$LLVMB/lib" \
   -DLLVM_BUILD_BINARY_DIR="$LLVMB/bin" \
@@ -755,21 +752,24 @@ for lib in $SHIPPED_DYLIBS; do
   if printf '%s\n' "$S" | grep -F -e "$ROOT" -e "$RP" -e "$LP"; then
     echo "FAIL: $lib carries the build root's path (listed above)"; exit 1
   fi
-  FOREIGN="$(printf '%s\n' "$S" | grep -E '^/[A-Za-z][A-Za-z0-9._-]+/' | grep -v -e '^/mavergreen-build/' -e '^/usr/lib/' -e '^/System/' \
-    -e '^/usr/local/mavergreen/libcxx22/lib/libc++\.1\.dylib$' || :)"
+  # spec: INGREDIENTS.md "One C++ runtime" -- libcxx22's path too: its libc++ is @rpath/libc++.1.dylib,
+  #       reached by the rpath checked below.
+  FOREIGN="$(printf '%s\n' "$S" | grep -E '^/[A-Za-z][A-Za-z0-9._-]+/' | grep -v -e '^/mavergreen-build/' -e '^/usr/lib/' -e '^/System/' || :)"
   if [ -n "$FOREIGN" ]; then
-    printf '%s\n' "$FOREIGN"; echo "FAIL: $lib carries an absolute path outside /mavergreen-build, /usr/lib, /System and libcxx22's libc++ (listed above)"; exit 1
+    printf '%s\n' "$FOREIGN"; echo "FAIL: $lib carries an absolute path outside /mavergreen-build, /usr/lib and /System (listed above)"; exit 1
   fi
   # spec: INGREDIENTS.md "One C++ runtime" -- one libc++, the family's,
-  #       and one libc++abi, the OS's (libcxx22 re-exports it). The runtime's two have C++ and link
-  #       libcxx22's; the overlays have none, and the rule there is only "never the OS's libc++".
+  #       and one libc++abi, the OS's (libcxx22 re-exports it). The runtime's three have C++ and link
+  #       libcxx22's by @rpath, through the one rpath that reaches the installed libcxx22 from the runtime
+  #       pkg's lib/swift (stage-toolchain.sh moves it for the toolchains' copies); no dylib names libcxx22
+  #       by an absolute path; the overlays have no C++, and the rule there is also "never the OS's libc++".
   DEPS="$("${OTOOL:-otool}" -L "$lib" | sed 1d | sed 's/^[[:space:]]*//; s/ (compatibility.*//')" || { echo "FAIL: could not list $lib's libraries"; exit 1; }
   printf '%s\n' "$DEPS" | grep -qx '/usr/lib/libSystem\.B\.dylib' \
     || { printf '%s\n' "$DEPS"; echo "FAIL: ${OTOOL:-otool} read no libSystem from $lib, so it read nothing $lib links (listed above)"; exit 1; }
   case "${lib##*/}" in
     libswiftCore.dylib|libswiftSwiftOnoneSupport.dylib|libswift_Concurrency.dylib)
-      printf '%s\n' "$DEPS" | grep -qx '/usr/local/mavergreen/libcxx22/lib/libc++\.1\.dylib' \
-        || { printf '%s\n' "$DEPS"; echo "FAIL: $lib does not link libcxx22's libc++ (listed above)"; exit 1; }
+      DYLDINFO="$DYLDINFO" libcxx_link_check "$lib" "$LIBCXX_RPATH_RUNTIME" \
+        || { echo "FAIL: $lib does not link libcxx22's libc++ by @rpath, through $LIBCXX_RPATH_RUNTIME alone (above)"; exit 1; }
       # Concurrency is a stdlib dylib, named as Core is (/usr/lib/swift/<name>, with an $ld$previous that
       # makes a 10.9 client record @rpath/<name>); through _Builtin_float, whose $ld$previous below 10.14.4
       # names libswiftDarwin, it loads libswiftDarwin, and does not load on 10.9 without it.
@@ -780,6 +780,7 @@ for lib in $SHIPPED_DYLIBS; do
           || { echo "FAIL: $lib has no \$ld\$previous naming @rpath/libswift_Concurrency.dylib for a 10.9 client"; exit 1; }
       fi ;;
     *)
+      DYLDINFO="$DYLDINFO" libcxx_link_check "$lib" "" || { echo "FAIL: $lib names libcxx22 by an absolute path (above)"; exit 1; }
       # Global Constraints: every new library is @rpath/<name>, as the Swift libraries reach each other.
       ID="$("${OTOOL:-otool}" -D "$lib" | sed 1d)"
       [ "$ID" = "@rpath/${lib##*/}" ] || { echo "FAIL: $lib's install name is '$ID', not @rpath/${lib##*/}"; exit 1; }
