@@ -125,7 +125,7 @@ from the bundle's `lib/`. Of `objectivec.list`, three are included, and only one
 none exercises the overlay and its acceptance is `tests/objc_overlay_test.swift` beside
 our other ObjC tests. A test `concurrency.list` includes is built once per `%target-run-simple-*` line
 (`upstream/bin/concurrency-<name>-v2` is the second); `--gate` runs each `SELFTEST_UPSTREAM_RUNS` times, then once
-under Guard Malloc, each run within `SELFTEST_UPSTREAM_TIMEOUT` (180 s; ours, `SELFTEST_TIMEOUT`, 60 s). `make-selftest.sh` skips a test whose first line is `// selftest: skip: <reason>`
+under Guard Malloc (none for a test `SELFTEST_NO_GMALLOC` lists; vm-test lists one pair, INGREDIENTS.md's `on-target:cancellation-gmalloc`), each run within `SELFTEST_UPSTREAM_TIMEOUT` (180 s; ours, `SELFTEST_TIMEOUT`, 60 s). `make-selftest.sh` skips a test whose first line is `// selftest: skip: <reason>`
 (none today). The staged modules are binary: build the bundle with the toolchain that ran `build.sh`.
 
 ### The toolchain: self-hosting

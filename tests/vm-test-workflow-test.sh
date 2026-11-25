@@ -52,6 +52,10 @@ check() {
     || { echo "vm-test does not build upstream's tests into the bundle (SELFTEST_SUPPORT=dist/selftest-support)"; return 1; }
   awk '/run-selftest\.sh --loads/ { l = NR } /run-selftest\.sh --gate/ { g = NR } END { exit !(l && l <= g) }' "$T/job" \
     || { echo "vm-test does not run the bundle's --loads before its --gate"; return 1; }
+  # Guard Malloc is skipped for this one test pair only, and only on the gate's command line.
+  [ "$(grep -c 'SELFTEST_NO_GMALLOC' "$1")" = 1 ] \
+    && grep -q '^              SELFTEST_NO_GMALLOC="upstream/bin/concurrency-cancellation_handler_concurrent upstream/bin/concurrency-cancellation_handler_concurrent-Onone" \\$' "$T/job" \
+    || { echo "vm-test skips Guard Malloc for more than cancellation_handler_concurrent's pair, or not on the gate alone"; return 1; }
   awk '/^  build-cross:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" | grep -q '^            \${{ env.SWIFT_BUILD }}/dist/selftest-support$' \
     || { echo "build-cross does not upload the self-test's support in swift-cross"; return 1; }
   awk '/^  publish:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" | grep -q '^    needs: \[.*vm-test.*\]$' \
@@ -88,6 +92,9 @@ mutant "the self-test is built by another swiftc" 's|SWIFTC=/usr/local/mavergree
 mutant "the gate is not run" 's/run-selftest\.sh --gate/run-selftest.sh/'
 mutant "the bundle has no upstream tests" 's|SELFTEST_SUPPORT="\$PWD/dist/selftest-support" ||'
 mutant "a failing gate does not fail the step" 's/run-selftest\.sh --gate ) || exit 1$/run-selftest.sh --gate )/'
+mutant "another test skips Guard Malloc" 's|concurrent-Onone" \\$|concurrent-Onone upstream/bin/concurrency-async" \\|'
+mutant "Guard Malloc is skipped for every run of the gate" 's|^  vm-test:$|  vm-test:\
+    env: { SELFTEST_NO_GMALLOC: x }|'
 mutant "--loads is not run" 's/run-selftest\.sh --loads &&/true \&\&/'
 mutant "build-cross uploads no self-test support" '/^            \${{ env.SWIFT_BUILD }}\/dist\/selftest-support$/d'
 mutant "publish does not wait for vm-test" 's/^    needs: \[collect, scan, vm-test\]$/    needs: [collect, scan]/'
