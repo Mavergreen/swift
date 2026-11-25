@@ -385,6 +385,32 @@ case "$out" in *'PASS (2x + 1x Guard Malloc): upstream/bin/upcounter'*) ;; *) fa
 case "$out" in *'passed=2  failed=0'*) ;; *) fail "not two passes counted: $out" ;; esac
 rm -f "$T/count"
 
+echo "-- SELFTEST_NO_GMALLOC: a listed test runs its plain runs, no Guard Malloc run, and says so; the rest as before"
+b="$(bundle counter up:counter)"; mv "$b/upstream/bin/counter" "$b/upstream/bin/upcounter"
+cp "$b/upstream/bin/upcounter" "$b/upstream/bin/upcounter-Onone"   # unlisted, and the listed name is its prefix
+rc=0; out="$(cd / && SELFTEST_COUNT="$T/count" SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_RUNS=3 SELFTEST_UPSTREAM_RUNS=2 \
+  SELFTEST_NO_GMALLOC="upstream/bin/upcounter" sh "$b/run-selftest.sh" --gate 2>&1)" || rc=$?
+[ "$rc" = 0 ] || fail "no-gmalloc: rc=$rc: $out"
+[ "$(grep -c '/bin/counter$' "$T/count")" = 13 ] || fail "no-gmalloc: bin/counter ran $(grep -c '/bin/counter$' "$T/count") times, not 3 + 10"
+[ "$(grep -c '/upstream/bin/upcounter$' "$T/count")" = 2 ] || fail "no-gmalloc: upstream's ran $(grep -c 'upcounter$' "$T/count") times, not 2"
+[ "$(grep -c '/upstream/bin/upcounter-Onone$' "$T/count")" = 3 ] || fail "no-gmalloc: the unlisted -Onone ran $(grep -c 'upcounter-Onone$' "$T/count") times, not 2 + 1"
+case "$out" in *'PASS (2x, Guard Malloc skipped by SELFTEST_NO_GMALLOC): upstream/bin/upcounter'*) ;; *) fail "no-gmalloc: the skip not said: $out" ;; esac
+case "$out" in *'PASS (2x + 1x Guard Malloc): upstream/bin/upcounter-Onone'*) ;; *) fail "no-gmalloc: the unlisted -Onone not guarded: $out" ;; esac
+rm -f "$T/count"
+
+echo "-- SELFTEST_NO_GMALLOC: a name that is no test here is refused (a stale list must not pass unseen)"
+run_env() { rc=0; out="$(SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_RUNS=2 SELFTEST_NO_GMALLOC="$2" sh "$1/run-selftest.sh" --gate 2>&1)" || rc=$?; }
+run_env "$(bundle ok)" "upstream/bin/nosuch"
+[ "$rc" = 1 ] || fail "no-gmalloc stale: rc=$rc: $out"
+case "$out" in *'SELFTEST_NO_GMALLOC'*'upstream/bin/nosuch'*) ;; *) fail "no-gmalloc stale: not named: $out" ;; esac
+# Names that exist as files but are not how the PASS line names a test, and a glob, which must not expand.
+for n in bin/ok run-selftest.sh 'upstream/bin/*' 'upstream/bin/../bin/ok' .; do
+  run_env "$(bundle ok up:ok)" "$n"
+  case "$rc:$out" in 1:*"SELFTEST_NO_GMALLOC names $n,"*) ;; *) fail "no-gmalloc: '$n' not refused: rc=$rc: $out" ;; esac
+done
+run_env "$(bundle ok)" "ok"; [ "$rc" = 0 ] || fail "no-gmalloc: a bin/ test by its bare name refused: rc=$rc: $out"
+case "$out" in *'PASS (2x, Guard Malloc skipped by SELFTEST_NO_GMALLOC): ok'*) ;; *) fail "no-gmalloc: bin/ok not skipped: $out" ;; esac
+
 echo "-- upstream/bin/: a failure there fails the gate, named; quick mode runs it once"
 run "$(bundle ok up:bad)" --gate; [ "$rc" = 1 ] || fail "upstream bad: rc=$rc: $out"
 case "$out" in *'FAIL: upstream/bin/bad'*) ;; *) fail "upstream bad: not named: $out" ;; esac

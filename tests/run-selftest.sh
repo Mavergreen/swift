@@ -8,7 +8,7 @@
 #                       then 10 runs under Guard Malloc + MallocScribble + MallocGuardEdges; then
 #                       each of upstream's own tests (upstream/bin/*, when make-selftest.sh's
 #                       SELFTEST_SUPPORT built them) SELFTEST_UPSTREAM_RUNS times (default 20),
-#                       then once under Guard Malloc
+#                       then once under Guard Malloc (none for a test SELFTEST_NO_GMALLOC names)
 #            --loads    each test once with DYLD_PRINT_LIBRARIES=1: libswiftCore must load, and
 #                       every libswift*.dylib that the runtime ships (the names in
 #                       $SWIFT_RUNTIME_PREFIX/lib/swift) must load from there, every other libswift*
@@ -40,6 +40,9 @@
 #                                $SELFTEST_SAMPLES/sample-<pid>.txt (default ./samples), its top-of-stack
 #                                section (else the first 150 lines) to stderr. No sample, or one that fails: one
 #                                line says so, and the run is killed and reported as before.
+#          SELFTEST_NO_GMALLOC   --gate: tests (named as the PASS line names them, space-separated) that get their
+#                                plain runs but no Guard Malloc run, and say so; a name that is no test here is
+#                                refused. For a host too slow for one test under Guard Malloc; whoever sets it says why.
 #          SELFTEST_PERL         the perl to time runs with; default /usr/bin/perl, else perl on PATH
 #          SELFTEST_FILECHECK    the FileCheck for upstream/check/; default /usr/local/mavergreen/clang22/bin/FileCheck,
 #                                timed like a run
@@ -94,6 +97,18 @@ esac
 if [ -n "${SELFTEST_PERL:-}" ]; then PERL="$SELFTEST_PERL"
 elif [ -x /usr/bin/perl ]; then PERL=/usr/bin/perl
 else PERL="$(command -v perl || :)"; fi
+NOGM="${SELFTEST_NO_GMALLOC:-}"
+# Each name as the PASS line gives it: upstream/bin/<name>, or a bare bin/ name; globs are not expanded.
+set -f
+for n in $NOGM; do
+  case "$n" in
+    *..*|upstream/bin/*/*) false ;;
+    upstream/bin/?*) [ -f "$n" ] && [ -x "$n" ] ;;
+    */*) false ;;
+    *) [ -f "bin/$n" ] && [ -x "bin/$n" ] ;;
+  esac || { echo "SELFTEST_NO_GMALLOC names $n, which is no test in this bundle" >&2; exit 1; }
+done
+set +f
 [ -n "$PERL" ] && [ -x "$PERL" ] || { echo "no perl (${SELFTEST_PERL:-/usr/bin/perl}): cannot time-limit the runs, so not running them" >&2; exit 1; }
 
 # limited ARGS... : runs ARGS under the timeout; exit 142 (SIGALRM) means it ran out, a signal N 128+N
@@ -243,7 +258,8 @@ run_one() {
       matches "run $((n + 1)) of $runs"; [ "$ok" = 1 ] || break
       n=$((n + 1))
     done
-    g=0
+    g=0; skipgm=0
+    case " $NOGM " in *" $name "*) skipgm=1; gmruns=0 ;; esac
     while [ "$ok" = 1 ] && [ "$g" -lt "$gmruns" ]; do
       # libgmalloc announces itself on stderr ("GuardMalloc[pid]: ...") on 10.9 and on modern macOS
       # alike; its absence means the run was not guarded, which must not read as a pass.
@@ -257,6 +273,7 @@ run_one() {
       g=$((g + 1))
     done
     label="${runs}x + ${gmruns}x Guard Malloc"
+    [ "$skipgm" = 0 ] || label="${runs}x, Guard Malloc skipped by SELFTEST_NO_GMALLOC"
   else
     rc=0; limited "./$t" >"$sink" 2>/dev/null || rc=$?
     [ "$rc" = 0 ] || { ok=0; why="$(reason "run 1 of 1" "$rc")"; }
