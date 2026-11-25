@@ -257,6 +257,12 @@ for smp in "$T/no-such-sample" "$T/failing-sample"; do
   case "$out" in *'not sampling'*|*'failed'*) ;; *) fail "sample $smp: no line saying so: $out" ;; esac
 done
 
+echo "-- a log that is closed while the group is stopped (SIGPIPE) must not leave the group stopped"
+rm -f "$T/pid"; b="$(bundle forker)"
+SELFTEST_PIDFILE="$T/pid" SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_TIMEOUT=1 sh "$b/run-selftest.sh" 2>&1 | { exec 0<&-; :; } || :
+kid="$(cat "$T/pid")"; [ -n "$kid" ] || fail "closed log: forker wrote no pid"
+if kill -0 "$kid" 2>/dev/null; then kill -9 "$kid"; fail "closed log: the child $kid outlived the run (group left stopped?)"; fi
+
 echo "-- a sample that never exits is killed, and the run still ends as a timeout, within the cap"
 printf '#!/bin/sh\nsleep 300\n' > "$T/hung-sample"; chmod +x "$T/hung-sample"
 b="$(bundle sleeper)"; rc=0; start="$(date +%s)"

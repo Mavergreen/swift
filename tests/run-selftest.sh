@@ -116,6 +116,8 @@ limited() {
     sub sample_group {
       # fd 3 is the gate itself stderr: a run stderr is captured for its FAIL line, the excerpt must reach the job log
       open(my $E, ">&3") or $E = \*STDERR;
+      select((select($E), $| = 1)[0]);   # (unbuffered: an excerpt must be out before the kill)
+      local $SIG{PIPE} = "IGNORE";   # (a closed log must not kill us while the group is stopped; set here, not before the exec)
       my $sample = $ENV{SELFTEST_SAMPLE} || "/usr/bin/sample";
       my $dir = $ENV{SELFTEST_SAMPLES} || "samples";
       unless (-x $sample) { print $E "timed out; not sampling: $sample is not available\n"; return }
@@ -148,6 +150,8 @@ limited() {
       }
     }
     local $SIG{ALRM} = sub { sample_group() if $sampling; kill "KILL", -$pid; waitpid $pid, 0; exit 142 };
+    # a signal that would end us while the group is stopped (sample_group) must end the group too
+    for my $sig (qw(INT TERM HUP)) { $SIG{$sig} = sub { kill "KILL", -$pid; exit 128 + ($sig eq "INT" ? 2 : $sig eq "HUP" ? 1 : 15) } }
     alarm $t; waitpid $pid, 0; my $st = $?; alarm 0;
     kill "KILL", -$pid;   # whatever the test left in the group (a crash orphans StdlibUnittest children)
     $? = $st;
