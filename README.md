@@ -26,6 +26,12 @@ An app that bundles this runtime must copy the `libswiftCompatibilitySpan.dylib`
 `libswiftCore.dylib`, along with the libraries. Under an rpath that finds another Core first, 10.9's dyld
 can load the link as a second file, a second copy of Core.
 
+Such an app also needs libcxx22 installed, and its executable must carry an LC_RPATH to
+`/usr/local/mavergreen/libcxx22/lib` (link it with `-Xlinker -rpath -Xlinker /usr/local/mavergreen/libcxx22/lib`).
+The runtime's libraries load libcxx22's libc++ as `@rpath/libc++.1.dylib`, through an rpath relative to the
+package's own install location, which a copy inside an app does not have; dyld then searches the executable's
+rpaths. No release bundles libc++ yet.
+
 The runtime package carries only the libraries, which run programs already built. To compile a program
 that does `import Darwin`, `import ObjectiveC` or `import Dispatch`, install a toolchain package: the modules
 ship there.
