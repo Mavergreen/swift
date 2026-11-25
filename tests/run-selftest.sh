@@ -34,6 +34,12 @@
 #                                suites are long, clock's -Onone Guard Malloc run 45 s on ultimate-hat and
 #                                cancellation_handler_concurrent's 65 s, and a slower VM must not time them
 #                                out; a hang still fails, three minutes later (INGREDIENTS' gate paragraph)
+#          SELFTEST_SAMPLE       the sample(1) to run on a test that times out, before it is killed, on each live
+#                                process of its group; default /usr/bin/sample (in 10.9's base system). A few
+#                                seconds each, about 30 at most. The whole text of each goes to
+#                                $SELFTEST_SAMPLES/sample-<pid>.txt (default ./samples), its top-of-stack
+#                                section (else the first 150 lines) to stderr. No sample, or one that fails: one
+#                                line says so, and the run is killed and reported as before.
 #          SELFTEST_PERL         the perl to time runs with; default /usr/bin/perl, else perl on PATH
 #          SELFTEST_FILECHECK    the FileCheck for upstream/check/; default /usr/local/mavergreen/clang22/bin/FileCheck,
 #                                timed like a run
@@ -99,18 +105,49 @@ else PERL="$(command -v perl || :)"; fi
 # rest of the gate.
 limited() {
   "$PERL" -e '
-    my $t = shift; while ($ARGV[0] =~ /^(DYLD_\w+)=(.*)$/s) { $ENV{$1} = $2; shift }
+    use File::Path qw(make_path);
+    my $t = shift; my $sampling = shift; while ($ARGV[0] =~ /^(DYLD_\w+)=(.*)$/s) { $ENV{$1} = $2; shift }
     my $pid = fork; defined $pid or exit 127;
     if ($pid == 0) { setpgrp(0, 0); exec @ARGV or exit 127 }
     setpgrp($pid, $pid);   # (both sides, so the group exists whichever runs first)
-    local $SIG{ALRM} = sub { kill "KILL", -$pid; waitpid $pid, 0; exit 142 };
+    # sample_group: where is every live process of the test group stuck? Whole samples go to files under
+    # $SELFTEST_SAMPLES, an excerpt of each to stderr (CI keeps the job log, nothing else of ours); a
+    # missing or failing sample is one line and changes nothing: the kill and the 142 follow as ever.
+    sub sample_group {
+      # fd 3 is the gate itself stderr: a run stderr is captured for its FAIL line, the excerpt must reach the job log
+      open(my $E, ">&3") or $E = \*STDERR;
+      my $sample = $ENV{SELFTEST_SAMPLE} || "/usr/bin/sample";
+      my $dir = $ENV{SELFTEST_SAMPLES} || "samples";
+      unless (-x $sample) { print $E "timed out; not sampling: $sample is not available\n"; return }
+      my @pids; my $ps = `ps -A -o pid=,pgid= 2>/dev/null`;
+      for my $l (split /\n/, $ps) { push @pids, $1 if $l =~ /^\s*(\d+)\s+(\d+)\s*$/ && $2 == $pid }
+      unless (@pids) { print $E "timed out; not sampling: no live process in the group\n"; return }
+      make_path($dir); my $each = int(24 / @pids); $each = 3 if $each > 3; $each = 1 if $each < 1;
+      my $t0 = time;   # (about 30 s at the very most: stop starting samples once 24 s are spent)
+      for my $p (@pids) {
+        last if time - $t0 > 24;
+        my $f = "$dir/sample-$p.txt"; my $k = fork;
+        unless (defined $k) { print $E "timed out; sampling pid $p failed: no fork\n"; next }
+        if ($k == 0) { open STDOUT, ">", $f or exit 127; open STDERR, ">&STDOUT"; exec {$sample} $sample, $p, $each or exit 127 }
+        waitpid $k, 0;
+        if ($? != 0) { print $E "timed out; $sample $p failed (status $?)\n"; next }
+        open my $in, "<", $f or next; my @l = <$in>; close $in;
+        my ($i) = grep { $l[$_] =~ /^Sort by top of stack/ } 0 .. $#l;
+        my @x; if (defined $i) { for my $j ($i .. $#l) { last if @x && $l[$j] =~ /^\s*$/ || $l[$j] =~ /^Binary Images/; push @x, $l[$j] } } else { @x = @l }
+        @x = @x[0 .. 149] if @x > 150;
+        print $E "timed out; sample of pid $p ($f):\n", @x, "\n";
+      }
+    }
+    local $SIG{ALRM} = sub { sample_group() if $sampling; kill "KILL", -$pid; waitpid $pid, 0; exit 142 };
     alarm $t; waitpid $pid, 0; my $st = $?; alarm 0;
     kill "KILL", -$pid;   # whatever the test left in the group (a crash orphans StdlibUnittest children)
     $? = $st;
-    exit(($? & 127) ? 128 + ($? & 127) : $? >> 8)' "$TIMEOUT" "$@"
+    exit(($? & 127) ? 128 + ($? & 127) : $? >> 8)' "$TIMEOUT" "$SAMPLING" "$@"
 }
 # reason LABEL RC : the failure text for run LABEL that exited RC
 reason() { if [ "$2" = 142 ]; then echo "$1 timed out after $TIMEOUT s"; else echo "$1 exited non-zero"; fi; }
+exec 3>&2   # (limited writes its samples here: a run's own stderr is captured)
+SAMPLING=1
 OUT="$(mktemp "${TMPDIR:-/tmp}/selftest-out.XXXXXX")"
 trap 'rm -f "$OUT"' EXIT
 trap 'exit 1' HUP INT TERM
@@ -118,7 +155,9 @@ matches() {
   [ -n "$chk" ] || return 0
   m_label="$1"
   set --; while IFS= read -r a; do set -- "$@" "$a"; done < "$chk.args"
+  SAMPLING=0   # (sampling a timed-out FileCheck says nothing about the test)
   frc=0; fcerr="$(limited "$FC" "$@" "$PWD/$chk.swift" < "$OUT" 2>&1 >/dev/null)" || frc=$?
+  SAMPLING=1
   [ "$frc" = 0 ] || { ok=0; why="$m_label: output does not match $chk.swift (FileCheck exited $frc)"; diag="$fcerr"; }
 }
 

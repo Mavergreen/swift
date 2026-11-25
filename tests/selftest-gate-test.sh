@@ -17,6 +17,13 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/selftest-gate.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# fake-sample: stands in for /usr/bin/sample (a timed-out run would otherwise wait on the real one, and this must
+# not need it): logs "<pid> <secs>" to $FAKE_SAMPLE_LOG and prints a sample's shape, the section we excerpt in the middle.
+printf '%s\n' '#!/bin/sh' 'echo "$1 $2" >> "${FAKE_SAMPLE_LOG:-/dev/null}"' \
+  'printf "Sampling process %s\nCall graph:\n  call-graph-line\n\nSort by top of stack, same collapsed (when >= 5):\n  fake_top_frame  (in libfake.dylib)  100\n\nBinary Images:\n  binary-image-line\n" "$1"' > "$T/fake-sample"
+chmod +x "$T/fake-sample"
+export SELFTEST_SAMPLE="$T/fake-sample"
+
 printf 'int main(void){return 0;}\n' > "$T/ok.c"
 printf 'int main(void){return 1;}\n' > "$T/bad.c"
 printf '#include <stdlib.h>\nint main(void){char *p=malloc(16); volatile char c=p[16]; (void)c; free(p); return 0;}\n' > "$T/overrun.c"
@@ -219,6 +226,41 @@ out="$(SELFTEST_PIDFILE="$T/pid" SWIFT_RUNTIME_PREFIX="$T/prefix" sh "$b/run-sel
 case "$out" in *'exited non-zero'*) ;; *) fail "crasher: exit not reported as before: $out" ;; esac
 kid="$(cat "$T/pid")"; [ -n "$kid" ] || fail "crasher wrote no pid"
 if kill -0 "$kid" 2>/dev/null; then kill -9 "$kid"; fail "the crashed run's child $kid outlived it"; fi
+
+echo "-- a test that times out is sampled, in every process of its group, before it is killed"
+rm -f "$T/pid" "$T/samplelog"; rm -rf "$T/samples"; b="$(bundle forker)"; rc=0
+out="$(FAKE_SAMPLE_LOG="$T/samplelog" SELFTEST_SAMPLES="$T/samples" SELFTEST_PIDFILE="$T/pid" SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_TIMEOUT=1 sh "$b/run-selftest.sh" 2>&1)" || rc=$?
+[ "$rc" = 1 ] || fail "sampled timeout: rc=$rc: $out"
+case "$out" in *'FAIL: forker -- run 1 of 1 timed out after 1 s'*) ;; *) fail "sampled timeout: FAIL line changed: $out" ;; esac
+kid="$(cat "$T/pid")"; [ -n "$kid" ] || fail "forker wrote no pid"
+[ "$(wc -l < "$T/samplelog")" -ge 2 ] || fail "sampled timeout: the fake sample was not called for the parent and the child: $(cat "$T/samplelog")"
+grep -q "^$kid [0-9]" "$T/samplelog" || fail "sampled timeout: the child $kid was not sampled: $(cat "$T/samplelog")"
+[ -s "$T/samples/sample-$kid.txt" ] || fail "sampled timeout: no sample file for the child $kid"
+case "$out" in *'fake_top_frame'*) ;; *) fail "sampled timeout: excerpt not on stderr: $out" ;; esac
+case "$out" in *'call-graph-line'*|*'binary-image-line'*) fail "sampled timeout: more than the top-of-stack section reached stderr: $out" ;; esac
+grep -q binary-image-line "$T/samples/sample-$kid.txt" || fail "sampled timeout: the file lacks the whole sample"
+if kill -0 "$kid" 2>/dev/null; then kill -9 "$kid"; fail "the sampled run's child $kid outlived it"; fi
+
+echo "-- the samples go to ./samples beside the bundle unless SELFTEST_SAMPLES says"
+b="$(bundle sleeper)"; rc=0
+out="$(SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_TIMEOUT=1 sh "$b/run-selftest.sh" 2>&1)" || rc=$?
+[ "$rc" = 1 ] || fail "default samples dir: rc=$rc: $out"
+ls "$b"/samples/sample-*.txt >/dev/null 2>&1 || fail "default samples dir: nothing in $b/samples: $out"
+
+echo "-- a missing or failing sample: one line says so, and the run fails as it always did"
+for smp in "$T/no-such-sample" "$T/failing-sample"; do
+  printf '#!/bin/sh\nexit 1\n' > "$T/failing-sample"; chmod +x "$T/failing-sample"
+  b="$(bundle sleeper)"; rc=0
+  out="$(SELFTEST_SAMPLE="$smp" SWIFT_RUNTIME_PREFIX="$T/prefix" SELFTEST_TIMEOUT=1 sh "$b/run-selftest.sh" 2>&1)" || rc=$?
+  [ "$rc" = 1 ] || fail "sample $smp: rc=$rc: $out"
+  case "$out" in *'FAIL: sleeper -- run 1 of 1 timed out after 1 s'*) ;; *) fail "sample $smp: FAIL line changed: $out" ;; esac
+  case "$out" in *'not sampling'*|*'failed'*) ;; *) fail "sample $smp: no line saying so: $out" ;; esac
+done
+
+echo "-- a run that passes is never sampled"
+rm -f "$T/samplelog"; b="$(bundle ok)"; rc=0
+out="$(FAKE_SAMPLE_LOG="$T/samplelog" SWIFT_RUNTIME_PREFIX="$T/prefix" sh "$b/run-selftest.sh" 2>&1)" || rc=$?
+[ "$rc" = 0 ] && [ ! -e "$T/samplelog" ] || fail "a passing run was sampled: rc=$rc: $out"
 
 echo "-- upstream/bin/ runs under SELFTEST_UPSTREAM_TIMEOUT, bin/ under SELFTEST_TIMEOUT"
 b="$(bundle ok up:sleeper)"; rc=0
