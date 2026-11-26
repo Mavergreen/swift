@@ -78,6 +78,7 @@ sh "$SHIPYARD/set_install_floor.sh" \
 rm -f "$DIST/swift-runtime-component.pkg"
 
 echo ">> checksums"
-( cd "$DIST" && shasum -a 256 "${NAME}.pkg" > SHA256SUMS )
+# platform: 10.9's sh (bash 3.2.53) has a set -e that does not stop for a failing ( ... ) subshell.
+( cd "$DIST" && shasum -a 256 "${NAME}.pkg" > SHA256SUMS ) || exit 1
 cat "$DIST/SHA256SUMS"
 echo "OK -> $DIST/${NAME}.pkg"

@@ -18,7 +18,8 @@
 #   libcxx22 and that runtime pkg alone, holds its receipt, checks the install, launches the runtime's updater once
 #   (dyld must bind every import), installs Longboat, its 10.9 SDK and clang22 (FileCheck), and runs the bundle's
 #   --loads and then, only if that passed, its --gate: no compile in the guest, no toolchain, no smoke. The build
-#   job runs no Rosetta smoke. Each check is run against a file mutated to break it, and must refuse it.
+#   job runs no Rosetta smoke. Each gate's failure fails its step, and each skips Guard Malloc for
+#   cancellation_handler_concurrent's pair alone. Each check is run against a file mutated to break it, and must refuse it.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d "${TMPDIR:-/tmp}/vm-test-workflow-test.XXXXXX")"
@@ -100,7 +101,7 @@ check() {
   grep -qF 'got="$(pkgutil --pkg-info dev.mavergreen.swift-runtime | sed -n '"'s/^version: //p'"')"' "$T/prebuilt" && grep -q '\[ "\$got" = "\$SWIFT_FULL_VERSION" \]' "$T/prebuilt" \
     && grep -qx '          SWIFT_FULL_VERSION: ${{ needs.version.outputs.version }}' "$T/prebuilt" \
     || { echo "prebuilt mode does not hold the runtime's receipt to the build's version"; return 1; }
-  grep -q 'sh swift-runtime-selftest/run-selftest\.sh --loads &&$' "$T/prebuilt" && grep -q '^ *sh swift-runtime-selftest/run-selftest\.sh --gate )$' "$T/prebuilt" \
+  grep -q 'sh swift-runtime-selftest/run-selftest\.sh --loads &&$' "$T/prebuilt" && grep -q '^ *sh swift-runtime-selftest/run-selftest\.sh --gate ) || exit 1$' "$T/prebuilt" \
     && awk '/run-selftest\.sh --loads/ { l = NR } /run-selftest\.sh --gate/ { g = NR } END { exit !(l && l < g) }' "$T/prebuilt" \
     || { echo "prebuilt mode does not run the bundle's --loads and then, only if it passed, its --gate"; return 1; }
   if grep -q 'make-selftest\|swiftc\|toolchain-smoke-test\|swift-toolchain' "$T/prebuilt"; then
@@ -123,10 +124,21 @@ check() {
   grep -q '\[ "\$rc" -ne 77 \]' "$T/compile" || { echo "vm-test lets the native toolchain smoke skip"; return 1; }
   grep -q 'SWIFTC=/usr/local/mavergreen/bin/swiftc .*sh make-selftest\.sh' "$T/compile" || { echo "vm-test does not build the self-test with the installed swiftc"; return 1; }
   grep -q 'sh swift-runtime-selftest/run-selftest\.sh --gate' "$T/compile" || { echo "vm-test does not run the self-test's gate"; return 1; }
+  # platform: 10.9's sh (bash 3.2.53) has a set -e that does not stop for a failing ( ... && ... ) subshell, so the
+  #           gate's subshell carries its own exit: without it a failing gate ran on to the smoke and the step passed.
+  grep -q 'run-selftest\.sh --gate ) || exit 1$' "$T/compile" || { echo "a failing gate does not fail vm-test's step"; return 1; }
   grep -q 'SELFTEST_SUPPORT="\$PWD/dist/selftest-support" .*sh make-selftest\.sh' "$T/compile" \
     || { echo "vm-test does not build upstream's tests into the bundle (SELFTEST_SUPPORT=dist/selftest-support)"; return 1; }
   awk '/run-selftest\.sh --loads/ { l = NR } /run-selftest\.sh --gate/ { g = NR } END { exit !(l && l <= g) }' "$T/compile" \
     || { echo "vm-test does not run the bundle's --loads before its --gate"; return 1; }
+  # Guard Malloc is skipped for this one test pair only, and only on each 10.9 gate's command line.
+  for g in compile prebuilt; do
+    [ "$(grep -c 'SELFTEST_NO_GMALLOC' "$T/$g")" = 1 ] \
+      && grep -q '^              SELFTEST_NO_GMALLOC="upstream/bin/concurrency-cancellation_handler_concurrent upstream/bin/concurrency-cancellation_handler_concurrent-Onone" \\$' "$T/$g" \
+      || { echo "the $g gate skips Guard Malloc for more than cancellation_handler_concurrent's pair, or not on the gate alone"; return 1; }
+  done
+  [ "$(grep -c 'SELFTEST_NO_GMALLOC' "$1")" = 2 ] && [ "$(grep -c 'SELFTEST_NO_GMALLOC' "$3")" = 2 ] \
+    || { echo "release.yml sets SELFTEST_NO_GMALLOC outside the two gates' command lines"; return 1; }
   awk '/^  build-cross:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" | grep -q '^            \${{ env.SWIFT_BUILD }}/dist/selftest-support$' \
     || { echo "build-cross does not upload the self-test's support in swift-cross"; return 1; }
   awk '/^  publish:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" | grep -q '^    needs: \[.*vm-test.*\]$' \
@@ -172,7 +184,7 @@ rmutant "vm-test installs no libcxx22" 's|libcxx/libcxx22-\*\.pkg ||'
 rmutant "vm-test does not upgrade from the previous release" 's| prev/swift-runtime-\*\.pkg prev/swift-toolchain-\[0-9\]\*\.pkg$||'
 rmutant "the upgraded receipts are not checked" 's/\[ "\$got" = "\$SWIFT_FULL_VERSION" \]/true/'
 rmutant "the family install is not checked" 's|/usr/local/bin/mavergreen check$|true|'
-rmutant "clang22 is installed only after the gate" '/^            install clang22\/mavericks-clang-22-native-\*\.pkg$/d; s|^\(              sh swift-runtime-selftest/run-selftest.sh --gate )\)$|\1\
+rmutant "clang22 is installed only after the gate" '/^            install clang22\/mavericks-clang-22-native-\*\.pkg$/d; s|^\(              sh swift-runtime-selftest/run-selftest.sh --gate ) \|\| exit 1\)$|\1\
             install clang22/mavericks-clang-22-native-*.pkg|'
 rmutant "Longboat is not installed before clang22" '/^            install longboat\/longboat-\[0-9\]\*\.pkg$/d'
 rmutant "the 10.9 SDK is not installed before clang22" '/longboat sdk install 10\.9$/d'
@@ -181,6 +193,10 @@ rmutant "the native smoke may skip" 's/\[ "\$rc" -ne 77 \]/true/'
 rmutant "the self-test is built by another swiftc" 's|SWIFTC=/usr/local/mavergreen/bin/swiftc |SWIFTC=/tmp/swiftc |'
 rmutant "the gate is not run" 's/run-selftest\.sh --gate/run-selftest.sh/'
 rmutant "the bundle has no upstream tests" 's|SELFTEST_SUPPORT="\$PWD/dist/selftest-support" ||'
+rmutant "a failing gate does not fail the step" 's/run-selftest\.sh --gate ) || exit 1$/run-selftest.sh --gate )/'
+rmutant "another test skips Guard Malloc" 's|concurrent-Onone" \\$|concurrent-Onone upstream/bin/concurrency-async" \\|'
+rmutant "Guard Malloc is skipped for every run of the gate" 's|^  vm-test:$|  vm-test:\
+    env: { SELFTEST_NO_GMALLOC: x }|'
 rmutant "--loads is not run" 's/run-selftest\.sh --loads &&/true \&\&/'
 amutant "the previous release goes unfetched" 's|gh release download "\$prev"|echo "$prev"|'
 amutant "Longboat goes unfetched" 's|gh release download "\$lb"|echo "$lb"|'
@@ -215,4 +231,9 @@ lmutant "prebuilt mode never launches the updater" '/DYLD_BIND_AT_LAUNCH=1 "\$u"
 lmutant "a dyld failure of the updater passes" "/! grep -q '^dyld: '/d"
 lmutant "has no VM key" 's/^          image-key: \${{ secrets.MAVERICKS_VM_KEY }}$/          image-key: none/'
 lmutant "cannot pull the VM image" '/^      packages: write$/d'
+lmutant "lets a failing gate pass its step" 's/run-selftest\.sh --gate ) || exit 1$/run-selftest.sh --gate )/'
+lmutant "gates cancellation_handler_concurrent under Guard Malloc" '/^              SELFTEST_NO_GMALLOC=/d'
+lmutant "skips Guard Malloc for another test" 's|concurrent-Onone" \\$|concurrent-Onone upstream/bin/concurrency-async" \\|'
+lmutant "skips Guard Malloc for every run of its gate" 's|^  vm-test-prebuilt:$|  vm-test-prebuilt:\
+    env: { SELFTEST_NO_GMALLOC: x }|'
 echo "PASS: vm-test-workflow"

@@ -255,5 +255,6 @@ cp "$REPO/tests/run-selftest.sh" "$B/run-selftest.sh"; chmod +x "$B/run-selftest
 # set -eu, so probe for support first instead of passing it unconditionally.
 NOX=""
 if tar --no-xattrs -cf /dev/null "$REPO/make-selftest.sh" >/dev/null 2>&1; then NOX="--no-xattrs"; fi
-( cd "$DIST" && COPYFILE_DISABLE=1 tar $NOX -czf "$NAME.tar.gz" "$NAME" && rm -rf "$NAME" )
+# platform: 10.9's sh (bash 3.2.53) has a set -e that does not stop for a failing ( ... ) subshell.
+( cd "$DIST" && COPYFILE_DISABLE=1 tar $NOX -czf "$NAME.tar.gz" "$NAME" && rm -rf "$NAME" ) || exit 1
 echo "$DIST/$NAME.tar.gz"

@@ -434,6 +434,12 @@ async_task_executor_default_actor_funcs 6.0 s, asleep. Everything else is under 
 is three to four times the box's worst. A hang still fails, three
 minutes later.
 
+One test pair is too much for the VM under Guard Malloc. cancellation_handler_concurrent's Guard Malloc runs cost
+about 100 CPU-seconds at -O and 540 at -Onone, mostly in the kernel. The CI guest has 2 vCPUs, so the -Onone run
+outlasts the 180 s limit, or the guest stops answering ssh. vm-test and vm-test-prebuilt therefore give that pair its 20 plain runs and no
+Guard Malloc run (`SELFTEST_NO_GMALLOC`), declared below as `on-target:cancellation-gmalloc`. Its Guard Malloc runs
+are taken on real 10.9 instead.
+
 The VM estimate has to tell sleeping from computing, because a VM is no faster at sleeping. Seven suites are
 sleep-bound: basic_future (4 binaries x 21 runs x 4.4 s, about 370 s), clock's unguarded runs (4 x 20 x 1.55 s,
 about 125 s), async_task_cancellation_while_running (4 x 21 x 13.1 s, about 1100 s), async_task_sleep (4 x 21 x
@@ -513,7 +519,7 @@ guard (`scripts/guard.sh`) reads the `sdk-pin` entries too. These departures are
 each is scoped to the artifact it concerns: the first ten to the stdlib dylibs (libswiftCore,
 libswiftSwiftOnoneSupport and libswift_Concurrency: the runtime pkg's, with the libswiftCompatibilitySpan.dylib link to
 Core, and the same bytes in both toolchain pkgs), the next to the cross toolchain pkg's install floor, the
-next to vm-test's upgrade from the newest release, the next ones to the swift.org mirror attached to
+next to vm-test's upgrade from the newest release, the next to the one test the VM gates without Guard Malloc, the next ones to the swift.org mirror attached to
 `-mavericks.1` releases, and the last to the release notes' build-ingredients list, where our own patches have no upstream to link.
 
 - sdk-pin:*/swift-runtime/lib/swift/libswiftCore.dylib: the Swift runtime cannot be built against the 10.9 SDK, which has no libc++ headers at all (only libstdc++ 4.2.1) while Swift 6.4 requires C++17, and which lacks declarations of post-10.9 APIs the runtime calls behind availability checks. Its build uses a modern SDK, pinned: MacOSX11.3.sdk, shipyard's arm64 pin (`fetch_sdk.sh --arch arm64`), the same in CI and on 10.9, so a runtime built on 10.9 is byte-identical to CI's. These two record sdk 11.3 (the Darwin, ObjectiveC and Dispatch overlays beside them compile against the 10.9 SDK, record sdk 10.9, and take no exemption); their libc++ is libcxx22's, not the SDK's ("One C++ runtime", above). minos stays 10.9, and the real-10.9 gate is its acceptance. Revisit if the gate gains per-product pins.
@@ -528,6 +534,7 @@ next to vm-test's upgrade from the newest release, the next ones to the swift.or
 - sdk-pin:*/swift-toolchain-cross/lib/swift/macosx/libswift_Concurrency.dylib: the runtime's own bytes too, staged from the one stdlib build into all three pkgs and compared byte for byte by collect, as libswiftCore.dylib's are; the same reason as its, above.
 - floor:swift-toolchain-cross-*.pkg: the cross toolchain runs on an Apple-silicon Mac with macOS 11 or later and only targets 10.9, so its archive's install floor is 11.0 (arm64), not 10.9.5; clang22-cross and rust-cross declare the same.
 - unpinned:.github/actions/vm-test/action.yml: bundle_mode compile (release.yml's vm-test) installs the newest published release's runtime and native toolchain pkgs (`gh release view`, then SHA256SUMS-verified), and this run's over them, because that is the upgrade a user makes: from whatever they have, which is the latest release. A pin would test an upgrade from a version nobody upgrades from once the next one ships. Reconsider if the family keeps more than one supported line at once, when each line's latest is the one to upgrade from. Longboat, which mavericks-clang-22's pkg needs (the gate's FileCheck and the native smoke), comes the same way (`gh release view`, then SHA256SUMS-verified), because clang22's pkg sends a user to Longboat's latest release.
+- on-target:cancellation-gmalloc: vm-test and vm-test-prebuilt run upstream's cancellation_handler_concurrent (-O and -Onone) 20 times each but not under Guard Malloc. In the 2-vCPU guest that run outlasts its 180 s limit or takes the guest's ssh down ("Every Swift bump merges on green", above). On real 10.9 (12 CPUs) it passes in 18 s and 63 s. Exit: drop the skip when the guest gets more vCPUs or gets faster, or if a Guard Malloc bug turns up in task cancellation.
 - macos-runner:release.yml:build-cross: builds the cross toolchain, which runs on an Apple-silicon Mac, natively on this arm64 runner (its smoke runs there too), and the stdlib and runtime every pkg ships with it; release.yml's linux-runtime job builds the same runtime on Linux, and its equivalence job compares the two; exit: LLVM and the Swift compiler cross-build as darwin binaries on Linux.
 - macos-runner:release.yml:build: builds the native toolchain, a 10.9 x86_64 program, with build-cross's cross toolchain, which runs only on macOS; exit: LLVM and the Swift compiler cross-build as darwin binaries on Linux.
 - macos-runner:release.yml:collect: checks that the two toolchain pkgs carry one stdlib, signs the three pkgs, renders their appcasts and runs artifact conformance over them; the toolchain pkgs are pkgbuild's and their updaters Apple's clang's (package-toolchain.sh and build's and build-cross's toolchain updater steps), so the conformance that reads them runs on the macOS that made them; exit: the toolchain updaters build with clang22 and the toolchain pkgs through build_component_pkg.sh.

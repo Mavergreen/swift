@@ -30,7 +30,8 @@ name: release
 # release's runtime and native toolchain pkgs and then this run's over them, as a user's upgrade does,
 # checks the family install (`mavergreen check`), builds the self-test corpus there with the installed
 # swiftc (`SWIFTC=/usr/local/mavergreen/bin/swiftc sh make-selftest.sh`) and runs its gate
-# (`run-selftest.sh --gate`: 500x plus 10x under Guard Malloc, -O and -Onone), then the native toolchain's
+# (`run-selftest.sh --gate`: 500x plus 10x under Guard Malloc, -O and -Onone; one upstream pair without
+# Guard Malloc, INGREDIENTS.md on-target:cancellation-gmalloc), then the native toolchain's
 # smoke (tests/toolchain-smoke-test.sh), natively, on 10.9; publish waits for it. The cross toolchain's
 # smoke runs natively in build-cross, on the arm64 runner; its acceptance (the same corpus built on an
 # Apple-silicon Mac, gated on 10.9) is still by hand.
@@ -705,8 +706,11 @@ jobs:
             # .swiftmodule files, which only the compiler that wrote them reads: build-cross's cross toolchain,
             # this release's Swift, as the native swiftc installed above is.
             SWIFTC=/usr/local/mavergreen/bin/swiftc SELFTEST_SUPPORT="$PWD/dist/selftest-support" MAVERICKS_BUILD_ROOT="$HOME/mm-build" DIST="$PWD/gate" sh make-selftest.sh
+            # platform: Guard Malloc makes cancellation_handler_concurrent too slow for the 2-vCPU guest; real 10.9 covers it (INGREDIENTS.md on-target:cancellation-gmalloc).
+            # platform: 10.9's sh (bash 3.2.53) has a set -e that does not stop for a failing ( ... && ... ) subshell.
             ( cd gate && tar -xzf swift-runtime-selftest.tar.gz && sh swift-runtime-selftest/run-selftest.sh --loads &&
-              sh swift-runtime-selftest/run-selftest.sh --gate )
+              SELFTEST_NO_GMALLOC="upstream/bin/concurrency-cancellation_handler_concurrent upstream/bin/concurrency-cancellation_handler_concurrent-Onone" \
+              sh swift-runtime-selftest/run-selftest.sh --gate ) || exit 1
             rc=0; MAVERICKS_BUILD_ROOT="$HOME/mm-smoke" sh tests/toolchain-smoke-test.sh || rc=$?
             [ "$rc" -ne 77 ] || { echo "the native toolchain smoke SKIPPED on 10.9"; exit 1; }
             exit "$rc"
@@ -1189,10 +1193,13 @@ jobs:
             sudo /usr/local/mavergreen/bin/longboat sdk install 10.9
             install clang22/mavericks-clang-22-native-*.pkg
             # spec: tests/run-selftest.sh's --loads -- a bundle built elsewhere must load every libswift* from this runtime, or not be gated.
+            # platform: Guard Malloc makes cancellation_handler_concurrent too slow for the 2-vCPU guest; real 10.9 covers it (INGREDIENTS.md on-target:cancellation-gmalloc).
+            # platform: 10.9's sh (bash 3.2.53) has a set -e that does not stop for a failing ( ... && ... ) subshell.
             mkdir gate
             ( cd gate && tar -xzf ../dist/swift-runtime-selftest.tar.gz &&
               sh swift-runtime-selftest/run-selftest.sh --loads &&
-              sh swift-runtime-selftest/run-selftest.sh --gate )
+              SELFTEST_NO_GMALLOC="upstream/bin/concurrency-cancellation_handler_concurrent upstream/bin/concurrency-cancellation_handler_concurrent-Onone" \
+              sh swift-runtime-selftest/run-selftest.sh --gate ) || exit 1
       # spec: mavericks-vm's logs-dir output -- on a failure, the boot's serial console and what the guest
       #       logged; a guest that stops answering ssh (exit 255) is otherwise a log with no cause in it.
       - name: Keep the 10.9 guest's logs when it fails
