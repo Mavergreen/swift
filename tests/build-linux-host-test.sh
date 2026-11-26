@@ -203,7 +203,7 @@ for v in LIPO:llvm-lipo OTOOL:llvm-otool NM:llvm-nm STRINGS:llvm-strings; do
       [ "$w" = "$v" ] || export "${w%%:*}=$C22/bin/${w#*:}"
     done
     if onlinux sh "$REPO/scripts/guard.sh" "$T/a.dylib"; then fail "guard.sh ran without ${v%%:*}"; fi
-    grep -q "^FAIL: no ${v#*:}" "$T/out" || fail "guard.sh without ${v%%:*}: $(cat "$T/out")" )
+    grep -q "^FAIL: no ${v#*:}" "$T/out" || fail "guard.sh without ${v%%:*}: $(cat "$T/out")" ) || exit 1
 done
 ( export LIPO="$C22/bin/llvm-lipo" OTOOL="$C22/bin/llvm-otool" NM="$C22/bin/llvm-nm" STRINGS="$C22/bin/llvm-strings"
   onlinux sh "$REPO/scripts/guard.sh" "$T/a.dylib" ) || fail "guard.sh refused every reader named: $(cat "$T/out")"

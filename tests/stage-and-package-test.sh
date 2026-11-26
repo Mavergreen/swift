@@ -103,7 +103,7 @@ mkdir -p "$T/out/usr/lib/swift" "$T/out/usr/local/share/doc/mavericks-swift-runt
 # A pkg installs each entry's mode as staged, the payload root's onto / itself, so staging writes 0755 and
 # 0644 whatever the host's umask (a Linux desktop's is 002) or the built files' and OUT's own modes.
 chmod 775 "$T/out" "$T"/built/*.dylib
-( umask 002 && sh scripts/stage-runtime.sh "$T/built" "$T/out" LICENSE NOTICE )
+( umask 002 && sh scripts/stage-runtime.sh "$T/built" "$T/out" LICENSE NOTICE ) || fail "stage-runtime.sh failed under umask 002"
 writable="$(cd "$T/out" && find . usr ! -type l \( -perm -020 -o -perm -002 \) 2>/dev/null | sort -u)"
 [ -z "$writable" ] || fail "stage-runtime.sh, under umask 002, staged group- or world-writable entries:
 $writable"
