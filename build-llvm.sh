@@ -7,11 +7,11 @@
 # from its own location) rather than a build tree (absolute paths baked in at configure time). And
 # $SWIFT_WORK/llvm-build/bin/ld64.lld, which build.sh links the runtime with in both modes, so a CI
 # build and an OS X 10.9 build of the same release are the same bytes.
-# Runs on a modern Mac (cross mode: /usr/bin/clang) and on OS X 10.9 (native mode: mavericks-clang-22's
+# Runs on a modern Mac (modern mode: /usr/bin/clang) and on OS X 10.9 (mavericks mode: mavericks-clang-22's
 # native clang, with the fetched 10.9 SDK, since that pkg leaves its own SDKs/ empty, and its
 # llvm-libtool-darwin, llvm-ar, llvm-ranlib and llvm-otool, since 10.9's are the Command Line Tools');
 # MAVERICKS_MODE overrides shipyard's mavericks_mode.sh, HOST_TOOLS_CC and HOST_TOOLS_CXX the compiler.
-# On Linux (where shipyard's mode is cross) the compiler is the clang of swift.org's Linux toolchain,
+# On Linux (where shipyard's mode is modern) the compiler is the clang of swift.org's Linux toolchain,
 # fetch-linux-seed.sh's, extracted under the build root, for build-toolchain.sh --host linux.
 # The source is GitHub's tarball of LLVM_SHA, verified by LLVM_TARBALL_SHA256 (no git), patched with the
 # OS's patch; LLVM's version stamp is forced to that commit and its repository.
@@ -29,9 +29,10 @@ OUT="$SWIFT_BUILD/out/llvm"
 
 MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
 HOST_OS="$(uname -s)"
-# platform: native mode is OS X 10.9's; a Linux host builds as cross mode does, with the Linux seed's clang.
+case "$MODE" in mavericks|modern) ;; *) echo "FAIL: mode '$MODE' is neither mavericks nor modern"; exit 1 ;; esac
+# platform: mavericks mode is OS X 10.9's; a Linux host builds as modern mode does, with the Linux seed's clang.
 case "$HOST_OS:$MODE" in
-  Linux:native) echo "FAIL: on Linux the mode is cross"; exit 1 ;;
+  Linux:mavericks) echo "FAIL: on Linux the mode is modern"; exit 1 ;;
 esac
 
 echo "==> 1. pinned llvm-project source (GitHub's tarball of LLVM_SHA, verified by LLVM_TARBALL_SHA256)"
@@ -56,12 +57,13 @@ echo "==> 2. configure + build TableGen and lld (libswiftCore does not link LLVM
 case "$HOST_OS:$MODE" in
   # platform: Linux has no /usr/bin/clang; the Linux seed's clang is the one build-toolchain.sh --host linux
   #           compiles with too.
-  Linux:cross) SEED="$(sh "$HERE/fetch-linux-seed.sh" "$ROOT/linux-seed")" || { echo "FAIL: could not fetch the swift.org Linux seed"; exit 1; }
+  Linux:modern) SEED="$(sh "$HERE/fetch-linux-seed.sh" "$ROOT/linux-seed")" || { echo "FAIL: could not fetch the swift.org Linux seed"; exit 1; }
                CC_="${HOST_TOOLS_CC:-$SEED/bin/clang}"; CXX_="${HOST_TOOLS_CXX:-$SEED/bin/clang++}" ;;
-  *:cross) CC_="${HOST_TOOLS_CC:-/usr/bin/clang}"; CXX_="${HOST_TOOLS_CXX:-/usr/bin/clang++}" ;;
+  *:modern) CC_="${HOST_TOOLS_CC:-/usr/bin/clang}"; CXX_="${HOST_TOOLS_CXX:-/usr/bin/clang++}" ;;
   # platform: OS X 10.9's Apple clang is too old to build LLVM; mavericks-clang-22's static libc++
   #           fills what 10.9's libc++ lacks. Its pkg leaves SDKs/ empty, so the sysroot is named.
-  *:native) X="$(clang22_prefix native "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 (native)"; exit 1; }
+  # clang22_prefix's argument names a clang22 product variant (native), not the build mode.
+  *:mavericks) X="$(clang22_prefix native "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 (mavericks)"; exit 1; }
           CC_="${HOST_TOOLS_CC:-$X/clang}"; CXX_="${HOST_TOOLS_CXX:-$X/clang++}"
           SDK109="$(sh "$SHIPYARD/fetch_sdk.sh")" || { echo "FAIL: could not fetch the pinned 10.9 SDK"; exit 1; }
           # platform: OS X 10.9's libtool, ar, ranlib and otool are the Command Line Tools', stubs
@@ -70,7 +72,7 @@ case "$HOST_OS:$MODE" in
           # platform: a configure over a CMakeCache.txt hands LLVM's config.guess no CC, so it tries cc,
           #           gcc, c89 and c99, on OS X 10.9 the Command Line Tools' stubs: it gets the clang it configures with.
           CC_FOR_BUILD="$CC_"; export CC_FOR_BUILD ;;
-  *) echo "FAIL: mode '$MODE' is neither cross nor native"; exit 1 ;;
+  *) echo "FAIL: mode '$MODE' is neither mavericks nor modern"; exit 1 ;;
 esac
 # /opt/pkg (pkgsrc, on the 10.9 box) is never searched: a library found there is an accident the
 # pkgsrc ledger does not allow, and LibXml2, LibEdit, zlib, zstd and terminfo are off by name, so what
@@ -88,7 +90,7 @@ set -- -G Ninja -S llvm-project/llvm -B llvm-build \
 # Natively, the answers to CMake's and LLVM's Apple probes (lib.sh's apple_probe_answers), and clang22's lld
 # as CMAKE_LINKER with lib.sh's HOST_LINK_VERSION, so clang's configure runs no `ld -v` (it found the Command
 # Line Tools' ld): what out/llvm's clang/Config/config.h records stays 241.9, as that ld said.
-if [ "$MODE" = native ]; then
+if [ "$MODE" = mavericks ]; then
   # shellcheck disable=SC2046  # apple_probe_answers prints space-free words
   set -- "$@" -DCMAKE_OSX_SYSROOT="$SDK109" \
     -DCMAKE_LIBTOOL="$X/llvm-libtool-darwin" -DCMAKE_AR="$X/llvm-ar" -DCMAKE_RANLIB="$X/llvm-ranlib" \

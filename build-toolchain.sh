@@ -1,12 +1,12 @@
 #!/bin/sh
-# platform: host-agnostic -- a modern arm64 Mac (cross: xcrun, dyld_info) or OS X 10.9 (native: clang22's llvm-otool), per MAVERICKS_MODE; and Linux for --host linux alone
+# platform: host-agnostic -- a modern arm64 Mac (modern: xcrun, dyld_info) or OS X 10.9 (mavericks: clang22's llvm-otool), per MAVERICKS_MODE; and Linux for --host linux alone
 # build-toolchain.sh [--host x86_64|arm64|linux] [--stop-after llvm] — build a Swift toolchain: a Swift compiler, lld and clang that
 # target OS X 10.9 (x86_64) by default.
 #   --host x86_64 (the default): the NATIVE toolchain, which RUNS on OS X 10.9 (x86_64). One recipe, two
 #     modes (MAVERICKS_MODE, else shipyard's mavericks_mode.sh), the same bytes from both:
-#       cross (CI, a modern arm64 Mac): mavericks-clang-22's CROSS clang compiles the C++ half, and
+#       modern (CI, a modern arm64 Mac): mavericks-clang-22's CROSS clang compiles the C++ half, and
 #         build-llvm.sh's arm64 TableGen and the native-helpers/ project run what the build cannot;
-#       native (OS X 10.9, self-host.sh): its NATIVE clang, nothing cross-compiled: the build makes and
+#       mavericks (OS X 10.9, self-host.sh): its NATIVE clang, nothing cross-compiled: the build makes and
 #         runs its own TableGen and helpers.
 #     Both: the compiler's Swift half is compiled by the toolchain SWIFT_HOST_TOOLCHAIN names (in CI the
 #     same run's cross toolchain, never an earlier release; on 10.9 the installed previous release, the
@@ -20,7 +20,7 @@
 #     docs/superpowers/specs/2026-09-24-t1b-native-toolchain-design.md).
 #   --host arm64: the CROSS toolchain, which RUNS on an Apple-silicon Mac (arm64, macOS 11.0 or later),
 #     built by Apple's clang against the pinned MacOSX11.3.sdk, with nothing cross-compiled; its Swift half
-#     is compiled by the swift.org compiler (build.sh's), the one seed CI starts from. Cross mode only.
+#     is compiled by the swift.org compiler (build.sh's), the one seed CI starts from. Modern mode only.
 #     The evidence: docs/superpowers/spikes/2026-09-27-t3-arm64-toolchain-FINDINGS.md.
 #   --host linux: the compiler that builds the runtime on a Linux host (x86_64), which ships in no pkg. On
 #     Linux it is the only host, and it builds nowhere else. swift.org's Linux toolchain (fetch-linux-seed.sh,
@@ -42,7 +42,7 @@
 # build root, to build the rest.
 # STAGE_HOST=<host> scripts/stage-toolchain.sh lays the results out as that toolchain's pkg payload.
 # MAVERICKS_USE_CCACHE=1 compiles through ccache (CI sets it). Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, JOBS,
-# MAVERICKS_USE_CCACHE, MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_INSTALLED_TOOLCHAIN (native mode's default
+# MAVERICKS_USE_CCACHE, MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_INSTALLED_TOOLCHAIN (mavericks mode's default
 # host toolchain, /usr/local/mavergreen/swift-toolchain unless set), CLANG22_PREFIX, MAVERICKS_SDK_CACHE,
 # MAVERICKS_SOURCE_CACHE.
 set -eu
@@ -73,10 +73,10 @@ esac
 . "$HERE/msc.sh"    # -> $SHIPYARD (fetch_pinned_source.sh, fetch_sdk.sh, mavericks_mode.sh)
 MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
 case "$MODE:$HOST" in
-  cross:x86_64|cross:arm64|native:x86_64|cross:linux) ;;
-  native:arm64) echo "FAIL: --host arm64 builds the cross toolchain on an Apple-silicon Mac, not on OS X 10.9" >&2; exit 2 ;;
-  native:linux) echo "FAIL: --host linux builds on Linux, not on OS X 10.9" >&2; exit 2 ;;
-  *) echo "FAIL: mode '$MODE' is neither cross nor native" >&2; exit 2 ;;
+  modern:x86_64|modern:arm64|mavericks:x86_64|modern:linux) ;;
+  mavericks:arm64) echo "FAIL: --host arm64 builds the cross toolchain on an Apple-silicon Mac, not on OS X 10.9" >&2; exit 2 ;;
+  mavericks:linux) echo "FAIL: --host linux builds on Linux, not on OS X 10.9" >&2; exit 2 ;;
+  *) echo "FAIL: mode '$MODE' is neither mavericks nor modern" >&2; exit 2 ;;
 esac
 # clang's Darwin driver picks some of the flags it passes a linker by that linker's version, which it
 # reads, at configure time, from CMAKE_LINKER's -v (clang/CMakeLists.txt) unless CMAKE_LINKER is an lld:
@@ -105,7 +105,7 @@ NATIVE="$W/llvm-build"; TC="$W/toolchain/usr"
 # date, so ninja, given an older commit's tree, or a file a patch no longer touches, would keep the objects
 # built before. llvm-project is build-llvm.sh's.
 LLVM_SRC="$(source_stamp llvm-project)" || { echo "FAIL: llvm-project is no source tree build-llvm.sh extracted -- run ./build-llvm.sh"; exit 1; }
-if [ "$MODE" = cross ]; then
+if [ "$MODE" = modern ]; then
   [ -x "$NATIVE/bin/llvm-tblgen" ] || { echo "FAIL: no native TableGen -- run ./build-llvm.sh"; exit 1; }
   [ -f "$NATIVE/lib/libLLVMBitstreamReader.a" ] || { echo "FAIL: no native LLVMBitstreamReader -- run ./build-llvm.sh"; exit 1; }
 fi
@@ -116,7 +116,7 @@ x86_64)
   # Natively it defaults to the installed release (SWIFT_INSTALLED_TOOLCHAIN, which tests point elsewhere).
   HTC="${SWIFT_HOST_TOOLCHAIN:-}"
   if [ -z "$HTC" ]; then
-    [ "$MODE" = native ] || { echo "FAIL: name the toolchain that compiles the Swift half with SWIFT_HOST_TOOLCHAIN (in CI, the same run's cross toolchain)"; exit 1; }
+    [ "$MODE" = mavericks ] || { echo "FAIL: name the toolchain that compiles the Swift half with SWIFT_HOST_TOOLCHAIN (in CI, the same run's cross toolchain)"; exit 1; }
     HTC="${SWIFT_INSTALLED_TOOLCHAIN:-/usr/local/mavergreen/swift-toolchain}"
   fi
   [ -x "$HTC/bin/swiftc" ] || { echo "FAIL: no $HTC/bin/swiftc -- name the Swift toolchain that compiles the Swift half with SWIFT_HOST_TOOLCHAIN"; exit 1; }
@@ -145,12 +145,14 @@ case "$HOST" in
   *) SDK113="$(sh "$SHIPYARD/fetch_sdk.sh" --arch arm64)" || { echo "FAIL: could not fetch the pinned MacOSX11.3.sdk"; exit 1; } ;;
 esac
 if [ "$HOST" = x86_64 ]; then
-  X="$(clang22_prefix "$MODE" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
+  # clang22_prefix's argument names a clang22 product variant (cross or native), not the build mode.
+  case "$MODE" in mavericks) _c22=native ;; *) _c22=cross ;; esac
+  X="$(clang22_prefix "$_c22" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
   SDK109="$(sdk109_stubs)" || { echo "FAIL: could not fetch the pinned 10.9 SDK"; exit 1; }
   # platform: a configure over a CMakeCache.txt (stage 2's and stage 3's, of stage 1's llvm-x86) hands LLVM's
   #           config.guess no CC, so it tries cc, gcc, c89 and c99, on OS X 10.9 the Command Line Tools'
   #           stubs: natively it gets clang22's clang. (The cached LLVM_HOST_TRIPLE wins either way.)
-  if [ "$MODE" = native ]; then CC_FOR_BUILD="$X/clang"; export CC_FOR_BUILD; fi
+  if [ "$MODE" = mavericks ]; then CC_FOR_BUILD="$X/clang"; export CC_FOR_BUILD; fi
   PM="$(prefix_map_flags c "$W")" || { echo "FAIL: no prefix maps for $W"; exit 1; }
   # The Swift half imports the 11.3 SDK's Darwin overlay, whose force-load symbol lives in libswiftDarwin,
   # which neither a Mavergreen toolchain's lib/swift/macosx nor the 10.9 SDK has. A dir holding ONLY the
@@ -166,7 +168,7 @@ fi
 # libtool), other projects with CMAKE_AR and CMAKE_RANLIB: an archive's symbol table orders what lld
 # writes, and Apple's tools differ between 10.9 and a modern Mac, so all three are clang22's.
 x86_cmake() {
-  if [ "$MODE" = cross ]; then
+  if [ "$MODE" = modern ]; then
     set -- -DCMAKE_CROSSCOMPILING=ON -DCMAKE_SYSTEM_NAME=Darwin -DCMAKE_SYSTEM_PROCESSOR=x86_64 "$@"
   fi
   shipyard_cmake -G Ninja $LAUNCHER -DCMAKE_BUILD_TYPE=Release \
@@ -203,7 +205,7 @@ case "$HOST" in
 x86_64)
   echo "==> 1. LLVM + clang + lld for an $ARCH / $DEPLOYMENT host ($MODE: $X)"
   TBLGEN=""
-  if [ "$MODE" = cross ]; then
+  if [ "$MODE" = modern ]; then
     TBLGEN="-DLLVM_TABLEGEN=$NATIVE/bin/llvm-tblgen -DCLANG_TABLEGEN=$NATIVE/bin/clang-tblgen -DLLVM_NATIVE_TOOL_DIR=$NATIVE/bin"
   fi
   x86_cmake -S llvm-project/llvm -B "$L" \
@@ -307,7 +309,7 @@ SWIFT_SRC="$(source_stamp "$SC" llvm-project cmark)" || exit 1
 if [ "$HOST" = linux ]; then SWIFT_SRC="$SWIFT_SRC
 $SEED_STAMP"; fi
 
-if [ "$HOST:$MODE" = x86_64:cross ]; then
+if [ "$HOST:$MODE" = x86_64:modern ]; then
   echo "==> 4. native helper tools (the builder runs these while building the compiler)"
   reuse_build_dir "$W/native-helpers" "$HELPERS_SRC" || exit 1
   shipyard_cmake -G Ninja -S "$HERE/native-helpers" -B "$W/native-helpers" -DCMAKE_BUILD_TYPE=Release \
@@ -337,7 +339,7 @@ x86_64)
   "$HTC/bin/swift-frontend" -version 2>&1 | sed 's/^/    host: /'
   # A changed host compiler is configured afresh and recompiles the Swift half, and only that (lib.sh).
   swift_half_reset "$S" "$HOST_STAMP" || exit 1
-  if [ "$MODE" = cross ]; then
+  if [ "$MODE" = modern ]; then
     NATIVE_TOOLS="-DLLVM_TABLEGEN=$NATIVE/bin/llvm-tblgen -DSWIFT_NATIVE_LLVM_TOOLS_PATH=$NATIVE/bin -DSWIFT_NATIVE_CLANG_TOOLS_PATH=$HTC/bin -DSWIFT_NATIVE_SWIFT_TOOLS_PATH=$W/native-helpers"
   else
     NATIVE_TOOLS="-DLLVM_TABLEGEN=$L/bin/llvm-tblgen"
@@ -446,8 +448,8 @@ ninja -C "$S" -j "$JOBS" swift-frontend
 # platform: OS X 10.9 has no dyld_info (nor, without the Command Line Tools, an xcrun to find one); there
 #           lib.sh's readers fall back to OTOOL, clang22's llvm-otool.
 DI=""
-# platform: guarded macOS-only call -- --host linux is the only host on Linux (checked above), so a cross build of any other host is a Mac
-if [ "$MODE" = cross ] && [ "$HOST" != linux ]; then DI="$(xcrun -f dyld_info 2>/dev/null || :)"; fi
+# platform: guarded macOS-only call -- --host linux is the only host on Linux (checked above), so a modern-mode build of any other host is a Mac
+if [ "$MODE" = modern ] && [ "$HOST" != linux ]; then DI="$(xcrun -f dyld_info 2>/dev/null || :)"; fi
 case "$HOST" in
 x86_64)
   echo "==> 6. check: minOS and SDK $DEPLOYMENT, 10.9-safe imports, the frontend's own rpath"

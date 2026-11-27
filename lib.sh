@@ -785,7 +785,7 @@ toolchain_digests_agree() {
 # llvm-lipo and llvm-nm -- one archiver, one indexer and one reader on both hosts, so the archives the
 # build makes, and what links them, are the same bytes on both -- and llvm-otool
 # and llvm-strings, the readers the build's checks run in place of the Command Line Tools' (T5a). On
-# Linux, cross mode's clang22 is its Linux archive (fetch-clang22.sh), which the list below fits.
+# Linux, modern mode's clang22 is its Linux archive (fetch-clang22.sh), which the list below fits.
 clang22_prefix() {
   case "$1" in
     cross) _cp="$(sh "$2/fetch-clang22.sh")" || { echo "clang22_prefix: $2/fetch-clang22.sh failed" >&2; return 1; } ;;
@@ -809,7 +809,7 @@ clang22_prefix() {
 # apple_probe_answers <clang22-bin> -- prints, space-separated (no spaces inside), the answers to the Apple
 # probes CMake runs in every configure, which would otherwise ask xcrun or run a Command Line Tools name:
 # OS X 10.9 has neither once the Command Line Tools are gone (T5a, D1). Every configure that compiles with
-# mavericks-clang-22 passes them, in both modes (D7); cross mode's Apple-clang configures (build-llvm.sh's
+# mavericks-clang-22 passes them, in both modes (D7); modern mode's Apple-clang configures (build-llvm.sh's
 # llvm-build, the arm64 host, the native helpers) keep asking Xcode, as they always have. None of the
 # answers reaches a byte the builds ship (T5a Task 12b measured both hosts):
 #   CMAKE_TAPI       the tool CMake makes .tbd text stubs with; no target here makes one, and /usr/bin/false

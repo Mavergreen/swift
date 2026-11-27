@@ -8,11 +8,11 @@
 #   default linker and host linker version, the Swift half compiled by SWIFT_HOST_TOOLCHAIN against the
 #   11.3 SDK with its module cache in the build root and libswiftDarwin's own link dir, compiler patches
 #   0001 and 0002 -- plus,
-#   cross (CI), the cross-compiling settings, build-llvm.sh's TableGen and the native helpers, and a
-#   refusal when no host toolchain is named; native (OS X 10.9), none of those, the installed toolchain by
+#   modern (CI), the cross-compiling settings, build-llvm.sh's TableGen and the native helpers, and a
+#   refusal when no host toolchain is named; mavericks (OS X 10.9), none of those, the installed toolchain by
 #   default, and the check read with otool. A changed host toolchain configures the Swift build afresh,
 #   and the same one does not. Each build dir is started afresh when a source tree it compiles is another
-#   commit's (lib.sh's source_stamp), and kept when the sources are the same. The arm64 toolchain (cross mode only) applies 0001 alone to its own
+#   commit's (lib.sh's source_stamp), and kept when the sources are the same. The arm64 toolchain (modern mode only) applies 0001 alone to its own
 #   checkout, configures for an arm64 / macOS 11.0 host against the 11.3 SDK with no native helpers and no
 #   -runtime-compatibility-version, pins the same clang defaults, and its check refuses a frontend that
 #   does not run on the OS's /usr/lib/swift. A missing host swiftc, either host's, is refused before
@@ -270,7 +270,7 @@ x86_both() {  # what the x86_64 toolchain's configure is in either mode; $2 is t
 
 echo "-- x86_64, cross (CI): clang22-cross, build-llvm.sh's TableGen, the native helpers, the named host toolchain"
 SWIFT_HOST_TOOLCHAIN="$H"; export SWIFT_HOST_TOOLCHAIN
-run x86 cross || fail "the cross x86_64 build failed: $(cat "$T/x86.out")"
+run x86 modern || fail "the modern-mode x86_64 build failed: $(cat "$T/x86.out")"
 x86_both x86 clang22
 has x86 "  -DCMAKE_CROSSCOMPILING=ON"
 has x86 "  -DLLVM_TABLEGEN=<T>/w/llvm-build/bin/llvm-tblgen"
@@ -282,14 +282,14 @@ cmp -s "$W/swift-x86/mavergreen-host.stamp" - <<EOF || fail "the host stamp is n
 $(. "$REPO/lib.sh" && host_swiftc_stamp "$H")
 EOF
 
-echo "-- x86_64, cross, the same host again: the Swift build is kept; a changed one is configured afresh"
-run again cross || fail "the second run failed: $(cat "$T/again.out")"
+echo "-- x86_64, modern, the same host again: the Swift build is kept; a changed one is configured afresh"
+run again modern || fail "the second run failed: $(cat "$T/again.out")"
 if grep -q 'configuring it afresh' "$T/again.out"; then fail "the same host reconfigured the Swift build"; fi
 echo module2 > "$H/lib/swift/macosx/Swift.swiftmodule/x86_64-apple-macos.swiftmodule"
-run changed cross || fail "the run with a changed host failed: $(cat "$T/changed.out")"
+run changed modern || fail "the run with a changed host failed: $(cat "$T/changed.out")"
 grep -q "$W/swift-x86: its host swiftc changed" "$T/changed.out" || fail "a changed host kept the Swift build: $(cat "$T/changed.out")"
 
-echo "-- x86_64, cross: each build dir records the sources it compiles; the same ones keep it, another commit's"
+echo "-- x86_64, modern: each build dir records the sources it compiles; the same ones keep it, another commit's"
 echo "   (whose tarball's files are all older than the objects) starts afresh each dir that compiles it, and only those"
 DIRS="llvm-x86 cmark-x86 swift-x86 native-helpers"
 mark() { for d in $DIRS; do : > "$W/$d/kept.o"; done; }
@@ -304,7 +304,7 @@ kept() {  # kept <log-name> <dir>... -- those dirs kept, the others of DIRS star
   done
 }
 mark
-run same cross || fail "the run with the same sources failed: $(cat "$T/same.out")"
+run same modern || fail "the run with the same sources failed: $(cat "$T/same.out")"
 kept same $DIRS
 L_LINE="source llvm-project $LLVM_SOURCE"
 C_LINE="source cmark $CMARK_REPO_URL $CMARK_SHA $CMARK_TARBALL_SHA256"
@@ -323,21 +323,21 @@ $C_LINE" ] || fail "swift-x86's stamp: $(cat "$W/swift-x86/mavergreen-inputs.sta
 [ "$(cat "$W/native-helpers/mavergreen-inputs.stamp")" = "$S_LINE
 $L_LINE" ] || fail "native-helpers' stamp: $(cat "$W/native-helpers/mavergreen-inputs.stamp")"
 OLD_SWIFT="$SWIFT_REPO_URL 1111111111111111111111111111111111111111 $SWIFT_TARBALL_SHA256"
-(export FAKE_SWIFT_SOURCE="$OLD_SWIFT"; run swiftmoved cross) || fail "the run with another swift commit failed: $(cat "$T/swiftmoved.out")"
+(export FAKE_SWIFT_SOURCE="$OLD_SWIFT"; run swiftmoved modern) || fail "the run with another swift commit failed: $(cat "$T/swiftmoved.out")"
 kept swiftmoved llvm-x86 cmark-x86
 mark
 echo "$LLVM_REPO_URL 2222222222222222222222222222222222222222 $LLVM_TARBALL_SHA256" > "$W/llvm-project/.mavergreen-source"
-(export FAKE_SWIFT_SOURCE="$OLD_SWIFT"; run llvmmoved cross) || fail "the run with another llvm-project commit failed: $(cat "$T/llvmmoved.out")"
+(export FAKE_SWIFT_SOURCE="$OLD_SWIFT"; run llvmmoved modern) || fail "the run with another llvm-project commit failed: $(cat "$T/llvmmoved.out")"
 kept llvmmoved cmark-x86
 echo "$LLVM_SOURCE" > "$W/llvm-project/.mavergreen-source"
-run back cross || fail "the run back at the pinned sources failed: $(cat "$T/back.out")"
+run back modern || fail "the run back at the pinned sources failed: $(cat "$T/back.out")"
 mark
-(export FAKE_CMARK_SOURCE="$CMARK_REPO_URL 3333333333333333333333333333333333333333 $CMARK_TARBALL_SHA256"; run cmarkmoved cross) \
+(export FAKE_CMARK_SOURCE="$CMARK_REPO_URL 3333333333333333333333333333333333333333 $CMARK_TARBALL_SHA256"; run cmarkmoved modern) \
   || fail "the run with another cmark commit failed: $(cat "$T/cmarkmoved.out")"
 kept cmarkmoved llvm-x86 native-helpers
-run back cross || fail "the run back at the pinned sources failed: $(cat "$T/back.out")"
+run back modern || fail "the run back at the pinned sources failed: $(cat "$T/back.out")"
 mv "$W/llvm-project/.mavergreen-source" "$T/llvm-source.away"
-if run nosource cross; then fail "built from an llvm-project no build-llvm.sh extracted"; fi
+if run nosource modern; then fail "built from an llvm-project no build-llvm.sh extracted"; fi
 mv "$T/llvm-source.away" "$W/llvm-project/.mavergreen-source"
 grep -q 'llvm-project is no source tree build-llvm.sh extracted -- run ./build-llvm.sh' "$T/nosource.out" || fail "nosource: $(cat "$T/nosource.out")"
 lacks nosource "shipyard-cmake"
@@ -347,21 +347,21 @@ cp "$CORO" "$T/coro.away"
 echo '  sort(FrameData.Allocas, [&](const auto &Iter1, const auto &Iter2) {' > "$CORO"
 for h in x86_64 arm64 linux; do
   u=Darwin; [ "$h" = linux ] && u=Linux
-  if (export FAKE_UNAME=$u; run no0007 cross --host $h); then fail "$h: built from an llvm-project without patch 0007"; fi
+  if (export FAKE_UNAME=$u; run no0007 modern --host $h); then fail "$h: built from an llvm-project without patch 0007"; fi
   grep -q 'FAIL: llvm-project lacks patches/llvm -- run ./build-llvm.sh' "$T/no0007.out" || fail "no0007 ($h): $(cat "$T/no0007.out")"
   lacks no0007 "cmake"
 done
 mv "$T/coro.away" "$CORO"
 
-echo "-- x86_64, cross, no host toolchain named: refused (CI never builds with an earlier release)"
+echo "-- x86_64, modern, no host toolchain named: refused (CI never builds with an earlier release)"
 unset SWIFT_HOST_TOOLCHAIN
-if run nohost cross; then fail "built with no SWIFT_HOST_TOOLCHAIN in cross mode"; fi
+if run nohost modern; then fail "built with no SWIFT_HOST_TOOLCHAIN in modern mode"; fi
 grep -q 'name the toolchain that compiles the Swift half with SWIFT_HOST_TOOLCHAIN' "$T/nohost.out" || fail "nohost: $(cat "$T/nohost.out")"
 lacks nohost "shipyard-cmake"
 if grep -q '^==> 1\.' "$T/nohost.out"; then fail "nohost: step 1 ran before the missing host toolchain was refused"; fi
 
-echo "-- x86_64, native (OS X 10.9): clang22's native toolchain, its own TableGen and helpers, the check with otool"
-(SWIFT_HOST_TOOLCHAIN="$H" FAKE_NO_DYLDINFO=1 run native native) || fail "the native build failed: $(cat "$T/native.out")"
+echo "-- x86_64, mavericks (OS X 10.9): clang22's native toolchain, its own TableGen and helpers, the check with otool"
+(SWIFT_HOST_TOOLCHAIN="$H" FAKE_NO_DYLDINFO=1 run native mavericks) || fail "the mavericks-mode build failed: $(cat "$T/native.out")"
 x86_both native clang22n
 has native "  -DLLVM_TABLEGEN=<T>/w/llvm-x86/bin/llvm-tblgen"
 # LLVM's config.guess, on a configure over a cache (stages 2 and 3), asks CC_FOR_BUILD, never a CLT cc.
@@ -372,23 +372,23 @@ lacks native "llvm-build"
 lacks native "native-helpers"
 lacks native "SWIFT_NATIVE_"
 lacks native "<T>/clang22/"
-[ ! -f "$T/xcrun.log" ] || fail "native ran xcrun: $(cat "$T/xcrun.log")"
-if (SWIFT_HOST_TOOLCHAIN="$H" FAKE_NO_DYLDINFO=1 FAKE_OTOOL_MIN=10.10 run native1010 native); then fail "passed a binary otool reads as minOS 10.10"; fi
+[ ! -f "$T/xcrun.log" ] || fail "mavericks ran xcrun: $(cat "$T/xcrun.log")"
+if (SWIFT_HOST_TOOLCHAIN="$H" FAKE_NO_DYLDINFO=1 FAKE_OTOOL_MIN=10.10 run native1010 mavericks); then fail "passed a binary otool reads as minOS 10.10"; fi
 grep -q "records minOS/SDK '10.10 10.9'" "$T/native1010.out" || fail "native1010: $(cat "$T/native1010.out")"
-if (FAKE_NO_DYLDINFO=1 run default native); then fail "built with the installed toolchain, which is not there"; fi
-grep -q "no $T/installed/bin/swiftc" "$T/default.out" || fail "native's default host is not the installed toolchain: $(cat "$T/default.out")"
+if (FAKE_NO_DYLDINFO=1 run default mavericks); then fail "built with the installed toolchain, which is not there"; fi
+grep -q "no $T/installed/bin/swiftc" "$T/default.out" || fail "mavericks mode's default host is not the installed toolchain: $(cat "$T/default.out")"
 lacks default "shipyard-cmake"
-(SWIFT_INSTALLED_TOOLCHAIN="$H" FAKE_NO_DYLDINFO=1 run inst native) || fail "the native build with an installed toolchain failed: $(cat "$T/inst.out")"
+(SWIFT_INSTALLED_TOOLCHAIN="$H" FAKE_NO_DYLDINFO=1 run inst mavericks) || fail "the mavericks-mode build with an installed toolchain failed: $(cat "$T/inst.out")"
 has inst "  -DCMAKE_Swift_COMPILER=<T>/host/bin/swiftc"
 grep -qF 'SWIFT_INSTALLED_TOOLCHAIN:-/usr/local/mavergreen/swift-toolchain}' "$R/build-toolchain.sh" \
   || fail "the installed toolchain is not /usr/local/mavergreen/swift-toolchain by default"
-rc=0; run narm native --host arm64 || rc=$?
-[ "$rc" -eq 2 ] || fail "native --host arm64: exit $rc, not 2"
-[ ! -s "$T/narm.log" ] || fail "native --host arm64 ran [$(head -1 "$T/narm.log")] before refusing"
+rc=0; run narm mavericks --host arm64 || rc=$?
+[ "$rc" -eq 2 ] || fail "mavericks --host arm64: exit $rc, not 2"
+[ ! -s "$T/narm.log" ] || fail "mavericks --host arm64 ran [$(head -1 "$T/narm.log")] before refusing"
 
 echo "-- arm64: 0001 alone in its own checkout, Apple clang for arm64 / 11.0 on the 11.3 SDK, no native helpers"
 export FAKE_ARCH=arm64 FAKE_PLATFORM='11.0      11.3' FAKE_RPATH=/usr/lib/swift
-run arm64 cross --host arm64 || fail "the arm64 build failed: $(cat "$T/arm64.out")"
+run arm64 modern --host arm64 || fail "the arm64 build failed: $(cat "$T/arm64.out")"
 sources arm64 swift-compiler-arm64
 has arm64 "patch swift-compiler-arm64 <T>/repo/patches/compiler/0001-accept-10.9-sdk.patch"
 has arm64 "patch swift-compiler-arm64 <T>/repo/patches/compiler/0003-runtime-versions-macos-10.9.patch"
@@ -429,7 +429,7 @@ grep -qx 'OK: swift-frontend, lld, clang and dsymutil for arm64 / macOS 11.0, ta
 
 echo "-- arm64 with no host swiftc (build.sh's): refused before step 1"
 mv "$W/toolchain/usr/bin/swiftc" "$W/toolchain/usr/bin/swiftc.away"
-rc=0; run notc cross --host arm64 || rc=$?
+rc=0; run notc modern --host arm64 || rc=$?
 mv "$W/toolchain/usr/bin/swiftc.away" "$W/toolchain/usr/bin/swiftc"
 [ "$rc" -ne 0 ] || fail "built arm64 with no host swiftc"
 grep -q 'FAIL: no host swiftc -- run ./build.sh' "$T/notc.out" || fail "notc: $(cat "$T/notc.out")"
@@ -439,21 +439,21 @@ lacks notc "shipyard-cmake"
 echo "-- arm64's check refuses a frontend on the package's own stdlib, or one the audit fails"
 # platform: POSIX leaves unspecified whether a VAR=val prefix on a function call outlives the call,
 #           and macOS's /bin/sh (bash 3.2) keeps it; a subshell confines each override to its own case.
-if (FAKE_RPATH=@loader_path/../lib/swift/macosx run rp cross --host arm64); then fail "passed a frontend with rpath @loader_path/../lib/swift/macosx"; fi
+if (FAKE_RPATH=@loader_path/../lib/swift/macosx run rp modern --host arm64); then fail "passed a frontend with rpath @loader_path/../lib/swift/macosx"; fi
 grep -q "^FAIL: swift-frontend's rpaths are \[@loader_path/../lib/swift/macosx\]" "$T/rp.out" || fail "rpath: $(cat "$T/rp.out")"
-if (FAKE_CORE=@rpath/libswiftCore.dylib run core cross --host arm64); then fail "passed a frontend loading @rpath/libswiftCore.dylib"; fi
+if (FAKE_CORE=@rpath/libswiftCore.dylib run core modern --host arm64); then fail "passed a frontend loading @rpath/libswiftCore.dylib"; fi
 grep -q "^FAIL: swift-frontend does not load the OS's /usr/lib/swift/libswiftCore.dylib" "$T/core.out" || fail "core: $(cat "$T/core.out")"
 if (FAKE_CORE='/usr/lib/swift/libswiftCore.dylib
-@rpath/libswift_Concurrency.dylib' run rpathlib cross --host arm64); then fail "passed a frontend also loading @rpath/libswift_Concurrency.dylib"; fi
+@rpath/libswift_Concurrency.dylib' run rpathlib modern --host arm64); then fail "passed a frontend also loading @rpath/libswift_Concurrency.dylib"; fi
 grep -q "^FAIL: swift-frontend loads a Swift library through @rpath" "$T/rpathlib.out" || fail "rpathlib: $(cat "$T/rpathlib.out")"
-if (FAKE_AUDIT_RC=1 run audit cross --host arm64); then fail "passed a frontend the import audit failed"; fi
+if (FAKE_AUDIT_RC=1 run audit modern --host arm64); then fail "passed a frontend the import audit failed"; fi
 has audit "python3 <T>/repo/scripts/audit-imports.py <T>/w/swift-arm64/bin/swift-frontend <T>/sdk/MacOSX11.3.sdk"
 if grep -q '^OK:' "$T/audit.out"; then fail "printed OK after the import audit failed: $(cat "$T/audit.out")"; fi
 unset FAKE_ARCH FAKE_PLATFORM FAKE_RPATH
 
 echo "-- linux (a Linux uname): the seed's clang, clang++ and swiftc, the cmake on PATH, 0006, no Dispatch, lld, the staged prefix"
 mkdir -p "$W/builtins-x86/lib/darwin"; echo rt > "$W/builtins-x86/lib/darwin/libclang_rt.osx.a"
-(export FAKE_UNAME=Linux; run linux cross --host linux) || fail "the linux build failed: $(cat "$T/linux.out")"
+(export FAKE_UNAME=Linux; run linux modern --host linux) || fail "the linux build failed: $(cat "$T/linux.out")"
 has linux "fetch-linux-seed <T>/w/linux-seed"
 has linux "pkg-config --exists uuid"
 has linux "curl $CMARK_REPO_URL/info/refs?service=git-upload-pack"
@@ -507,7 +507,7 @@ grep -qx "OK: the Linux toolchain prefix at $P (build.sh's SWIFT_HOST_TOOLCHAIN)
   || fail "linux did not finish OK: $(cat "$T/linux.out")"
 echo "   without build-builtins.sh's archive, the prefix is staged without one, saying so"
 mv "$W/builtins-x86" "$T/builtins.away"
-(export FAKE_UNAME=Linux; run linuxnort cross --host linux) || fail "the linux build without builtins failed: $(cat "$T/linuxnort.out")"
+(export FAKE_UNAME=Linux; run linuxnort modern --host linux) || fail "the linux build without builtins failed: $(cat "$T/linuxnort.out")"
 mv "$T/builtins.away" "$W/builtins-x86"
 [ ! -e "$P/lib/clang/21/lib/darwin/libclang_rt.osx.a" ] || fail "linuxnort: staged a builtins archive from nowhere"
 grep -q 'no builtins archive at .*run build-builtins.sh' "$T/linuxnort.out" || fail "linuxnort: did not say so: $(cat "$T/linuxnort.out")"
@@ -515,28 +515,28 @@ grep -qx "OK: the Linux toolchain prefix at $P (build.sh's SWIFT_HOST_TOOLCHAIN)
   || fail "linuxnort: the OK line does not say the prefix is without builtins: $(cat "$T/linuxnort.out")"
 echo "   a clang whose default triple is not x86_64-apple-macosx10.9 (a host uname leaking into it) is refused,"
 echo "   though its cfgs mask it, and so is a swift-frontend whose default target is not"
-if (export FAKE_UNAME=Linux FAKE_TRIPLE=x86_64-apple-darwin6.8.0-1017-azure; run linuxtriple cross --host linux); then
+if (export FAKE_UNAME=Linux FAKE_TRIPLE=x86_64-apple-darwin6.8.0-1017-azure; run linuxtriple modern --host linux); then
   fail "passed a clang whose default triple is x86_64-apple-darwin6.8.0-1017-azure"; fi
 grep -q "default target is x86_64-apple-darwin6.8.0-1017-azure, not x86_64-apple-macosx10.9" "$T/linuxtriple.out" || fail "linuxtriple: $(cat "$T/linuxtriple.out")"
 if grep -q '^OK:' "$T/linuxtriple.out"; then fail "linuxtriple printed OK"; fi
-if (export FAKE_UNAME=Linux FAKE_FE_TARGET=x86_64-apple-macosx10.3-2-t2-noble; run linuxfe cross --host linux); then
+if (export FAKE_UNAME=Linux FAKE_FE_TARGET=x86_64-apple-macosx10.3-2-t2-noble; run linuxfe modern --host linux); then
   fail "passed a swift-frontend whose default target is x86_64-apple-macosx10.3-2-t2-noble"; fi
 grep -q "swift-frontend's default target is not x86_64-apple-macosx10.9" "$T/linuxfe.out" || fail "linuxfe: $(cat "$T/linuxfe.out")"
 if grep -q '^OK:' "$T/linuxfe.out"; then fail "linuxfe printed OK"; fi
 echo "   a seed clang that cannot run lld as ld.lld is refused before the Swift build is configured"
-if (export FAKE_UNAME=Linux FAKE_LLD_BROKEN=1; run linuxlld cross --host linux); then fail "built with an lld that does not run"; fi
+if (export FAKE_UNAME=Linux FAKE_LLD_BROKEN=1; run linuxlld modern --host linux); then fail "built with an lld that does not run"; fi
 grep -q "FAIL: the seed's clang cannot link with lld" "$T/linuxlld.out" || fail "linuxlld: $(cat "$T/linuxlld.out")"
 lacks linuxlld "  <T>/w/swift-linux"
 if grep -q '^OK:' "$T/linuxlld.out"; then fail "linuxlld printed OK"; fi
 echo "   no uuid-dev: refused before anything is fetched or configured"
-if (export FAKE_UNAME=Linux FAKE_NO_UUID=1; run linuxnouuid cross --host linux); then fail "built with no uuid-dev"; fi
+if (export FAKE_UNAME=Linux FAKE_NO_UUID=1; run linuxnouuid modern --host linux); then fail "built with no uuid-dev"; fi
 grep -q 'FAIL: .*uuid-dev' "$T/linuxnouuid.out" || fail "linuxnouuid: $(cat "$T/linuxnouuid.out")"
 lacks linuxnouuid "cmake"
 lacks linuxnouuid "fetch-linux-seed"
 
 echo "   --stop-after llvm: LLVM, clang, lld and dsymutil, then nothing more (CI's linux-compiler-llvm job)"
 rm -rf "$W/toolchain-linux"
-(export FAKE_UNAME=Linux; run linuxstop cross --host linux --stop-after llvm) || fail "--stop-after llvm failed: $(cat "$T/linuxstop.out")"
+(export FAKE_UNAME=Linux; run linuxstop modern --host linux --stop-after llvm) || fail "--stop-after llvm failed: $(cat "$T/linuxstop.out")"
 has linuxstop "  <T>/w/llvm-linux"
 lacks linuxstop "cmark"
 lacks linuxstop "swift-linux"
@@ -545,18 +545,18 @@ lacks linuxstop "fetch_pinned_source"
 grep -qx "OK: LLVM, clang, lld and dsymutil for the linux host at $W/llvm-linux; build-toolchain.sh without --stop-after finishes the compiler" "$T/linuxstop.out" \
   || fail "--stop-after llvm did not say where it stopped: $(cat "$T/linuxstop.out")"
 for bad in "--stop-after swift" "--stop-after"; do
-  rc=0; (export FAKE_UNAME=Linux; run linuxbadstop cross --host linux $bad) || rc=$?
+  rc=0; (export FAKE_UNAME=Linux; run linuxbadstop modern --host linux $bad) || rc=$?
   [ "$rc" -eq 2 ] || fail "'$bad': exit $rc, not 2: $(cat "$T/linuxbadstop.out")"
   [ ! -s "$T/linuxbadstop.log" ] || fail "'$bad' ran [$(head -1 "$T/linuxbadstop.log")] before refusing"
 done
 
 echo "-- --host linux on Darwin, and any other host on Linux, is refused before anything runs"
-rc=0; run linuxmac cross --host linux || rc=$?
+rc=0; run linuxmac modern --host linux || rc=$?
 [ "$rc" -eq 2 ] || fail "--host linux on Darwin: exit $rc, not 2: $(cat "$T/linuxmac.out")"
 grep -qx 'FAIL: --host linux builds on Linux' "$T/linuxmac.out" || fail "linuxmac: $(cat "$T/linuxmac.out")"
 [ ! -s "$T/linuxmac.log" ] || fail "--host linux on Darwin ran [$(head -1 "$T/linuxmac.log")] before refusing"
 for h in "" "--host x86_64" "--host arm64"; do
-  rc=0; (export FAKE_UNAME=Linux; run linuxother cross $h) || rc=$?
+  rc=0; (export FAKE_UNAME=Linux; run linuxother modern $h) || rc=$?
   [ "$rc" -eq 2 ] || fail "'$h' on Linux: exit $rc, not 2: $(cat "$T/linuxother.out")"
   grep -qx 'FAIL: on Linux, --host linux is the only host' "$T/linuxother.out" || fail "linuxother '$h': $(cat "$T/linuxother.out")"
   [ ! -s "$T/linuxother.log" ] || fail "'$h' on Linux ran [$(head -1 "$T/linuxother.log")] before refusing"
@@ -564,11 +564,17 @@ done
 
 echo "-- any other host, or mode, is refused before anything runs"
 for bad in "--host x86" "--host" "--hots arm64"; do
-  rc=0; run bad cross $bad || rc=$?
+  rc=0; run bad modern $bad || rc=$?
   [ "$rc" -eq 2 ] || fail "'$bad': exit $rc, not 2: $(cat "$T/bad.out")"
   [ ! -s "$T/bad.log" ] || fail "'$bad' ran [$(head -1 "$T/bad.log")] before refusing"
 done
 rc=0; run badmode sideways || rc=$?
 [ "$rc" -eq 2 ] || fail "mode 'sideways': exit $rc, not 2"
-grep -q "mode 'sideways' is neither cross nor native" "$T/badmode.out" || fail "badmode: $(cat "$T/badmode.out")"
+grep -q "mode 'sideways' is neither mavericks nor modern" "$T/badmode.out" || fail "badmode: $(cat "$T/badmode.out")"
+for old in native cross; do   # shipyard's old mode names are no modes
+  rc=0; run "bad$old" "$old" || rc=$?
+  [ "$rc" -eq 2 ] || fail "mode '$old': exit $rc, not 2"
+  grep -q "mode '$old' is neither mavericks nor modern" "$T/bad$old.out" || fail "bad$old: $(cat "$T/bad$old.out")"
+  [ ! -s "$T/bad$old.log" ] || fail "mode '$old' ran [$(head -1 "$T/bad$old.log")] before refusing"
+done
 echo "PASS"

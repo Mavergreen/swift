@@ -44,7 +44,8 @@ Each of these pins removes one such difference:
 
 The runtime and the toolchain build on a 10.9 Mac from this checkout, and the results are byte-identical
 to what CI builds from the same commit. The build scripts run the same recipe on both hosts and pick
-their inputs by host (shipyard's `mavericks_mode.sh`).
+their inputs by host: shipyard's `mavericks_mode.sh` says `mavericks` on OS X 10.9 and `modern` on any
+other host, and `MAVERICKS_MODE` overrides it with one of those two words.
 
 Once, install:
 
@@ -223,7 +224,7 @@ translated smoke of it (`tests/toolchain-smoke-test.sh`).
 
 ## Building the runtime on Linux
 
-An x86_64 Linux host (Ubuntu 24.04) builds the same runtime payload as a Mac's cross mode. It needs:
+An x86_64 Linux host (Ubuntu 24.04) builds the same runtime payload as a Mac's modern mode. It needs:
 
 - `uuid-dev` and `pkg-config` (the Linux-hosted compiler finds libuuid through them), `cmake`, `ninja`,
   `python3`, `curl`, `patch` and `tar`;
@@ -242,7 +243,7 @@ SWIFT_HOST_TOOLCHAIN="$P" SELFTEST_SUPPORT="$MAVERICKS_BUILD_ROOT/swift/payload/
 ```
 
 `build-builtins.sh` comes before `build-toolchain.sh --host linux`, whose prefix carries its archive (without
-it, the prefix is staged without builtins and says so). On Linux `build.sh` runs in cross mode alone and
+it, the prefix is staged without builtins and says so). On Linux `build.sh` runs in modern mode alone and
 refuses to run without `SWIFT_HOST_TOOLCHAIN`: the swift.org seed branch needs `pkgutil` and `ditto`. It
 reads Mach-O with clang22's `llvm-otool`, `llvm-nm` and `llvm-strings`, and stages the payload in
 `$MAVERICKS_BUILD_ROOT/swift/payload/runtime`, as on a Mac. The Linux-hosted compiler ships in no package.

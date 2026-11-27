@@ -1,9 +1,9 @@
 #!/bin/sh
 # platform: host-agnostic
 # usage: sh tests/build-linux-host-test.sh
-#   On Linux (a faked uname, so this runs on a Mac too) build.sh builds the runtime in cross mode with the
+#   On Linux (a faked uname, so this runs on a Mac too) build.sh builds the runtime in modern mode with the
 #   toolchain prefix SWIFT_HOST_TOOLCHAIN names (build-toolchain.sh --host linux stages one), whose release
-#   SWIFT_HOST_TOOLCHAIN_VERSION declares: it refuses native mode, and the swift.org seed branch, whose
+#   SWIFT_HOST_TOOLCHAIN_VERSION declares: it refuses mavericks mode, and the swift.org seed branch, whose
 #   installer check and expansion need pkgutil and ditto, before either runs. It reads Mach-O with
 #   clang22's llvm-otool, llvm-nm and llvm-strings, says so in step 1, and never runs otool, nm, strings,
 #   xcrun, dyld_info, pkgutil, ditto or git; it configures the stdlib with the host's cmake, for a Darwin
@@ -68,7 +68,7 @@ for t in clang clang++ ld64.lld llvm-ranlib llvm-lipo llvm-strings llvm-install-
 done
 printf '#!/bin/sh\necho "llvm-otool $*" >> "%s/log"\n' "$T" > "$C22/bin/llvm-otool"
 printf '#!/bin/sh\ncase "$1" in rcs) : > "$2" ;; esac\n' > "$C22/bin/llvm-ar"
-# Recaulk's archive as clang22's llvm-nm -A reads it (tests/build-native-host-test.sh's, which says why).
+# Recaulk's archive as clang22's llvm-nm -A reads it (tests/build-mavericks-host-test.sh's, which says why).
 cat > "$C22/bin/llvm-nm" <<F
 #!/bin/sh
 echo "llvm-nm \$*" >> "$T/log"
@@ -145,20 +145,27 @@ no_mac_tools() {
 }
 
 echo "-- no SWIFT_HOST_TOOLCHAIN: the swift.org seed branch is refused, before its pkgutil and ditto"
-if build cross; then fail "built on Linux with the swift.org seed: $(cat "$T/out")"; fi
+if build modern; then fail "built on Linux with the swift.org seed: $(cat "$T/out")"; fi
 grep -q '^FAIL: .*SWIFT_HOST_TOOLCHAIN' "$T/out" || fail "did not say Linux needs SWIFT_HOST_TOOLCHAIN: $(cat "$T/out")"
 grep -q 'pkgutil' "$T/out" && grep -q 'ditto' "$T/out" || fail "did not say the seed branch needs pkgutil and ditto: $(cat "$T/out")"
 if grep -q 'swift.org toolchain at' "$T/out"; then fail "looked for the swift.org pkg on Linux: $(cat "$T/out")"; fi
 no_mac_tools "the seed branch"
 
-echo "-- native mode: refused on Linux"
+echo "-- mavericks mode: refused on Linux"
 export SWIFT_HOST_TOOLCHAIN="$H" SWIFT_HOST_TOOLCHAIN_VERSION="$SWIFT_VERSION-mavericks.9"
-if build native; then fail "built natively on Linux: $(cat "$T/out")"; fi
-grep -q '^FAIL: .*native' "$T/out" || fail "did not refuse native mode: $(cat "$T/out")"
-no_mac_tools "native mode"
+if build mavericks; then fail "built in mavericks mode on Linux: $(cat "$T/out")"; fi
+grep -q '^FAIL: mavericks mode is OS X 10\.9.s; on Linux' "$T/out" || fail "did not refuse mavericks mode: $(cat "$T/out")"
+no_mac_tools "mavericks mode"
 
-echo "-- cross mode, the named prefix: clang22's readers, the host's cmake for a Darwin target; no macOS-only tool"
-if build cross; then fail "build.sh got past a build that failed: $(cat "$T/out")"; fi
+echo "-- shipyard's old mode names, native and cross: refused by name, before anything runs"
+for old in native cross; do
+  if build "$old"; then fail "built in shipyard's old mode '$old': $(cat "$T/out")"; fi
+  grep -qF "FAIL: mode '$old' is shipyard's old name: the modes are mavericks and modern" "$T/out" || fail "did not refuse '$old' by name: $(cat "$T/out")"
+  [ ! -s "$T/log" ] || fail "'$old' ran [$(head -1 "$T/log")] before refusing"
+done
+
+echo "-- modern mode, the named prefix: clang22's readers, the host's cmake for a Darwin target; no macOS-only tool"
+if build modern; then fail "build.sh got past a build that failed: $(cat "$T/out")"; fi
 grep -qxF "    host toolchain $H: release $SWIFT_VERSION-mavericks.9 (declared by SWIFT_HOST_TOOLCHAIN_VERSION)" "$T/out" \
   || fail "did not take the named prefix's declared release: $(cat "$T/out")"
 grep -qxF "    readers: $C22/bin/llvm-otool, $C22/bin/llvm-nm and $C22/bin/llvm-strings (clang22's: Linux has no Mach-O otool, nm or strings)" "$T/out" \
@@ -170,12 +177,12 @@ for a in -DCMAKE_SYSTEM_NAME=Darwin -DCMAKE_SYSTEM_PROCESSOR=x86_64 "-DCMAKE_INS
          "-DCMAKE_AR=$C22/bin/llvm-ar" -DCMAKE_OSX_ARCHITECTURES=x86_64; do
   grep -qxF -e "  $a" "$T/log" || fail "the stdlib configure lacks $a: $(cat "$T/log")"
 done
-no_mac_tools "cross mode"
+no_mac_tools "modern mode"
 
 echo "-- a clang22 without one of the tools Linux reads or configures with: refused in step 1, naming it"
 for t in llvm-otool llvm-nm llvm-strings llvm-install-name-tool; do
   mv "$C22/bin/$t" "$T/$t.away"
-  if build cross; then fail "built without $t: $(cat "$T/out")"; fi
+  if build modern; then fail "built without $t: $(cat "$T/out")"; fi
   grep -q '^FAIL: no ' "$T/out" || fail "no $t: did not FAIL: $(cat "$T/out")"
   grep -qF "no $C22/bin/$t (" "$T/out" || grep -q "^FAIL: no $t (" "$T/out" || fail "did not name $t: $(cat "$T/out")"
   if grep -qx 'cmake' "$T/log"; then fail "configured without $t"; fi
@@ -183,7 +190,7 @@ for t in llvm-otool llvm-nm llvm-strings llvm-install-name-tool; do
   mv "$T/$t.away" "$C22/bin/$t"
 done
 mv "$C22/bin/llvm-install-name-tool" "$T/inst.away"
-build cross || :
+build modern || :
 grep -qx "FAIL: no llvm-install-name-tool ($C22/bin/llvm-install-name-tool: clang22's, which CMake's Darwin platform asks for)" "$T/out" \
   || fail "did not say FAIL: no llvm-install-name-tool: $(cat "$T/out")"
 mv "$T/inst.away" "$C22/bin/llvm-install-name-tool"

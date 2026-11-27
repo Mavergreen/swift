@@ -1,6 +1,6 @@
 #!/bin/sh
-# platform: host-agnostic -- a modern Mac (cross; without a named host toolchain, pkgutil and ditto expand the
-#           swift.org compiler), OS X 10.9 (native), or Linux (cross, with a named host toolchain alone)
+# platform: host-agnostic -- a modern Mac (modern; without a named host toolchain, pkgutil and ditto expand the
+#           swift.org compiler), OS X 10.9 (mavericks), or Linux (modern, with a named host toolchain alone)
 # build.sh — from-source build of the Swift runtime (libswiftCore + libswiftSwiftOnoneSupport) for
 # OS X 10.9 / x86_64, staged as the runtime .pkg's payload, and beside it, in the stdlib build's tree,
 # libswift_Concurrency (the runtime pkg's third dylib, with its _Builtin_float module) and the
@@ -11,23 +11,23 @@
 # One recipe, two modes (MAVERICKS_MODE, else shipyard's mavericks_mode.sh), the same bytes from both.
 # The host Swift compiler and clang are a Mavergreen toolchain's, run bare through a shim dir, with the
 # builtins archive that toolchain ships, whenever SWIFT_HOST_TOOLCHAIN names one:
-#   cross (CI, a modern Mac): CI's build-cross job names the same run's cross toolchain, so the stdlib
+#   modern (CI, a modern Mac): CI's build-cross job names the same run's cross toolchain, so the stdlib
 #     every pkg ships is compiled by this repo's compiler. Without SWIFT_HOST_TOOLCHAIN the host is the
 #     swift.org toolchain (mirror-toolchain.sh -> $SWIFT_BUILD/cache/<pkg>, signer-verified) with
 #     build-builtins.sh's archive: CI's one seed, whose stdlib only makes that cross toolchain runnable.
-#   native (OS X 10.9): the INSTALLED swift-toolchain (SWIFT_HOST_TOOLCHAIN, default
+#   mavericks (OS X 10.9): the INSTALLED swift-toolchain (SWIFT_HOST_TOOLCHAIN, default
 #     /usr/local/mavergreen/swift-toolchain), or a stage of self-host.sh.
-#   Linux is a cross host whose host compiler is always named: SWIFT_HOST_TOOLCHAIN is the prefix
+#   Linux is a modern host whose host compiler is always named: SWIFT_HOST_TOOLCHAIN is the prefix
 #     build-toolchain.sh --host linux stages (a Linux swift-frontend, clang and ld64.lld, the builtins), its
 #     release declared by SWIFT_HOST_TOOLCHAIN_VERSION. Every check reads Mach-O with clang22's llvm-otool,
 #     llvm-nm and llvm-strings, as on 10.9, and the stdlib is configured, with the host's cmake, for a
-#     Darwin target. The swift.org seed and native mode are refused there.
+#     Darwin target. The swift.org seed and mavericks mode are refused there.
 #   Both: LLVM build support and ld64.lld from build-llvm.sh; the pinned modern SDK (shipyard's
 #   fetch_sdk.sh --arch arm64, MacOSX11.3.sdk); the runtime linked by that lld with the builtins archive
 #   where the driver puts its own; the build root prefix-mapped to /mavergreen-build; the swift source as
 #   GitHub's tarball of SWIFT_SHA, verified by SWIFT_TARBALL_SHA256 and patched with the OS's patch;
 #   mavericks-clang-22's llvm-ar and llvm-ranlib make the stdlib's archives (pins.env's CLANG22_VERSION:
-#   cross, fetch-clang22.sh's; native, the installed one, CLANG22_PREFIX); the stdlib's C++ compiles against
+#   modern mode, fetch-clang22.sh's; mavericks mode, the installed one, CLANG22_PREFIX); the stdlib's C++ compiles against
 #   that clang22's libc++ headers and links libcxx22's libc++.1.dylib (fetch-libcxx22.sh, the same release),
 #   the family's one shared libc++, never the SDK's, which on 10.9 is the OS's own; libswiftCore links
 #   Recaulk's definitions of the post-10.9 APIs RECAULK_RUNTIME_SYMBOLS names, statically, from
@@ -38,7 +38,7 @@
 #   SWIFT_SELFTEST_SUPPORT_OUT (the self-test's support, default $SWIFT_BUILD/payload/selftest-support),
 #   MAVERICKS_MODE, SWIFT_HOST_TOOLCHAIN, SWIFT_HOST_TOOLCHAIN_VERSION (the release of a host toolchain
 #   prefix with no mavergreen.plist: a stage, or a partial copy; see lib.sh's host_toolchain_release), SWIFT_BUILTINS (a libclang_rt.osx.a to
-#   link instead of the mode's own), NM (native mode's nm), CLANG22_PREFIX, MAVERICKS_SDK_CACHE
+#   link instead of the mode's own), NM (mavericks mode's nm), CLANG22_PREFIX, MAVERICKS_SDK_CACHE
 #   (fetch_sdk.sh's cache), MAVERICKS_SOURCE_CACHE (fetch_pinned_source.sh's).
 # Host: cmake (shipyard-cmake on a Mac, lib.sh's shipyard_cmake), ninja, python3 (gyb), curl, patch, tar. No git
 # and, on OS X 10.9 and Linux, none of Xcode's Command Line Tools: there the checks read with clang22's
@@ -59,14 +59,18 @@ LLD="$ROOT/llvm-build/bin/ld64.lld"
 # sources, the same from run to run (a two-root build once differed by 48 bytes of reordered strings).
 PYTHONHASHSEED=0; export PYTHONHASHSEED
 MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
-# platform: a Linux host builds the same runtime as a Mac's cross mode, from a named host toolchain, with
+case "$MODE" in mavericks|modern) ;;
+  native|cross) echo "FAIL: mode '$MODE' is shipyard's old name: the modes are mavericks and modern (is the installed shipyard older than v1.0.966?)"; exit 1 ;;
+  *) echo "FAIL: mode '$MODE' is neither mavericks nor modern"; exit 1 ;;
+esac
+# platform: a Linux host builds the same runtime as a Mac's modern mode, from a named host toolchain, with
 #           clang22's readers and CMake told the target is Darwin (step 1, step 4)
 HOST=mac; [ "$(uname -s)" != Linux ] || HOST=linux
 # platform: OS X 10.9 has no dyld_info (nor, without the Command Line Tools, any xcrun to find a tool), and
 #           Linux neither; step 7 then reads the runtime with otool, nm and strings (lib.sh), clang22's below.
 DYLDINFO=""
-# platform: guarded macOS-only call -- a Mac's cross mode alone: the HOST test on this line keeps xcrun off Linux
-if [ "$MODE" = cross ] && [ "$HOST" = mac ]; then DYLDINFO="$(xcrun -f dyld_info 2>/dev/null || :)"; fi
+# platform: guarded macOS-only call -- a Mac's modern mode alone: the HOST test on this line keeps xcrun off Linux
+if [ "$MODE" = modern ] && [ "$HOST" = mac ]; then DYLDINFO="$(xcrun -f dyld_info 2>/dev/null || :)"; fi
 
 echo "==> 1. host build environment ($MODE: LLVM build support and lld built here, the pinned SDK fetched, a host compiler)"
 # Reported, not required: CMake finds gyb's python itself (step 4 names the one it found), and 3.14
@@ -77,14 +81,13 @@ echo "    python3 on PATH: $(if command -v python3 >/dev/null 2>&1; then python3
 # An override that names no file is reported as such; each mode's own message is for its own archive.
 [ -z "${SWIFT_BUILTINS:-}" ] || [ -f "$SWIFT_BUILTINS" ] || {
   echo "FAIL: SWIFT_BUILTINS names no file: $SWIFT_BUILTINS"; exit 1; }
-case "$MODE" in cross|native) ;; *) echo "FAIL: mode '$MODE' is neither cross nor native"; exit 1 ;; esac
 if [ "$HOST" = linux ]; then
-  [ "$MODE" = cross ] || { echo "FAIL: native mode is OS X 10.9's; on Linux build.sh runs in cross mode"; exit 1; }
+  [ "$MODE" = modern ] || { echo "FAIL: mavericks mode is OS X 10.9's; on Linux build.sh runs in modern mode"; exit 1; }
   [ -n "${SWIFT_HOST_TOOLCHAIN:-}" ] || {
     echo "FAIL: on Linux the host compiler is the toolchain prefix SWIFT_HOST_TOOLCHAIN names (build-toolchain.sh --host linux stages one) -- the swift.org seed's installer check and expansion need pkgutil and ditto, which Linux lacks"; exit 1; }
 fi
 HTC="${SWIFT_HOST_TOOLCHAIN:-}"
-if [ -z "$HTC" ] && [ "$MODE" = native ]; then HTC=/usr/local/mavergreen/swift-toolchain; fi
+if [ -z "$HTC" ] && [ "$MODE" = mavericks ]; then HTC=/usr/local/mavergreen/swift-toolchain; fi
 CMAKE_ARCH_ARGS=""   # extra stdlib-configure arguments (word-split on use, step 4): the architecture a named host's clang needs
 if [ -n "$HTC" ]; then
   native_host_shim "$HTC" "$ROOT/native-host" || { echo "FAIL: no host toolchain shim from $HTC"; exit 1; }
@@ -92,8 +95,8 @@ if [ -n "$HTC" ]; then
   echo "    host toolchain $HTC: release $HTC_RELEASE"
   # A named toolchain's clang is x86_64 only; on an arm64 Mac CMake's compiler probe would ask it for arm64.
   # (Byte-neutral: Task 1's stdlib with the cross toolchain as host was identical.) The swift.org host's
-  # clang is universal and is left as it was, as is native mode, whose Mac is x86_64.
-  if [ "$MODE" = cross ]; then
+  # clang is universal and is left as it was, as is mavericks mode, whose Mac is x86_64.
+  if [ "$MODE" = modern ]; then
     CMAKE_ARCH_ARGS="-DCMAKE_OSX_ARCHITECTURES=$ARCH"
     echo "    cmake architectures: $CMAKE_ARCH_ARGS (a named host toolchain's clang is x86_64 only)"
   fi
@@ -111,7 +114,7 @@ else
   [ -f "$BUILTINS" ] || { echo "FAIL: no builtins archive at $BUILTINS -- run ./build-builtins.sh"; exit 1; }
   CLANG_INC="$(clang_resource_include "$TC")" || { echo "FAIL: no one clang resource dir in $TC"; exit 1; }
 fi
-if [ "$MODE" = native ]; then
+if [ "$MODE" = mavericks ]; then
   # platform: step 7 reads imports with nm when there is no dyld_info; clang22's llvm-nm is the one
   #           proven on the box (the spike), and a GNU nm earlier on PATH would not know -m.
   NM="${NM:-${CLANG22_PREFIX:-/usr/local/mavergreen/clang22}/bin/llvm-nm}"
@@ -123,9 +126,11 @@ SDK_RUNTIME="$(sh "$SHIPYARD/fetch_sdk.sh" --arch arm64)" || { echo "FAIL: could
 # one archiver on both hosts makes the same archive bytes. llvm-lipo answers Swift's configure-time
 # lipo lookup, which would otherwise ask xcrun. Natively, step 7 reads with clang22's llvm-otool and
 # llvm-strings.
-X="$(clang22_prefix "$MODE" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
+# clang22_prefix's argument names a clang22 product variant (cross or native), not the build mode.
+case "$MODE" in mavericks) _c22=native ;; *) _c22=cross ;; esac
+X="$(clang22_prefix "$_c22" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
 CMAKE_HOST_ARGS=""   # extra stdlib-configure arguments (word-split on use, step 4): a Linux host's CMake platform
-if [ "$MODE" = native ]; then OTOOL="$X/llvm-otool"; STRINGS="$X/llvm-strings"; export OTOOL
+if [ "$MODE" = mavericks ]; then OTOOL="$X/llvm-otool"; STRINGS="$X/llvm-strings"; export OTOOL
 elif [ "$HOST" = linux ]; then
   # platform: Linux has no otool, and its nm and strings read no Mach-O: every check reads with clang22's
   #           (clang22_prefix has checked they are there), as natively. CMake on a Linux host takes the
@@ -140,7 +145,7 @@ else STRINGS=strings; fi
 # spec: INGREDIENTS.md "One C++ runtime" -- one shared libc++ per process,
 #       the family's, never the OS's: libcxx22's headers from the clang22 above, its dylib by path
 #       (-L would be searched inside the SDK first, -isysroot's doing), and the headers' directory mapped,
-#       since cross and native find them in different places
+#       since modern and mavericks modes find them in different places
 CXXINC="$(dirname "$X")/include/c++/v1"
 [ -f "$CXXINC/__config" ] || { echo "FAIL: no libc++ headers at $CXXINC (mavericks-clang-22 ships them)"; exit 1; }
 LIBCXX_PREFIX="$(sh "$HERE/fetch-libcxx22.sh")" || { echo "FAIL: could not fetch libcxx22 $CLANG22_VERSION"; exit 1; }

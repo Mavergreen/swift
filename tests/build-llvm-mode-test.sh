@@ -5,16 +5,16 @@
 #   fetch_pinned_source.sh, verified by LLVM_TARBALL_SHA256, check the release pin with curl, apply
 #   patches/llvm with patch, and never run git; configure LLVM in both modes with LibEdit, zlib, zstd,
 #   terminfo and LibXml2 off by name, git never looked for, and the version stamp forced to LLVM_SHA and its
-#   repository; in cross mode (CI) with Apple's clang and the host's otool, in native mode (OS X 10.9) with
+#   repository; in modern mode (CI) with Apple's clang and the host's otool, in mavericks mode (OS X 10.9) with
 #   mavericks-clang-22's clang, the 10.9 SDK, and its llvm-libtool-darwin, llvm-ar, llvm-ranlib and
 #   llvm-otool, never a Command Line Tools stub, and natively with CMake's and LLVM's Apple probes answered
 #   (lib.sh's apple_probe_answers) and clang22's lld as the linker clang's configure reads, so no configure
-#   asks xcrun or runs a Command Line Tools ld (cross mode keeps Apple's tools: D7). A warm llvm-build is kept
+#   asks xcrun or runs a Command Line Tools ld (modern mode keeps Apple's tools: D7). A warm llvm-build is kept
 #   while its options and llvm-project's commit are the same, and removed and configured afresh, never in
 #   place, when either differs. A tarball pin that does not match fails before anything is
 #   configured, naming the pin to refresh. On a Linux host (a faked uname) the swift.org Linux seed's clang and
 #   clang++ compile (fetch-linux-seed.sh), the cmake on PATH configures and installs, and ldd reads lld's
-#   libraries; native mode there is refused before anything is fetched. On every host LLVMConfig.cmake's
+#   libraries; mavericks mode there is refused before anything is fetched. On every host LLVMConfig.cmake's
 #   lit path is emptied. On every host an llvm-project where patch 0007 left no stable sort of a coroutine
 #   frame's allocas is refused before anything is configured.
 #   Nothing is built: every tool is a fake that records its arguments.
@@ -101,7 +101,7 @@ echo "ninja $*" >> "$FAKE_LOG"
 mkdir -p llvm-build/bin
 for b in ld64.lld lld llvm-tblgen clang-tblgen llvm-config llvm-min-tblgen; do printf '#!/bin/sh\n' > "llvm-build/bin/$b"; chmod +x "llvm-build/bin/$b"; done
 F
-# Readers of lld's libraries: the host's otool (cross) and clang22's llvm-otool (native).
+# Readers of lld's libraries: the host's otool (modern) and clang22's llvm-otool (mavericks).
 for o in "$T/bin/otool" "$T/clang22n/bin/llvm-otool"; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/log"\nprintf "%%s:\\n\\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\\n" "$2"\n' "$o" "$T" > "$o"
 done
@@ -132,45 +132,45 @@ both() {
 }
 . "$REPO/lib.sh"   # -> LLVM_REPO_URL
 
-echo "-- cross (CI): the tarball, patch, curl, no git; Apple's clang, the host's otool, no clang22 tools"
-run cross cross || fail "the cross build failed: $(cat "$T/cross.out")"
-both cross
-has cross "  -DCMAKE_C_COMPILER=/usr/bin/clang"
-has cross "<T>/bin/otool -L llvm-build/bin/lld"
-has cross "  env CC_FOR_BUILD="
-lacks cross "CMAKE_LIBTOOL"
-lacks cross "CMAKE_TAPI"
-lacks cross "fetch_sdk"
-lacks cross "clang22n"
+echo "-- modern (CI): the tarball, patch, curl, no git; Apple's clang, the host's otool, no clang22 tools"
+run modern modern || fail "the modern build failed: $(cat "$T/modern.out")"
+both modern
+has modern "  -DCMAKE_C_COMPILER=/usr/bin/clang"
+has modern "<T>/bin/otool -L llvm-build/bin/lld"
+has modern "  env CC_FOR_BUILD="
+lacks modern "CMAKE_LIBTOOL"
+lacks modern "CMAKE_TAPI"
+lacks modern "fetch_sdk"
+lacks modern "clang22n"
 
-echo "-- native (OS X 10.9): clang22's clang, archivers and llvm-otool, the 10.9 SDK; no Command Line Tools stub"
-run native native || fail "the native build failed: $(cat "$T/native.out")"
-both native
-has native "  -DCMAKE_C_COMPILER=<T>/clang22n/bin/clang"
-has native "  -DCMAKE_CXX_COMPILER=<T>/clang22n/bin/clang++"
-has native "  -DCMAKE_OSX_SYSROOT=<T>/sdk/MacOSX10.9.sdk"
-has native "  -DCMAKE_LIBTOOL=<T>/clang22n/bin/llvm-libtool-darwin"
-has native "  -DCMAKE_AR=<T>/clang22n/bin/llvm-ar"
-has native "  -DCMAKE_RANLIB=<T>/clang22n/bin/llvm-ranlib"
-has native "<T>/clang22n/bin/llvm-otool -L llvm-build/bin/lld"
+echo "-- mavericks (OS X 10.9): clang22's clang, archivers and llvm-otool, the 10.9 SDK; no Command Line Tools stub"
+run mavericks mavericks || fail "the mavericks build failed: $(cat "$T/mavericks.out")"
+both mavericks
+has mavericks "  -DCMAKE_C_COMPILER=<T>/clang22n/bin/clang"
+has mavericks "  -DCMAKE_CXX_COMPILER=<T>/clang22n/bin/clang++"
+has mavericks "  -DCMAKE_OSX_SYSROOT=<T>/sdk/MacOSX10.9.sdk"
+has mavericks "  -DCMAKE_LIBTOOL=<T>/clang22n/bin/llvm-libtool-darwin"
+has mavericks "  -DCMAKE_AR=<T>/clang22n/bin/llvm-ar"
+has mavericks "  -DCMAKE_RANLIB=<T>/clang22n/bin/llvm-ranlib"
+has mavericks "<T>/clang22n/bin/llvm-otool -L llvm-build/bin/lld"
 # LLVM's config.guess, on a configure over a cache, asks CC_FOR_BUILD and never a Command Line Tools cc.
-has native "  env CC_FOR_BUILD=<T>/clang22n/bin/clang"
-! grep -qxF "  env CC_FOR_BUILD=" "$T/native.log" || fail "native: a configure without CC_FOR_BUILD"
+has mavericks "  env CC_FOR_BUILD=<T>/clang22n/bin/clang"
+! grep -qxF "  env CC_FOR_BUILD=" "$T/mavericks.log" || fail "mavericks: a configure without CC_FOR_BUILD"
 for a in -DCMAKE_TAPI=/usr/bin/false -DCMAKE_STRIP=\<T\>/clang22n/bin/llvm-strip -DLD64_EXECUTABLE=/usr/bin/false \
-         -DCMAKE_LINKER=\<T\>/clang22n/bin/ld64.lld -DHOST_LINK_VERSION=241.9; do has native "  $a"; done
-lacks native "<T>/bin/otool"
+         -DCMAKE_LINKER=\<T\>/clang22n/bin/ld64.lld -DHOST_LINK_VERSION=241.9; do has mavericks "  $a"; done
+lacks mavericks "<T>/bin/otool"
 
 echo "-- a warm llvm-build: kept with the same configure and source; one configured with other options (a root"
 echo "   from before T5a, the Command Line Tools' ld its CMAKE_LINKER) or from another commit is built afresh"
 LB="$T/root/swift/work/llvm-build"
 : > "$LB/kept.o"
-KEEP_ROOT=1 run same native || fail "the warm native build failed: $(cat "$T/same.out")"
+KEEP_ROOT=1 run same mavericks || fail "the warm mavericks build failed: $(cat "$T/same.out")"
 [ -f "$LB/kept.o" ] || fail "same: the same configure removed llvm-build: $(cat "$T/same.out")"
 lacks same "shipyard-cmake"
 # CMake's record of what its first configure found, which shadows a later -DCMAKE_LINKER.
 mkdir -p "$LB/CMakeFiles/4.4.0"; echo 'set(CMAKE_LINKER "/usr/bin/ld")' > "$LB/CMakeFiles/4.4.0/CMakeCCompiler.cmake"
 sed 's|ld64.lld$|ld|' "$LB/mavergreen-inputs.stamp" > "$T/old-stamp"; mv "$T/old-stamp" "$LB/mavergreen-inputs.stamp"
-KEEP_ROOT=1 run pre native || fail "the native build over an old llvm-build failed: $(cat "$T/pre.out")"
+KEEP_ROOT=1 run pre mavericks || fail "the mavericks build over an old llvm-build failed: $(cat "$T/pre.out")"
 both pre
 has pre "  -DCMAKE_LINKER=<T>/clang22n/bin/ld64.lld"
 lacks pre "configured over"
@@ -178,7 +178,7 @@ lacks pre "configured over"
 grep -q "removing llvm-build: what its stamp records" "$T/pre.out" || fail "pre: removed llvm-build without saying so: $(cat "$T/pre.out")"
 # A root whose llvm-build was configured by a build-llvm.sh that wrote no stamp.
 : > "$LB/kept.o"; rm -f "$LB/mavergreen-inputs.stamp"
-KEEP_ROOT=1 run nostamp native || fail "the native build over an unstamped llvm-build failed: $(cat "$T/nostamp.out")"
+KEEP_ROOT=1 run nostamp mavericks || fail "the mavericks build over an unstamped llvm-build failed: $(cat "$T/nostamp.out")"
 [ ! -e "$LB/kept.o" ] || fail "nostamp: kept an llvm-build that records no stamp"
 lacks nostamp "configured over"
 grep -qxF "source llvm-project $LLVM_REPO_URL $LLVM_SHA $LLVM_TARBALL_SHA256" "$LB/mavergreen-inputs.stamp" \
@@ -186,12 +186,12 @@ grep -qxF "source llvm-project $LLVM_REPO_URL $LLVM_SHA $LLVM_TARBALL_SHA256" "$
 # The same options, another commit's tarball (its files all older than the objects): started afresh.
 : > "$LB/kept.o"
 (export FAKE_LLVM_SOURCE="$LLVM_REPO_URL 1111111111111111111111111111111111111111 $LLVM_TARBALL_SHA256"
- KEEP_ROOT=1 run moved native) || fail "the native build over another commit's llvm-build failed: $(cat "$T/moved.out")"
+ KEEP_ROOT=1 run moved mavericks) || fail "the mavericks build over another commit's llvm-build failed: $(cat "$T/moved.out")"
 [ ! -e "$LB/kept.o" ] || fail "moved: kept an llvm-build built from another commit's source"
 lacks moved "configured over"
 
 echo "-- linux (a Linux uname): the seed's clang, the cmake on PATH, ldd; no otool, no shipyard-cmake"
-(export FAKE_UNAME=Linux; run linux cross) || fail "the linux build failed: $(cat "$T/linux.out")"
+(export FAKE_UNAME=Linux; run linux modern) || fail "the linux build failed: $(cat "$T/linux.out")"
 both linux
 has linux "fetch-linux-seed <T>/root/swift/work/linux-seed"
 has linux "  -DCMAKE_C_COMPILER=<T>/seed/usr/bin/clang"
@@ -203,26 +203,33 @@ lacks linux "otool"
 lacks linux "CMAKE_LIBTOOL"
 lacks linux "clang22n"
 lacks linux "=/usr/bin/clang"
-if (export FAKE_UNAME=Linux FAKE_LDD_PKG=1; run linuxpkg cross); then fail "linux: passed an lld that loads a library from /opt/pkg"; fi
+if (export FAKE_UNAME=Linux FAKE_LDD_PKG=1; run linuxpkg modern); then fail "linux: passed an lld that loads a library from /opt/pkg"; fi
 grep -q 'links a library from /opt/pkg' "$T/linuxpkg.out" || fail "linuxpkg: $(cat "$T/linuxpkg.out")"
 
-echo "-- linux in native mode (OS X 10.9's): refused before anything is fetched"
-if (export FAKE_UNAME=Linux; run linuxnative native); then fail "built native mode on Linux"; fi
-grep -qx 'FAIL: on Linux the mode is cross' "$T/linuxnative.out" || fail "linuxnative: $(cat "$T/linuxnative.out")"
+echo "-- linux in mavericks mode (OS X 10.9's): refused before anything is fetched"
+if (export FAKE_UNAME=Linux; run linuxnative mavericks); then fail "built mavericks mode on Linux"; fi
+grep -qx 'FAIL: on Linux the mode is modern' "$T/linuxnative.out" || fail "linuxnative: $(cat "$T/linuxnative.out")"
 lacks linuxnative "fetch_pinned_source"
 lacks linuxnative "fetch-linux-seed"
 lacks linuxnative "cmake"
 
 echo "-- an llvm-project where patch 0007 left no stable sort of a coroutine frame's allocas: refused, on every host"
-for h in cross:Darwin native:Darwin cross:Linux; do
+for h in modern:Darwin mavericks:Darwin modern:Linux; do
   if (export FAKE_NO_MARKER=0007 FAKE_UNAME="${h#*:}"; run no0007 "${h%:*}"); then fail "$h: built from an llvm-project without patch 0007"; fi
   grep -qx 'FAIL: llvm patch 0007 not applied' "$T/no0007.out" || fail "no0007 ($h): $(cat "$T/no0007.out")"
   lacks no0007 "cmake"
 done
 
 echo "-- a tarball pin that does not match: refused before anything is configured, naming the pin"
-if (FAKE_GOOD_SHA256=another run stale cross); then fail "built with a stale LLVM_TARBALL_SHA256"; fi
+if (FAKE_GOOD_SHA256=another run stale modern); then fail "built with a stale LLVM_TARBALL_SHA256"; fi
 grep -q 'pin-source-tarballs.sh and commit pins.env.s LLVM_TARBALL_SHA256' "$T/stale.out" || fail "stale: $(cat "$T/stale.out")"
 lacks stale "shipyard-cmake"
 lacks stale "patch "
+
+echo "-- a mode that is neither mavericks nor modern, shipyard's old native and cross among them: refused before anything is fetched"
+for m in sideways native cross; do
+  if run "bad$m" "$m"; then fail "ran in mode '$m'"; fi
+  grep -q "mode '$m' is neither mavericks nor modern" "$T/bad$m.out" || fail "bad mode $m: $(cat "$T/bad$m.out")"
+  [ ! -s "$T/bad$m.log" ] || fail "ran [$(head -1 "$T/bad$m.log")] before refusing $m"
+done
 echo "PASS"

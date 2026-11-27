@@ -8,7 +8,7 @@
 #                      beside themselves ("$(dirname "$0")/../msc.sh"), and in turn every shell file among them
 #                      names, the scripts themselves included. A variable that is not the repo's root (HERE, REPO,
 #                      _fls_here) counts only when it names a tracked *.sh: a function handed the root (lib.sh's
-#                      clang22_prefix "$MODE" "$HERE") runs scripts there, and a scratch dir's file
+#                      clang22_prefix "$_c22" "$HERE") runs scripts there, and a scratch dir's file
 #                      ("$_msc_probe/CMakeLists.txt") is not this repo's.
 #     shipyard/<path>  script-closure.sh's closure, in $SHIPYARD_SCRIPTS (the shipyard the job installed, so the
 #                      shipyard the build runs), of every script they name as "$SHIPYARD/<name>", and SHIPYARD_DATA

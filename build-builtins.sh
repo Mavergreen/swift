@@ -7,10 +7,10 @@
 # so C `@available` compiled by that clang links (its clang.cfg passes -Wl,-U,__availability_version_check:
 # see toolchain/clang.cfg). Why each knob: docs/superpowers/spikes/2026-09-27-rt-builtins-FINDINGS.md.
 # One recipe, two modes (MAVERICKS_MODE, else shipyard's mavericks_mode.sh), the same bytes from both:
-#   cross (CI, a modern Mac): mavericks-clang-22's CROSS toolchain (fetch-clang22.sh);
-#   native (OS X 10.9, self-host.sh): its NATIVE toolchain (CLANG22_PREFIX, default
+#   modern (CI, a modern Mac): mavericks-clang-22's CROSS toolchain (fetch-clang22.sh);
+#   mavericks (OS X 10.9, self-host.sh): its NATIVE toolchain (CLANG22_PREFIX, default
 #     /usr/local/mavergreen/clang22);
-#   a Linux host builds as cross mode does, with clang22's Linux archive (fetch-clang22.sh there).
+#   a Linux host builds as modern mode does, with clang22's Linux archive (fetch-clang22.sh there).
 #   All: that toolchain's llvm-libtool-darwin (on Linux its llvm-ar, below) and llvm-lipo make the archive, and its llvm-nm, llvm-lipo
 #   and llvm-ar read it back, so the archive is the same bytes on every host (Apple's libtool differs
 #   between them); the compat guard reads it with its llvm-lipo, llvm-otool, llvm-nm and
@@ -24,13 +24,18 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/msc.sh"    # -> $SHIPYARD (mavericks_mode.sh, fetch_sdk.sh)
 W="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$W"; cd "$W"
 MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
-case "$MODE" in cross|native) ;; *) echo "FAIL: mode '$MODE' is neither cross nor native"; exit 1 ;; esac
+case "$MODE" in mavericks|modern) ;;
+  native|cross) echo "FAIL: mode '$MODE' is shipyard's old name: the modes are mavericks and modern (is the installed shipyard older than v1.0.966?)"; exit 1 ;;
+  *) echo "FAIL: mode '$MODE' is neither mavericks nor modern"; exit 1 ;;
+esac
 [ "$(source_commit llvm-project)" = "$LLVM_SHA" ] \
   && grep -q "swiftlang's fork refuses every Apple-platform input" llvm-project/lld/MachO/InputFiles.cpp \
   && grep -q 'Mavergreen: extra flags for the Darwin builtins' llvm-project/compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake \
   && grep -q 'Mavergreen: a configure that names the macOS SDK' llvm-project/compiler-rt/cmake/base-config-ix.cmake \
   || { echo "FAIL: no patched llvm-project at $LLVM_SHA in $W -- run ./build-llvm.sh"; exit 1; }
-X="$(clang22_prefix "$MODE" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
+# clang22_prefix's argument names a clang22 product variant (cross or native), not the build mode.
+case "$MODE" in mavericks) _c22=native ;; *) _c22=cross ;; esac
+X="$(clang22_prefix "$_c22" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
 SDK109="$(sh "$SHIPYARD/fetch_sdk.sh")"
 B="$W/builtins-x86"
 A="$B/lib/darwin/libclang_rt.osx.a"
