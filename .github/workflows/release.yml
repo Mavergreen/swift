@@ -6,7 +6,9 @@ name: release
 # own Sparkle updater, sign all three, and attach the .pkgs + signed appcasts to one GitHub Release. Tags
 # ARE the version -- no `v` prefix; see VERSION.
 #
-# Fourteen jobs: `version` resolves the one version every job labels its pkgs with; `build-cross` builds the
+# Fifteen jobs: `version` derives the one version every job labels its pkgs with, and decides whether the run
+# publishes; `version-check`, on Linux, checks that version and, for a publishing run, its notes, before any
+# macOS runner starts; `build-cross` builds the
 # cross toolchain, its Swift half compiled by the swift.org compiler (CI's one seed), then the stdlib --
 # built once, by that cross toolchain -- and the runtime pkg; `build` then builds the native toolchain,
 # its Swift half compiled by build-cross's toolchain, and stages build-cross's stdlib and builtins in it;
@@ -39,7 +41,6 @@ name: release
 on:
   push:
     branches: ['**']          # regular build on every push -- surfaces breaks off the release path
-    tags: ['*-mavericks.*']   # tags ARE the version, no `v` prefix (see VERSION)
   workflow_dispatch:
     inputs:
       local_release:
@@ -51,7 +52,7 @@ permissions:
   contents: write
 
 # Only a pull_request supersedes -- keyed per ref, so a force-push replaces its own predecessor.
-# Everything else (a branch push, a *-mavericks.* tag, a workflow_dispatch) is keyed per RUN and is
+# Everything else (a branch push, a workflow_dispatch) is keyed per RUN and is
 # therefore alone in its group: never queued, never evicted, never cancelled.
 #
 # cancel-in-progress:false was never the protection it looked like: it protects the RUNNING job and
@@ -74,21 +75,23 @@ env:
   COMPILER_BUILD: build-llvm.sh build-builtins.sh build-toolchain.sh
 
 jobs:
-  # One version for the whole run: both build jobs label their pkgs with this one (resolve-version.sh
-  # reuses a written VERSION: "every job must agree"), and build-cross declares it as the release of the
-  # cross toolchain it builds the stdlib with.
-  # Linux: version.sh and derive-upstream-version.sh are shell and git, and install@v1 gives a Linux runner
-  # shipyard's scripts as it gives a Mac its pkg.
+  # One version for the whole run, derived once, here, by shipyard's release-version.sh from INGREDIENTS.md's
+  # "## Versioning" (port): both build jobs write it to VERSION and label their pkgs with it (package.sh reads that
+  # file back: "every job must agree"), and build-cross declares it as the release of the cross toolchain it builds
+  # the stdlib with.
+  # Linux: release-version.sh and the scripts/derive-upstream-version.sh it runs are shell and git, and install@v1
+  # gives a Linux runner shipyard's scripts as it gives a Mac its pkg.
   version:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
       publish: ${{ steps.ver.outputs.publish }}
+      mode: ${{ steps.ver.outputs.mode }}
     steps:
       - uses: actions/checkout@v7
         with:
           # The derived version orders this release against the existing *-mavericks.* tags, so the
-          # full history has to be here.
+          # full history has to be here (release-version.sh refuses a shallow clone).
           fetch-depth: 0
 
       # shipyard installs itself via its own action (HTTPS via the runner token): the pkg, which puts
@@ -97,55 +100,75 @@ jobs:
       - name: Install mavericks-shipyard
         uses: Mavergreen/shipyard/.github/actions/install@v1
 
-      # Derived, so there is nothing for a tag to disagree with. What this replaces -- "tag must equal
-      # the committed VERSION" -- made every release a commit-to-main then tag ritual, and the commit
-      # is the step branch protection denies to bots.
-      - name: Derive the upstream version from the pin
-        run: sh scripts/derive-upstream-version.sh
-
-      # Three ways to publish, matching the rest of the family:
-      #   - a *-mavericks.* tag: VER = the tag (a hand-cut release).
-      #   - workflow_dispatch(local_release=true): a REPACKAGE of the shipped upstream, N+1.
-      #     Dispatched by repackage-on-ingredient-bump.yml when an ingredient pin moves.
-      #   - a push to main whose upstream has no release yet: auto-cut N=1. version.sh says
-      #     RELEASE=yes exactly when this upstream has no tag, so a Renovate SWIFT_VERSION bump ships
-      #     with nothing extra to detect.
-      # Anything else builds and gates without publishing.
+      # Two ways to publish, matching the rest of the family:
+      #   - workflow_dispatch(local_release=true): release-mode.sh says local, a REPACKAGE of the shipped
+      #     upstream, N+1. Dispatched by repackage-on-ingredient-bump.yml when an ingredient pin moves.
+      #   - a push to main whose upstream has no release yet: auto, N=1. The derived tag does not exist
+      #     yet exactly when this upstream has no tag, so a Renovate SWIFT_VERSION bump ships with
+      #     nothing extra to detect.
+      # Anything else (auto, the derived tag already published) builds and gates without publishing.
       #
       # NOTE this does not weaken the acceptance rule above: publishing is still not acceptance.
       # A 10.9 user reaches this build through Sparkle, which is where real-hardware breakage shows.
-      - name: Resolve the version + decide whether this run publishes
+      - name: Derive the version + decide whether this run publishes
         id: ver
+        env:
+          LOCAL_RELEASE: ${{ inputs.local_release }}
         run: |
-          if [ "${GITHUB_REF_TYPE}" = tag ]; then
-            VER="${GITHUB_REF_NAME}"; PUBLISH=true
+          set -eu
+          mode="$(sh "$SHIPYARD_SCRIPTS/release-mode.sh")"
+          VER="$(sh "$SHIPYARD_SCRIPTS/release-version.sh" --product swift-runtime --mode "$mode")"
+          if [ "$mode" = local ]; then
+            PUBLISH=true
+          elif [ -z "$(git tag --list "$VER")" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            PUBLISH=true            # new upstream, first release
           else
-            mode=auto
-            if [ "${GITHUB_EVENT_NAME}" = workflow_dispatch ] && [ "${{ inputs.local_release }}" = "true" ]; then
-              mode=local
-            fi
-            out="$(sh "$SHIPYARD_SCRIPTS/version.sh" "$mode")"
-            VER="$(printf '%s\n' "$out" | sed -n 's/^FULL=//p')"
-            REL="$(printf '%s\n' "$out" | sed -n 's/^RELEASE=//p')"
-            if [ "$mode" = local ]; then
-              PUBLISH=true
-            elif [ "$REL" = yes ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-              PUBLISH=true            # new upstream, first release
-            else
-              PUBLISH=false
-            fi
+            PUBLISH=false
           fi
-          [ -n "$VER" ] || { echo "::error::no version resolved"; exit 1; }
+          [ -n "$VER" ] || { echo "::error::no version derived"; exit 1; }
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
-          echo "version=$VER publish=$PUBLISH"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "version=$VER publish=$PUBLISH mode=$mode"
+
+  # On Linux, before any macOS runner starts or anything publishes: the version job's version is the one
+  # release-version.sh derives at this commit, and a publishing run commits its notes
+  # (release-notes/swift-runtime/<tag>/changes/). build-cross needs it, and build, collect and publish
+  # reach it through build-cross.
+  version-check:
+    needs: [version]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: { contents: read }
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install mavericks-shipyard
+        uses: Mavergreen/shipyard/.github/actions/install@v1
+      - name: The version follows the declared scheme, with its notes when the run publishes
+        id: tag
+        env:
+          LOCAL_RELEASE: ${{ inputs.local_release }}
+          WANT: ${{ needs.version.outputs.version }}
+        run: |
+          set -eu
+          mode="$(sh "$SHIPYARD_SCRIPTS/release-mode.sh")"
+          t="$(sh "$SHIPYARD_SCRIPTS/release-version.sh" --product swift-runtime --mode "$mode")"
+          [ "$t" = "$WANT" ] || { echo "::error::release-version.sh derives $t here, but the version job derived $WANT"; exit 1; }
+          sh "$SHIPYARD_SCRIPTS/check-release-version.sh" --product swift-runtime --version "$t" --sha "$GITHUB_SHA" \
+            --mode "$mode" --publishing ${{ needs.version.outputs.publish == 'true' && 'yes' || 'no' }}
+          echo "tag=$t" >> "$GITHUB_OUTPUT"
 
   # The cross toolchain, the stdlib and the runtime: arm64, macOS 11.0, built natively on this arm64
   # runner with nothing cross-compiled, its compiler's Swift half compiled by the swift.org compiler --
   # the one seed. The stdlib every pkg ships is then built ONCE, by that cross toolchain; build stages the
   # native toolchain with these same bytes, and collect checks that it did.
   build-cross:
-    needs: [version]
+    needs: [version, version-check]
     runs-on: macos-26
     timeout-minutes: 355   # the same cap as build's: LLVM and swift-frontend, hours cold
     env:
@@ -527,6 +550,7 @@ jobs:
     outputs:
       version: ${{ needs.version.outputs.version }}
       publish: ${{ needs.version.outputs.publish }}
+      mode: ${{ needs.version.outputs.mode }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -654,6 +678,8 @@ jobs:
     uses: Mavergreen/shipyard/.github/workflows/publish-release.yml@v1
     with:
       version: ${{ needs.collect.outputs.version }}
+      product: swift-runtime
+      release-mode: ${{ needs.collect.outputs.mode }}
       artifact: swift
 
   # Acceptance on Mac OS X 10.9 (Mavergreen/mavericks-vm: a 10.9.5 guest without the Command Line Tools), every

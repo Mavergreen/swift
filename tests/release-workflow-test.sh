@@ -31,6 +31,10 @@
 #   crossing from another run must be checked for this commit and release.yml first. Every job on a macos-* runner,
 #   in any workflow, is declared in INGREDIENTS.md as `- macos-runner:<file>:<job>: <reason, exit>`, and no Linux
 #   job runs on one.
+#   The version comes from shipyard's release-version.sh alone, in release-mode.sh's mode, and a version-check job on
+#   Linux checks it with check-release-version.sh, in that mode, --publishing as the run decided; every macOS job and
+#   publish reach version-check through needs:, no pushed tag starts a run, and publish names product swift-runtime
+#   and the mode.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 T="$(mktemp -d "${TMPDIR:-/tmp}/release-workflow-test.XXXXXX")"
@@ -168,6 +172,83 @@ mutant() {
 mutant "a build skipped on a failed need" '/^    if: \${{ !cancelled() }}$/d'
 mutant "a guard that only warns" '/build, the required check, must not pass/{n;s/exit 1/true/;}'
 mutant "a guard after the checkout" '/^      - name: Fail unless version and build-cross succeeded$/,/^          exit 1$/d'
+
+# The version: derived once, by shipyard's release-version.sh from INGREDIENTS.md's "## Versioning", and checked
+# by a version-check job on Linux that every macOS job and publish reach through needs:. No pushed tag starts a
+# run, and publish names the product its version is declared for, and the mode it was derived in.
+versioning() {
+  awk '/^on:$/ { o = 1; next } /^[a-z]/ { o = 0 } o' "$1" > "$T/on"
+  if grep -qE '^ +tags(-ignore)?:' "$T/on"; then echo "a pushed tag starts a run"; return 1; fi
+  grep -v '^ *#' "$1" > "$T/live"
+  if grep -qE '(^|[^-[:alnum:]_])(resolve-|self-upstream-)?version\.sh' "$T/live"; then echo "a version comes from a deriver other than release-version.sh"; return 1; fi
+  awk '/^  version:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" > "$T/vj"
+  grep -qF 'mode="$(sh "$SHIPYARD_SCRIPTS/release-mode.sh")"' "$T/vj" \
+    && grep -qF 'VER="$(sh "$SHIPYARD_SCRIPTS/release-version.sh" --product swift-runtime --mode "$mode")"' "$T/vj" \
+    && grep -qxF '          LOCAL_RELEASE: ${{ inputs.local_release }}' "$T/vj" \
+    || { echo "the version job does not derive the version with release-version.sh in release-mode.sh's mode"; return 1; }
+  awk '/^  version-check:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" > "$T/vc"
+  [ -s "$T/vc" ] || { echo "release.yml has no version-check job"; return 1; }
+  grep -qx '    runs-on: ubuntu-latest' "$T/vc" || { echo "version-check does not run on Linux"; return 1; }
+  grep -qx '          fetch-depth: 0' "$T/vc" || { echo "version-check's checkout is shallow"; return 1; }
+  grep -qxF '          LOCAL_RELEASE: ${{ inputs.local_release }}' "$T/vc" \
+    && grep -qF 'mode="$(sh "$SHIPYARD_SCRIPTS/release-mode.sh")"' "$T/vc" \
+    && grep -qF 't="$(sh "$SHIPYARD_SCRIPTS/release-version.sh" --product swift-runtime --mode "$mode")"' "$T/vc" \
+    || { echo "version-check does not derive the version with release-version.sh in release-mode.sh's mode"; return 1; }
+  grep -qF 'sh "$SHIPYARD_SCRIPTS/check-release-version.sh" --product swift-runtime --version "$t" --sha "$GITHUB_SHA"' "$T/vc" \
+    && grep -qF "            --mode \"\$mode\" --publishing \${{ needs.version.outputs.publish == 'true' && 'yes' || 'no' }}" "$T/vc" \
+    || { echo "version-check does not run check-release-version.sh in the run's mode with --publishing"; return 1; }
+  awk '
+    /^jobs:$/ { j = 1; next }
+    j && /^  [a-z0-9-]+:$/ { n = substr($0, 3); sub(/:$/, "", n); jobs[n] = 1; order[++m] = n; next }
+    j && /^    needs: / { l = $0; sub(/^    needs: */, "", l); gsub(/[][,]/, " ", l); need[n] = l; next }
+    j && /^    runs-on: / { if ($0 ~ /(macos|xcode)-/) mac[n] = 1 }
+    END {
+      for (o = 1; o <= m; o++) {
+        s = order[o]
+        if (!(s in mac) && s != "publish") continue
+        delete seen; todo = need[s]; ok = 0
+        while (todo != "" && !ok) {
+          k = split(todo, q, " "); todo = ""
+          for (i = 1; i <= k; i++) {
+            if (q[i] == "version-check") ok = 1
+            if (q[i] in seen) continue
+            seen[q[i]] = 1; todo = todo " " need[q[i]]
+          }
+          sub(/^ +/, "", todo)
+        }
+        if (!ok) { print s " does not reach version-check through needs:"; exit 1 }
+      }
+      if (!("publish" in jobs)) { print "release.yml has no publish job"; exit 1 }
+    }' "$1" || return 1
+  awk '/^  publish:$/ { j = 1; next } /^  [a-z-]+:$/ { j = 0 } j' "$1" > "$T/pj"
+  grep -qx '      product: swift-runtime' "$T/pj" || { echo "publish does not name the product swift-runtime"; return 1; }
+  grep -qxF '      release-mode: ${{ needs.collect.outputs.mode }}' "$T/pj" \
+    && grep -qxF '      mode: ${{ needs.version.outputs.mode }}' "$1" \
+    || { echo "publish is not told the mode the version was derived in"; return 1; }
+}
+versioning "$W" > "$T/why" || fail "release.yml: $(cat "$T/why")"
+ver_mutant() { sed "$2" "$W" > "$T/mutant.yml"; cmp -s "$W" "$T/mutant.yml" && fail "the mutant where $1 changed nothing"
+  if versioning "$T/mutant.yml" > "$T/why"; then fail "accepted $1"; fi; echo "  refused $1: $(cat "$T/why")"; }
+ver_mutant "a pushed tag starts a run" "s/^    branches: \['\*\*'\] .*\$/&\\
+    tags: ['*-mavericks.*']/"
+ver_mutant "no version-check job" 's/^  version-check:$/  version-gone:/'
+ver_mutant "a version-check on macOS" '/^  version-check:$/,/^  build-cross:$/ s/^    runs-on: ubuntu-latest$/    runs-on: macos-26/'
+ver_mutant "a shallow version-check" '/^  version-check:$/,/^  build-cross:$/ s/^          fetch-depth: 0$/          fetch-depth: 1/'
+ver_mutant "a build-cross that does not wait for version-check" 's/^    needs: \[version, version-check\]$/    needs: [version]/'
+ver_mutant "a collect that reaches version-check through no need" 's/^    needs: \[version, build, build-cross\]$/    needs: [version]/'
+ver_mutant "a publish that needs nothing" '/^  publish:$/,/^  vm-test:$/ { /^    needs: /d; }'
+ver_mutant "a macOS job that needs nothing" 's/^  scan:$/  stray:\
+    runs-on: macos-26\
+    steps:\
+      - run: true\
+&/'
+ver_mutant "a publish with no product" '/^      product: swift-runtime$/d'
+ver_mutant "a publish of another product" 's/^      product: swift-runtime$/      product: swift-toolchain/'
+ver_mutant "a publish not told the mode" '/^      release-mode: \${{ needs.collect.outputs.mode }}$/d'
+ver_mutant "a check of the version in the default mode" 's/^            --mode "\$mode" --publishing /            --publishing /'
+ver_mutant "a check that ignores whether the run publishes" "s/ --publishing \${{ needs.version.outputs.publish == 'true' \&\& 'yes' || 'no' }}\$/ --publishing no/"
+ver_mutant "a dispatch that is never local" '/^  version:$/,/^  version-check:$/ { /^          LOCAL_RELEASE: /d; }'
+ver_mutant "a version from version.sh" 's|VER="$(sh "$SHIPYARD_SCRIPTS/release-version.sh" --product swift-runtime --mode "$mode")"|VER="$(sh "$SHIPYARD_SCRIPTS/version.sh" "$mode" \| sed -n "s/^FULL=//p")"|'
 # The Linux runtime beside build-cross, and the equivalence job's comparison of the two runtime pkgs: warnings, never
 # a failure, and off the release's path (neither collect nor publish waits for it).
 linux() {

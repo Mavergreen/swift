@@ -415,10 +415,21 @@ scripts/pin-source-tarballs.sh` on the branch does by hand what it does, and `--
 generated archives have been byte-stable (10.9's curl and a modern Mac's fetched the same SHA-256s); if
 GitHub ever regenerates them, the fetch fails rather than build other bytes.
 
+## Versioning
+
+- port
+
+One tag, `<upstream>-mavericks.N`, names all three pkgs, so one entry covers the repo. `UPSTREAM_VERSION`
+is not committed: shipyard's `release-version.sh` makes it with `scripts/derive-upstream-version.sh`
+from `SWIFT_VERSION` in `pins.env`. `release.yml` derives the version once, with that script and
+`--product swift-runtime`, and its `version-check` job checks it, and a publishing run's notes under
+`release-notes/swift-runtime/<tag>/`, before any macOS runner starts. A push to main runs in mode `auto`; a
+`local_release=true` dispatch runs in mode `local`, which is the only way to cut `-mavericks.(N+1)`.
+
 ## How a bump reaches a release
 
-- **`SWIFT_VERSION` moved** → a new upstream. `version.sh` reports `RELEASE=yes` because that upstream
-  has no tag yet, so the push to main auto-cuts `-mavericks.1`.
+- **`SWIFT_VERSION` moved** → a new upstream. `release-version.sh` derives `-mavericks.1`, a tag that
+  does not exist yet, so the push to main auto-cuts it.
 - **a Swift bump's tarball SHA-256s** move with it, in the same push: still a new upstream.
 - **any other pin in `pins.env`, or anything under `patches/`, moved** → an ingredient bump.
   `repackage-on-ingredient-bump.yml` dispatches `release.yml` with `local_release=true`, which cuts
