@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- mavericks-clang-22 compiles it: the CROSS toolchain on a modern arm64 Mac, the NATIVE one on OS X 10.9
+# platform: host-agnostic -- mavericks-clang-22 compiles it: the CROSS toolchain on a modern arm64 Mac, the NATIVE one on OS X 10.9, its Linux archive on Linux
 # build-builtins.sh — compiler-rt's builtins for OS X 10.9: libclang_rt.osx.a (x86_64, minOS 10.9, the
 # 10.9 SDK), from the pinned llvm-project that build-llvm.sh checked out and patched. The runtime links
 # it (build.sh, through a -resource-dir, so the driver puts it last) for __isPlatformVersionAtLeast,
@@ -7,11 +7,12 @@
 # so C `@available` compiled by that clang links (its clang.cfg passes -Wl,-U,__availability_version_check:
 # see toolchain/clang.cfg). Why each knob: docs/superpowers/spikes/2026-09-27-rt-builtins-FINDINGS.md.
 # One recipe, two modes (MAVERICKS_MODE, else shipyard's mavericks_mode.sh), the same bytes from both:
-#   cross (CI, a modern Mac): mavericks-clang-22's CROSS toolchain (fetch-clang22.sh);
-#   native (OS X 10.9, self-host.sh): its NATIVE toolchain (CLANG22_PREFIX, default
-#     /usr/local/mavergreen/clang22).
-#   Both: that toolchain's llvm-libtool-darwin and llvm-lipo make the archive, and its llvm-nm, llvm-lipo
-#   and llvm-ar read it back, so the archive is the same bytes on both hosts (Apple's libtool differs
+#   modern (CI, a modern Mac): mavericks-clang-22's CROSS toolchain (fetch-clang22.sh);
+#   mavericks (OS X 10.9, self-host.sh): its NATIVE toolchain (CLANG22_PREFIX, default
+#     /usr/local/mavergreen/clang22);
+#   a Linux host builds as modern mode does, with clang22's Linux archive (fetch-clang22.sh there).
+#   All: that toolchain's llvm-libtool-darwin (on Linux its llvm-ar, below) and llvm-lipo make the archive, and its llvm-nm, llvm-lipo
+#   and llvm-ar read it back, so the archive is the same bytes on every host (Apple's libtool differs
 #   between them); the compat guard reads it with its llvm-lipo, llvm-otool, llvm-nm and
 #   llvm-strings, never the Command Line Tools', which OS X 10.9 has only as stubs without them.
 # Run after build-llvm.sh. Output: $SWIFT_WORK/builtins-x86/lib/darwin/libclang_rt.osx.a.
@@ -19,17 +20,22 @@
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/pins.env"
-. "$HERE/lib.sh"    # -> $SWIFT_BUILD, prefix_map_flags, clang22_prefix
+. "$HERE/lib.sh"    # -> $SWIFT_BUILD, prefix_map_flags, clang22_prefix, shipyard_cmake
 . "$HERE/msc.sh"    # -> $SHIPYARD (mavericks_mode.sh, fetch_sdk.sh)
 W="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$W"; cd "$W"
 MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
-case "$MODE" in cross|native) ;; *) echo "FAIL: mode '$MODE' is neither cross nor native"; exit 1 ;; esac
+case "$MODE" in mavericks|modern) ;;
+  native|cross) echo "FAIL: mode '$MODE' is shipyard's old name: the modes are mavericks and modern (is the installed shipyard older than v1.0.966?)"; exit 1 ;;
+  *) echo "FAIL: mode '$MODE' is neither mavericks nor modern"; exit 1 ;;
+esac
 [ "$(source_commit llvm-project)" = "$LLVM_SHA" ] \
   && grep -q "swiftlang's fork refuses every Apple-platform input" llvm-project/lld/MachO/InputFiles.cpp \
   && grep -q 'Mavergreen: extra flags for the Darwin builtins' llvm-project/compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake \
   && grep -q 'Mavergreen: a configure that names the macOS SDK' llvm-project/compiler-rt/cmake/base-config-ix.cmake \
   || { echo "FAIL: no patched llvm-project at $LLVM_SHA in $W -- run ./build-llvm.sh"; exit 1; }
-X="$(clang22_prefix "$MODE" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
+# clang22_prefix's argument names a clang22 product variant (cross or native), not the build mode.
+case "$MODE" in mavericks) _c22=native ;; *) _c22=cross ;; esac
+X="$(clang22_prefix "$_c22" "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 ($MODE)"; exit 1; }
 SDK109="$(sh "$SHIPYARD/fetch_sdk.sh")"
 B="$W/builtins-x86"
 A="$B/lib/darwin/libclang_rt.osx.a"
@@ -70,12 +76,38 @@ NO_SDKS=""
 for s in iphoneos iphonesimulator watchos watchsimulator appletvos appletvsimulator xros xrsimulator; do
   NO_SDKS="$NO_SDKS -DDARWIN_${s}_CACHED_SYSROOT=/var/empty"
 done
+mkdir -p "$B"
+LIBTOOL="$X/llvm-libtool-darwin"
+HOST_ARGS=""
+if [ "$(uname -s)" = Linux ]; then
+  # platform: on a Linux host CMake takes the target for Linux, so compiler-rt would build no Darwin builtins:
+  #           it is told the target is Darwin, which makes it APPLE.
+  HOST_ARGS="-DCMAKE_SYSTEM_NAME=Darwin -DCMAKE_SYSTEM_PROCESSOR=$ARCH"
+  # platform: clang22's Linux archive ships no llvm-libtool-darwin (shipyard asked clang-22 to add it,
+  #           2026-11-22). UseLibtool.cmake runs CMAKE_LIBTOOL as `-static -o <archive> <objects>`; this
+  #           stand-in makes that archive with clang22's llvm-ar instead: the objects appended in order
+  #           (q, as libtool keeps two members of one name), darwin format, a symbol table, every member
+  #           owned and dated 0 (D). Those are llvm-libtool-darwin's bytes, member for member: the 167
+  #           objects of this archive's x86_64 slice archived both ways by clang22 22.1.8-mavericks.21
+  #           and .22 on a Mac are the same bytes. It answers UseLibtool.cmake's -V probe with nothing,
+  #           as llvm-libtool-darwin's version names no cctools.
+  if [ ! -x "$LIBTOOL" ]; then
+    LIBTOOL="$B/llvm-ar-as-libtool"
+    printf '%s\n' '#!/bin/sh' \
+      '# llvm-libtool-darwin -static -o <archive> <objects>, made by llvm-ar (build-builtins.sh writes this)' \
+      '[ "${1:-}" = -V ] && exit 0' \
+      '[ "${1:-}" = -static ] && [ "${2:-}" = -o ] && [ $# -ge 3 ] || { echo "llvm-ar-as-libtool: usage: -static -o <archive> <objects>" >&2; exit 2; }' \
+      'a=$3; shift 3; rm -f "$a" || exit 1' \
+      "exec \"$X/llvm-ar\" --format=darwin qcsD \"\$a\" \"\$@\"" > "$LIBTOOL"
+    chmod 755 "$LIBTOOL"
+  fi
+fi
 # shellcheck disable=SC2046,SC2086  # space-free words
-shipyard-cmake -G Ninja -S llvm-project/compiler-rt -B "$B" \
+shipyard_cmake -G Ninja -S llvm-project/compiler-rt -B "$B" \
   $(apple_probe_answers "$X") -DCMAKE_LINKER="$X/ld64.lld" $NO_SDKS -DDARWIN_macosx_OVERRIDE_SDK_VERSION="$SDKV" \
-  -DCOMPILER_RT_DARWIN_BUILTIN_EXTRA_CFLAGS="$PM" \
+  $HOST_ARGS -DCOMPILER_RT_DARWIN_BUILTIN_EXTRA_CFLAGS="$PM" \
   -DCMAKE_C_COMPILER="$X/clang" -DCMAKE_CXX_COMPILER="$X/clang++" -DCMAKE_ASM_COMPILER="$X/clang" \
-  -DCMAKE_LIBTOOL="$X/llvm-libtool-darwin" -DCMAKE_LIPO="$X/llvm-lipo" \
+  -DCMAKE_LIBTOOL="$LIBTOOL" -DCMAKE_LIPO="$X/llvm-lipo" \
   -DCMAKE_OSX_SYSROOT="$SDK109" -DCMAKE_OSX_ARCHITECTURES="$ARCH" -DCMAKE_OSX_DEPLOYMENT_TARGET="$DEPLOYMENT" \
   -DCMAKE_IGNORE_PREFIX_PATH=/opt/pkg -DLLVM_ENABLE_LIBXML2=OFF \
   -DDARWIN_macosx_CACHED_SYSROOT="$SDK109" \
@@ -103,7 +135,7 @@ for s in ___isPlatformVersionAtLeast ___isPlatformOrVariantPlatformVersionAtLeas
 done
 # platform: the archive is fat (one slice); llvm-ar reads only a thin one.
 "$X/llvm-lipo" -thin "$ARCH" "$A" -output "$B/thin.a"
-# Every member dated and owned 0 (llvm-libtool-darwin's default): read in UTC, 1970's first minute.
+# Every member dated and owned 0 (llvm-libtool-darwin's default, llvm-ar's D): read in UTC, 1970's first minute.
 TV="$(TZ=UTC0 "$X/llvm-ar" tv "$B/thin.a")" && [ -n "$TV" ] || { echo "FAIL: llvm-ar cannot list $B/thin.a"; exit 1; }
 DATED="$(printf '%s\n' "$TV" | awk '$2 != "0/0" || $7 != "1970"')"
 [ -z "$DATED" ] || { printf '%s\n' "$DATED"; echo "FAIL: the members of $A above keep a date or owner, so no two builds are the same bytes"; exit 1; }

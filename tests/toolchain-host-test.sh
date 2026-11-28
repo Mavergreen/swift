@@ -3,7 +3,7 @@
 # usage: sh tests/toolchain-host-test.sh
 #   lib.sh's helpers for building a toolchain for either host: toolchain_host_select must name each
 #   host's build dirs, checkout, product and payload and refuse any other host; compiler_patches must
-#   give arm64 every patch but 0002 and x86_64 every one, in order; toolchain_digest must hash every
+#   give x86_64 every patch but 0006, arm64 every one but 0002 and 0006, and linux every one but 0002, in order; toolchain_digest must hash every
 #   file of the stdlib, shims, apinotes, Recaulk importer, builtins and Recaulk trees the two toolchain pkgs share, sorted, and fail on a
 #   missing anchor file, a link or a path with a space; toolchain_digests_agree must accept only two
 #   equal, whole digest lines, and name what differs.
@@ -27,9 +27,11 @@ grep -q "not 'x86'" "$T/err" || fail "did not name the bad host: $(cat "$T/err")
 
 echo "-- compiler_patches: the repo's patches/compiler, per host"
 got="$(compiler_patches x86_64 "$REPO/patches/compiler" | sed 's|.*/||' | tr '\n' ' ')"
-[ "$got" = "0001-accept-10.9-sdk.patch 0002-hosttools-rpath-loader-path.patch 0003-runtime-versions-macos-10.9.patch 0004-escaping-closure-check-filename-length.patch 0005-isolation-default-arg-caller-side.patch 0006-imported-property-objc-type-from-header.patch " ] || fail "x86_64 takes [$got]"
+[ "$got" = "0001-accept-10.9-sdk.patch 0002-hosttools-rpath-loader-path.patch 0003-runtime-versions-macos-10.9.patch 0004-escaping-closure-check-filename-length.patch 0005-isolation-default-arg-caller-side.patch 0007-imported-property-objc-type-from-header.patch " ] || fail "x86_64 takes [$got]"
 got="$(compiler_patches arm64 "$REPO/patches/compiler" | sed 's|.*/||' | tr '\n' ' ')"
-[ "$got" = "0001-accept-10.9-sdk.patch 0003-runtime-versions-macos-10.9.patch 0004-escaping-closure-check-filename-length.patch 0005-isolation-default-arg-caller-side.patch 0006-imported-property-objc-type-from-header.patch " ] || fail "arm64 takes [$got]"
+[ "$got" = "0001-accept-10.9-sdk.patch 0003-runtime-versions-macos-10.9.patch 0004-escaping-closure-check-filename-length.patch 0005-isolation-default-arg-caller-side.patch 0007-imported-property-objc-type-from-header.patch " ] || fail "arm64 takes [$got]"
+got="$(compiler_patches linux "$REPO/patches/compiler" | sed 's|.*/||' | tr '\n' ' ')"
+[ "$got" = "0001-accept-10.9-sdk.patch 0003-runtime-versions-macos-10.9.patch 0004-escaping-closure-check-filename-length.patch 0005-isolation-default-arg-caller-side.patch 0006-linux-libstdcxx-no-stdlib-target.patch 0007-imported-property-objc-type-from-header.patch " ] || fail "linux takes [$got]"
 mkdir -p "$T/p"; for n in 0001-a 0002-b 0003-c; do : > "$T/p/$n.patch"; done
 got="$(compiler_patches arm64 "$T/p" | sed 's|.*/||' | tr '\n' ' ')"
 [ "$got" = "0001-a.patch 0003-c.patch " ] || fail "arm64 takes [$got] of 0001-0003: a later patch is both hosts'"

@@ -22,7 +22,7 @@
 #   4. --compare <prefix>: stage 2's toolchain and <prefix> are the same files. With the installed
 #      release as both seed and <prefix>, and this checkout at that release's tag, that verifies the
 #      release: what it ships is what its source builds, on this Mac.
-# Before anything runs it refuses cross mode, an installed mavericks-clang-22 whose pkg receipt is not
+# Before anything runs it refuses modern mode and any unknown mode, an installed mavericks-clang-22 whose pkg receipt is not
 # pins.env's CLANG22_VERSION (a CLANG22_PREFIX set by hand skips that check, warning), an empty or
 # toolchain-less --compare, and a seed that is no Swift toolchain this Mac can build with (its frontend
 # must run here, its swiftc be executable, its lib/swift a staged toolchain's stdlib). Every stage gets
@@ -46,7 +46,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"    # -> $SWIFT_BUILD, host_swiftc_stamp, toolchain_cmp
 . "$HERE/msc.sh"    # -> $SHIPYARD (mavericks_mode.sh)
 MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
-[ "$MODE" = native ] || { echo "FAIL: self-host.sh rebuilds the toolchain that runs on OS X 10.9, on 10.9 (mode is '$MODE'); a modern Mac builds it with build-toolchain.sh, as CI does" >&2; exit 2; }
+case "$MODE" in mavericks|modern) ;; *) echo "FAIL: mode '$MODE' is neither mavericks nor modern" >&2; exit 2 ;; esac
+[ "$MODE" = mavericks ] || { echo "FAIL: self-host.sh rebuilds the toolchain that runs on OS X 10.9, on 10.9 (mode is '$MODE'); a modern Mac builds it with build-toolchain.sh, as CI does" >&2; exit 2; }
 # The installed clang22 compiles the C++ half and the builtins, so another release of it builds other
 # bytes, which only --compare would show, hours later: its pkg receipt must be pins.env's release. A
 # CLANG22_PREFIX set by hand names a clang22 no receipt vouches for; that runs, warned.

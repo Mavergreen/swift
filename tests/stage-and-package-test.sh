@@ -1,7 +1,9 @@
 #!/bin/sh
-# platform: macOS-only -- pkgbuild builds, and pkgutil expands, the pkg under test
+# platform: macOS-only -- cc builds the Mach-O fixtures, and pkgutil, lsbom and PlistBuddy read the pkg under test
 # usage: sh tests/stage-and-package-test.sh   (from the repo root, as run-repo-tests.sh runs it)
-#   Stages a fake build with scripts/stage-runtime.sh, packages it with package.sh, and checks the
+#   On any host, checks package.sh builds the pkg through shipyard's seams (build_component_pkg.sh and
+#   set_install_floor.sh), never pkgbuild or productbuild. Then, on a Mac,
+#   stages a fake build with scripts/stage-runtime.sh, packages it with package.sh, and checks the
 #   payload is exactly the runtime prefix and its manifest (plus, when an updater is staged, the
 #   updater and LaunchAgent the registry derives), and passes artifact conformance with no deviation; and that
 #   the compat guard, run over the staged lib/swift/*.dylib as release.yml runs it, passes, the
@@ -9,10 +11,18 @@
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO"
-command -v pkgbuild >/dev/null 2>&1 || { echo "no pkgbuild (not macOS) -- skipping"; exit 77; }
-. "$REPO/msc.sh"
-
 fail() { echo "FAIL: $*" >&2; exit 1; }
+
+echo "-- package.sh builds the pkg through shipyard's seams, on any host: never pkgbuild or productbuild"
+grep -q '^sh "\$SHIPYARD/build_component_pkg.sh" ' package.sh || fail "package.sh does not build its component with shipyard's build_component_pkg.sh"
+grep -q '^sh "\$SHIPYARD/set_install_floor.sh" ' package.sh || fail "package.sh does not wrap its component with shipyard's set_install_floor.sh"
+if grep -v '^[[:space:]]*#' package.sh | grep -Eq '(^|[^[:alnum:]_-])(pkgbuild|productbuild)([^[:alnum:]_-]|$)'; then
+  fail "package.sh runs pkgbuild or productbuild: $(grep -v '^[[:space:]]*#' package.sh | grep -E 'pkgbuild|productbuild')"
+fi
+head -n 2 package.sh | grep -q '^# platform: host-agnostic' || fail "package.sh does not declare itself host-agnostic"
+
+command -v pkgutil >/dev/null 2>&1 || { echo "no pkgutil (not macOS) -- skipping the rest"; exit 77; }
+. "$REPO/msc.sh"
 [ -f scripts/stage-runtime.sh ] || fail "no scripts/stage-runtime.sh"
 T="$(mktemp -d "${TMPDIR:-/tmp}/stage-and-package.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
@@ -90,7 +100,13 @@ mkdir -p "$T/out/usr/lib/swift" "$T/out/usr/local/share/doc/mavericks-swift-runt
 : > "$T/out/$I/lib/swift/libswiftCore.dylib"
 : > "$T/out/$I/LICENSE.txt"
 : > "$T/out/LICENSE.txt"
-sh scripts/stage-runtime.sh "$T/built" "$T/out" LICENSE NOTICE
+# A pkg installs each entry's mode as staged, the payload root's onto / itself, so staging writes 0755 and
+# 0644 whatever the host's umask (a Linux desktop's is 002) or the built files' and OUT's own modes.
+chmod 775 "$T/out" "$T"/built/*.dylib
+( umask 002 && sh scripts/stage-runtime.sh "$T/built" "$T/out" LICENSE NOTICE ) || fail "stage-runtime.sh failed under umask 002"
+writable="$(cd "$T/out" && find . usr ! -type l \( -perm -020 -o -perm -002 \) 2>/dev/null | sort -u)"
+[ -z "$writable" ] || fail "stage-runtime.sh, under umask 002, staged group- or world-writable entries:
+$writable"
 got="$(cd "$T/out" && find usr LICENSE.txt Library 2>/dev/null | sort)"
 want="$(printf '%s\n' Library Library/keep usr usr/local usr/local/mavergreen "$P" "$P/lib" \
   "$P/lib/swift" "$P/lib/swift/libswiftCompatibilitySpan.dylib" "$P/lib/swift/libswiftCore.dylib" "$P/lib/swift/libswiftDarwin.dylib" \
@@ -144,6 +160,26 @@ want_payload="$(printf '%s\n' . ./usr ./usr/local ./usr/local/mavergreen "./$P" 
   "./$P/lib/swift/libswiftCoreFoundation.dylib" "./$P/lib/swift/libswiftCoreGraphics.dylib" "./$P/lib/swift/libswiftFoundation.dylib" \
   "./$P/lib/swift/libswiftDispatch.dylib" "./$P/lib/swift/libswiftObjectiveC.dylib" "./$P/lib/swift/libswiftSwiftOnoneSupport.dylib" "./$P/lib/swift/libswift_Concurrency.dylib" \
   "./$P/share" "./$P/share/doc" "./$P/share/doc/LICENSE.txt" "./$P/share/doc/NOTICE" "./$P/mavergreen.plist" | sort)"
+
+echo "-- package.sh refuses a payload with a group- or world-writable entry, naming it"
+cp -R "$T/out" "$T/out-gw"; chmod g+w "$T/out-gw/$P/share/doc/NOTICE"
+rc=0; OUT="$T/out-gw" DIST="$T/dist-gw" UPD_APP=/nonexistent sh ./package.sh > "$T/gw.log" 2>&1 || rc=$?
+[ "$rc" -ne 0 ] || fail "package.sh packaged a group-writable NOTICE"
+grep -q "$P/share/doc/NOTICE" "$T/gw.log" || fail "package.sh refused, but did not name the writable entry: $(cat "$T/gw.log")"
+[ -z "$(ls "$T/dist-gw"/swift-runtime-*.pkg 2>/dev/null)" ] || fail "package.sh left a pkg behind after refusing a writable entry"
+
+echo "-- package.sh checks the final tree: a group-writable entry the product staging step adds is refused too"
+# shipyard's stage_product.sh adds the manifest, the updater and its LaunchAgent; a copy of the scripts whose
+# stage_product.sh leaves the manifest group-writable stands in for a staging step that does.
+cp -R "$SHIPYARD" "$T/shipyard-gw"
+mv "$T/shipyard-gw/stage_product.sh" "$T/shipyard-gw/stage_product.real.sh"
+printf '%s\n' '#!/bin/sh' 'set -eu' 'sh "$(dirname "$0")/stage_product.real.sh" "$@"' \
+  "chmod g+w \"$T/out-gw2/$P/mavergreen.plist\"" > "$T/shipyard-gw/stage_product.sh"
+rm -rf "$T/out-gw2"; cp -R "$T/out" "$T/out-gw2"
+rc=0; SHIPYARD_SCRIPTS="$T/shipyard-gw" OUT="$T/out-gw2" DIST="$T/dist-gw2" UPD_APP=/nonexistent sh ./package.sh > "$T/gw2.log" 2>&1 || rc=$?
+[ "$rc" -ne 0 ] || fail "package.sh packaged a manifest the staging step left group-writable"
+grep -q "$P/mavergreen.plist" "$T/gw2.log" || fail "package.sh refused, but did not name the writable manifest: $(cat "$T/gw2.log")"
+[ -z "$(ls "$T/dist-gw2"/swift-runtime-*.pkg 2>/dev/null)" ] || fail "package.sh left a pkg behind after refusing a writable manifest"
 
 echo "-- package.sh stages the updater under the identity shipyard's registry derives for swift-runtime"
 U="Library/Application Support/Mavergreen/swift-runtime-updater.app"
@@ -211,6 +247,8 @@ conform() {
   facts="$(sh "$SHIPYARD/artifact-facts.sh" "$1" "$version")" || fail "artifact-facts.sh failed on $1"
   printf '%s\n' "$facts" | grep -qx end-of-facts || fail "artifact-facts.sh on $1 stopped early"
   printf '%s\n' "$facts" | sh "$SHIPYARD/check-artifact-conformance.sh" || fail "artifact conformance failed on $1"
+  # Every bundle, the updater's included, installs in place: no relocation, no version check that skips it.
+  sh "$SHIPYARD/assert_pkg_installs_in_place.sh" "$1"/swift-runtime-*.pkg || fail "a bundle in $1's pkg does not install in place"
 }
 conform "$T/dist"
 sh "$SHIPYARD/stand-in-feeds.sh" "$T/dist-upd" "$version" || fail "stand-in-feeds.sh failed"

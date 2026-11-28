@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- BSD sed -i '', otool (llvm-otool on 10.9) and shipyard-cmake; runs on a modern Mac and on OS X 10.9
+# platform: host-agnostic -- otool (llvm-otool on 10.9) and shipyard-cmake on a modern Mac and on OS X 10.9; ldd and the host's cmake on Linux
 # build-llvm.sh — build a RELOCATABLE LLVM build-support tree for the Swift stdlib build, and the lld
 # that links the runtime.
 #
@@ -7,10 +7,12 @@
 # from its own location) rather than a build tree (absolute paths baked in at configure time). And
 # $SWIFT_WORK/llvm-build/bin/ld64.lld, which build.sh links the runtime with in both modes, so a CI
 # build and an OS X 10.9 build of the same release are the same bytes.
-# Runs on a modern Mac (cross mode: /usr/bin/clang) and on OS X 10.9 (native mode: mavericks-clang-22's
+# Runs on a modern Mac (modern mode: /usr/bin/clang) and on OS X 10.9 (mavericks mode: mavericks-clang-22's
 # native clang, with the fetched 10.9 SDK, since that pkg leaves its own SDKs/ empty, and its
 # llvm-libtool-darwin, llvm-ar, llvm-ranlib and llvm-otool, since 10.9's are the Command Line Tools');
 # MAVERICKS_MODE overrides shipyard's mavericks_mode.sh, HOST_TOOLS_CC and HOST_TOOLS_CXX the compiler.
+# On Linux (where shipyard's mode is modern) the compiler is the clang of swift.org's Linux toolchain,
+# fetch-linux-seed.sh's, extracted under the build root, for build-toolchain.sh --host linux.
 # The source is GitHub's tarball of LLVM_SHA, verified by LLVM_TARBALL_SHA256 (no git), patched with the
 # OS's patch; LLVM's version stamp is forced to that commit and its repository.
 # Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, MAVERICKS_MODE, HOST_TOOLS_CC, HOST_TOOLS_CXX, CLANG22_PREFIX,
@@ -25,6 +27,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="${SWIFT_WORK:-$SWIFT_BUILD/work}"; mkdir -p "$ROOT"; cd "$ROOT"
 OUT="$SWIFT_BUILD/out/llvm"
 
+MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
+HOST_OS="$(uname -s)"
+case "$MODE" in mavericks|modern) ;; *) echo "FAIL: mode '$MODE' is neither mavericks nor modern"; exit 1 ;; esac
+# platform: mavericks mode is OS X 10.9's; a Linux host builds as modern mode does, with the Linux seed's clang.
+case "$HOST_OS:$MODE" in
+  Linux:mavericks) echo "FAIL: on Linux the mode is modern"; exit 1 ;;
+esac
+
 echo "==> 1. pinned llvm-project source (GitHub's tarball of LLVM_SHA, verified by LLVM_TARBALL_SHA256)"
 check_release_pin llvm-project "$LLVM_SWIFT_RELEASE" "$LLVM_TAG" "$LLVM_SHA" "$LLVM_REPO_URL" || exit 1
 # Extracted afresh every run, so the patches below start from upstream's bytes.
@@ -36,18 +46,24 @@ grep -q 'absent before macOS 10.10' llvm-project/llvm/lib/CAS/OnDiskCommon.cpp |
 grep -q 'LLVM_LINKER_IS_LLD AND NOT APPLE' llvm-project/llvm/cmake/modules/AddLLVM.cmake || { echo "FAIL: llvm patch 0002 not applied"; exit 1; }
 grep -q "swiftlang's fork refuses every Apple-platform input" llvm-project/lld/MachO/InputFiles.cpp || { echo "FAIL: llvm patch 0003 not applied"; exit 1; }
 grep -q 'Mavergreen: extra flags for the Darwin builtins' llvm-project/compiler-rt/cmake/Modules/CompilerRTDarwinUtils.cmake || { echo "FAIL: llvm patch 0004 not applied"; exit 1; }
+grep -q 'Mavergreen: a uname release is a Darwin version only on a Darwin host' llvm-project/llvm/lib/TargetParser/Unix/Host.inc || { echo "FAIL: llvm patch 0006 not applied"; exit 1; }
+grep -qF 'llvm::stable_sort(FrameData.Allocas' llvm-project/llvm/lib/Transforms/Coroutines/CoroFrame.cpp || { echo "FAIL: llvm patch 0007 not applied"; exit 1; }
 
 echo "==> 2. configure + build TableGen and lld (libswiftCore does not link LLVM; lld links it)"
 # spec: 2026-09-13 shipyard CMake flag day -- the .cmake files installed in step 3 ARE the shipped
 #       product, and this repo's build.sh consumes them with shipyard-cmake. Generating them
 #       with one CMake and consuming them with another is the mismatch this repo exists to prevent,
 #       so the same pinned shipyard-cmake writes them.
-MODE="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
-case "$MODE" in
-  cross) CC_="${HOST_TOOLS_CC:-/usr/bin/clang}"; CXX_="${HOST_TOOLS_CXX:-/usr/bin/clang++}" ;;
+case "$HOST_OS:$MODE" in
+  # platform: Linux has no /usr/bin/clang; the Linux seed's clang is the one build-toolchain.sh --host linux
+  #           compiles with too.
+  Linux:modern) SEED="$(sh "$HERE/fetch-linux-seed.sh" "$ROOT/linux-seed")" || { echo "FAIL: could not fetch the swift.org Linux seed"; exit 1; }
+               CC_="${HOST_TOOLS_CC:-$SEED/bin/clang}"; CXX_="${HOST_TOOLS_CXX:-$SEED/bin/clang++}" ;;
+  *:modern) CC_="${HOST_TOOLS_CC:-/usr/bin/clang}"; CXX_="${HOST_TOOLS_CXX:-/usr/bin/clang++}" ;;
   # platform: OS X 10.9's Apple clang is too old to build LLVM; mavericks-clang-22's static libc++
   #           fills what 10.9's libc++ lacks. Its pkg leaves SDKs/ empty, so the sysroot is named.
-  native) X="$(clang22_prefix native "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 (native)"; exit 1; }
+  # clang22_prefix's argument names a clang22 product variant (native), not the build mode.
+  *:mavericks) X="$(clang22_prefix native "$HERE")/bin" || { echo "FAIL: no usable mavericks-clang-22 (mavericks)"; exit 1; }
           CC_="${HOST_TOOLS_CC:-$X/clang}"; CXX_="${HOST_TOOLS_CXX:-$X/clang++}"
           SDK109="$(sh "$SHIPYARD/fetch_sdk.sh")" || { echo "FAIL: could not fetch the pinned 10.9 SDK"; exit 1; }
           # platform: OS X 10.9's libtool, ar, ranlib and otool are the Command Line Tools', stubs
@@ -56,7 +72,7 @@ case "$MODE" in
           # platform: a configure over a CMakeCache.txt hands LLVM's config.guess no CC, so it tries cc,
           #           gcc, c89 and c99, on OS X 10.9 the Command Line Tools' stubs: it gets the clang it configures with.
           CC_FOR_BUILD="$CC_"; export CC_FOR_BUILD ;;
-  *) echo "FAIL: mode '$MODE' is neither cross nor native"; exit 1 ;;
+  *) echo "FAIL: mode '$MODE' is neither mavericks nor modern"; exit 1 ;;
 esac
 # /opt/pkg (pkgsrc, on the 10.9 box) is never searched: a library found there is an accident the
 # pkgsrc ledger does not allow, and LibXml2, LibEdit, zlib, zstd and terminfo are off by name, so what
@@ -74,7 +90,7 @@ set -- -G Ninja -S llvm-project/llvm -B llvm-build \
 # Natively, the answers to CMake's and LLVM's Apple probes (lib.sh's apple_probe_answers), and clang22's lld
 # as CMAKE_LINKER with lib.sh's HOST_LINK_VERSION, so clang's configure runs no `ld -v` (it found the Command
 # Line Tools' ld): what out/llvm's clang/Config/config.h records stays 241.9, as that ld said.
-if [ "$MODE" = native ]; then
+if [ "$MODE" = mavericks ]; then
   # shellcheck disable=SC2046  # apple_probe_answers prints space-free words
   set -- "$@" -DCMAKE_OSX_SYSROOT="$SDK109" \
     -DCMAKE_LIBTOOL="$X/llvm-libtool-darwin" -DCMAKE_AR="$X/llvm-ar" -DCMAKE_RANLIB="$X/llvm-ranlib" \
@@ -88,9 +104,12 @@ fi
 # Line Tools' `ld -v`. And ninja, seeing a moved pin's older commit's files all older than its outputs,
 # would keep the objects the previous commit built.
 STAMP="$(printf '%s\n' "$@" && source_stamp llvm-project)" || { echo "FAIL: could not stamp llvm-build"; exit 1; }
+# On Linux the seed's clang compiles it, from the same path whatever the seed: its pin is part of the stamp.
+case "$HOST_OS" in Linux) STAMP="$STAMP
+linux-seed $LINUX_SEED_SHA256" ;; esac
 reuse_build_dir llvm-build "$STAMP" || exit 1
 if [ ! -f llvm-build/build.ninja ] || [ ! -x "$(sed -n 's/^CMAKE_COMMAND:INTERNAL=//p' llvm-build/CMakeCache.txt)" ]; then
-  shipyard-cmake "$@"
+  shipyard_cmake "$@"
   printf '%s\n' "$STAMP" > llvm-build/mavergreen-inputs.stamp
 fi
 # llvm-min-tblgen is named explicitly: step 3 copies it, and relying on it appearing
@@ -100,12 +119,17 @@ ninja -C llvm-build llvm-tblgen llvm-min-tblgen clang-tblgen llvm-config \
       intrinsics_gen clang-tablegen-targets LLVMBitstreamReader lld
 [ -x llvm-build/bin/ld64.lld ] || { echo "FAIL: no llvm-build/bin/ld64.lld after building lld"; exit 1; }
 # lld links nothing from /opt/pkg; a reader that cannot read it fails this too (lib.sh, OTOOL).
-macho_links_none_under llvm-build/bin/lld /opt/pkg/ || exit 1
+case "$HOST_OS" in
+  # platform: Linux's lld is an ELF program, which ldd reads; otool reads only Mach-O.
+  Linux) _ll="$(ldd llvm-build/bin/lld)" || { echo "FAIL: could not read the libraries llvm-build/bin/lld links (ldd)"; exit 1; }
+         if printf '%s\n' "$_ll" | grep -F /opt/pkg/; then echo "FAIL: llvm-build/bin/lld links a library from /opt/pkg/ (listed above)"; exit 1; fi ;;
+  *) macho_links_none_under llvm-build/bin/lld /opt/pkg/ || exit 1 ;;
+esac
 
 echo "==> 3. install the relocatable subset"
 rm -rf "$OUT"; mkdir -p "$OUT"
 for c in cmake-exports llvm-headers clang-cmake-exports clang-headers; do
-  shipyard-cmake --install llvm-build --prefix "$OUT" --component "$c"
+  shipyard_cmake --install llvm-build --prefix "$OUT" --component "$c"
 done
 mkdir -p "$OUT/bin"
 for b in llvm-tblgen clang-tblgen llvm-config llvm-min-tblgen; do
@@ -128,8 +152,10 @@ for f in "$OUT/lib/cmake/llvm/LLVMExports.cmake" "$OUT/lib/cmake/clang/ClangTarg
 done
 # (b) LLVM_DEFAULT_EXTERNAL_LIT is the one remaining absolute build path. lit is unused
 #     (SWIFT_INCLUDE_TESTS=OFF) and it would trip the no-absolute-paths assertion below.
-/usr/bin/sed -i '' 's|^set(LLVM_DEFAULT_EXTERNAL_LIT .*|set(LLVM_DEFAULT_EXTERNAL_LIT "")|' \
-  "$OUT/lib/cmake/llvm/LLVMConfig.cmake"
+# platform: through a temporary file, since BSD sed's -i takes a suffix argument and GNU sed's does not.
+sed 's|^set(LLVM_DEFAULT_EXTERNAL_LIT .*|set(LLVM_DEFAULT_EXTERNAL_LIT "")|' \
+  "$OUT/lib/cmake/llvm/LLVMConfig.cmake" > "$OUT/lib/cmake/llvm/LLVMConfig.cmake.tmp" \
+  && mv "$OUT/lib/cmake/llvm/LLVMConfig.cmake.tmp" "$OUT/lib/cmake/llvm/LLVMConfig.cmake"
 
 echo "==> 5. assert relocatability"
 # No path from THIS build may survive in any shipped .cmake file.

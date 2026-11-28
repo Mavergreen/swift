@@ -19,7 +19,12 @@ endif()
 project(swift-updaters LANGUAGES OBJC)
 
 find_package(MavericksShipyard REQUIRED)
-include(Mavericks)          # universal umbrella: AppleClang gate + build conventions
+# spec: shipyard's "The updater builds with clang22 on every host" -- this configure builds only an updater.
+#       The runtime's is built by clang22 (release.yml takes fetch-clang22.sh's), on Linux and on a Mac alike.
+#       The two toolchain updaters still pass /usr/bin/clang (release.yml's swift-toolchain-cross-updater and
+#       swift-toolchain-updater steps), a declared deviation there, until they move to clang22 as the runtime's did.
+set(MAVERICKS_REQUIRE_APPLECLANG OFF)
+include(Mavericks)          # universal umbrella: build conventions
 include(MavericksSparkle)   # the Sparkle updater .app builder
 
 # Derived, never committed: UPSTREAM_VERSION (written from pins.env's SWIFT_VERSION by

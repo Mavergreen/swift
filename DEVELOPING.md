@@ -44,7 +44,8 @@ Each of these pins removes one such difference:
 
 The runtime and the toolchain build on a 10.9 Mac from this checkout, and the results are byte-identical
 to what CI builds from the same commit. The build scripts run the same recipe on both hosts and pick
-their inputs by host (shipyard's `mavericks_mode.sh`).
+their inputs by host: shipyard's `mavericks_mode.sh` says `mavericks` on OS X 10.9 and `modern` on any
+other host, and `MAVERICKS_MODE` overrides it with one of those two words.
 
 Once, install:
 
@@ -131,7 +132,7 @@ from the bundle's `lib/`. Of `objectivec.list`, three are included, and only one
 none exercises the overlay and its acceptance is `tests/objc_overlay_test.swift` beside
 our other ObjC tests. A test `concurrency.list` includes is built once per `%target-run-simple-*` line
 (`upstream/bin/concurrency-<name>-v2` is the second); `--gate` runs each `SELFTEST_UPSTREAM_RUNS` times, then once
-under Guard Malloc (none for a test `SELFTEST_NO_GMALLOC` lists; vm-test lists one pair, INGREDIENTS.md's `on-target:cancellation-gmalloc`), each run within `SELFTEST_UPSTREAM_TIMEOUT` (180 s; ours, `SELFTEST_TIMEOUT`, 60 s). `make-selftest.sh` skips a test whose first line is `// selftest: skip: <reason>`
+under Guard Malloc (none for a test `SELFTEST_NO_GMALLOC` lists; vm-test and vm-test-prebuilt list one pair, INGREDIENTS.md's `on-target:cancellation-gmalloc`), each run within `SELFTEST_UPSTREAM_TIMEOUT` (180 s; ours, `SELFTEST_TIMEOUT`, 60 s). `make-selftest.sh` skips a test whose first line is `// selftest: skip: <reason>`
 (none today). The staged modules are binary: build the bundle with the toolchain that ran `build.sh`.
 
 ### The toolchain: self-hosting
@@ -224,9 +225,64 @@ sh scripts/stage-toolchain.sh --stdlib "$S/payload/toolchain-cross/$X/lib/swift"
 ```
 
 `build.sh` holds a host toolchain to this checkout's Swift: `SWIFT_HOST_TOOLCHAIN_VERSION` declares the
-release of one no package installed. The 10.9 toolchain cannot run on a modern Mac (its compiler loads
+release of a prefix with no `mavergreen.plist` (a stage, or a partial copy). The 10.9 toolchain cannot run on a modern Mac (its compiler loads
 its own 10.9 runtime beside the OS's, and crashes), so it is tested on 10.9, and CI runs only a
 translated smoke of it (`tests/toolchain-smoke-test.sh`).
+
+## Building the runtime on Linux
+
+An x86_64 Linux host (Ubuntu 24.04) builds the same runtime payload as a Mac's modern mode. It needs:
+
+- `uuid-dev` and `pkg-config` (the Linux-hosted compiler finds libuuid through them), `cmake`, `ninja`,
+  `python3`, `curl`, `patch` and `tar`;
+- shipyard v1.0.822 or later, with `SHIPYARD_SCRIPTS` naming its `scripts` directory: its
+  `fetch_clang22.sh` supplies mavericks-clang-22's Linux archive, at the release
+  `components/clang22/version` pins (`fetch-clang22.sh` refuses an older shipyard).
+
+```sh
+./build-llvm.sh                       # LLVM build support and ld64.lld, with the swift.org Linux seed's clang
+./build-builtins.sh                   # compiler-rt's builtins, with clang22's Linux archive
+./build-toolchain.sh --host linux     # the Linux-hosted compiler, staged as a prefix with those builtins
+P="${SWIFT_WORK:-$MAVERICKS_BUILD_ROOT/swift/work}/toolchain-linux"
+V="$(. ./pins.env && echo "$SWIFT_VERSION")-local"    # the release a prefix with no mavergreen.plist declares
+SWIFT_HOST_TOOLCHAIN="$P" SWIFT_HOST_TOOLCHAIN_VERSION="$V" ./build.sh
+SWIFT_HOST_TOOLCHAIN="$P" SELFTEST_SUPPORT="$MAVERICKS_BUILD_ROOT/swift/payload/selftest-support" ./make-selftest.sh
+```
+
+`build-builtins.sh` comes before `build-toolchain.sh --host linux`, whose prefix carries its archive (without
+it, the prefix is staged without builtins and says so). On Linux `build.sh` runs in modern mode alone and
+refuses to run without `SWIFT_HOST_TOOLCHAIN`: the swift.org seed branch needs `pkgutil` and `ditto`. It
+reads Mach-O with clang22's `llvm-otool`, `llvm-nm` and `llvm-strings`, and stages the payload in
+`$MAVERICKS_BUILD_ROOT/swift/payload/runtime`, as on a Mac. The Linux-hosted compiler ships in no package.
+
+`make-selftest.sh` builds the self-test bundle with that same prefix's compiler, so every test is built, the
+ones that need compiler patch 0003 and upstream's concurrency tests included; the prefix's `dsymutil` links
+the `-g` ones, and a prefix without one is refused (restage it with `build-toolchain.sh --host linux`).
+Without `SWIFT_HOST_TOOLCHAIN` it refuses to run on Linux. Its `SWIFTC=` mode rewrites rpaths there with
+clang22's `llvm-install-name-tool` (`CLANG22_PREFIX`) or `INSTALL_NAME_TOOL`. No Linux-built bundle has run on
+10.9 yet. With the same inputs and paths, `-O` builds of async code once laid out their coroutine frames
+differently by host, by the order the C++ library that built the compiler sorts in; llvm patch 0007 makes
+every host's compiler lay them out alike (`tests/coro-frame-order-test.sh`), and a Linux-built bundle has
+not been compared byte for byte with a Mac-built one since. `.github/actions/vm-test`'s
+`bundle_mode: prebuilt` is for gating such a bundle against a runtime pkg, for iteration only; a release is
+always gated by the bundle compiled in the guest (`compile`).
+
+The runtime pkg builds on Linux as on a Mac. Its updater is built by `scripts/build-runtime-updater.sh`, which
+release.yml's build-cross runs too, clang22's on either host; Linux has no `shipyard-cmake`, so `cmake` with
+`-DMavericksShipyard_DIR` naming the shipyard checkout stands in. Then `REQUIRE_UPDATER=1 ./package.sh`.
+shipyard's `build_component_pkg.sh` and `set_install_floor.sh` build the pkg, so the same payload, updater and
+`SOURCE_DATE_EPOCH` give the same bytes on both hosts. A pkg installs each mode as staged, so `stage-runtime.sh`
+stages under umask 022, and `package.sh` refuses a group- or world-writable entry.
+
+### In CI
+
+release.yml does all of this on every push, at the run's version, in jobs on Linux runners only, off the release's
+path: `linux-runtime` builds the pkg and the bundle, `vm-test-prebuilt` gates them on 10.9, and `equivalence`
+compares that runtime pkg with build-cross's (`scripts/equivalence-warnings.sh`: warnings, never a failure).
+publish waits for none of them. The Linux-hosted compiler is cached under a key `scripts/compiler-cache-inputs.sh`
+computes from every file its build reads (`COMPILER_BUILD`, in release.yml's `env`, names the scripts), so only a
+change to one of them rebuilds it: cold, in three `linux-compiler-*` jobs
+(`build-toolchain.sh --stop-after llvm` ends the second), because the whole build is longer than one job may run.
 
 ## A Swift bump
 

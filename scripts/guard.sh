@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- delegates to assert_binary_compatible.sh, which reads Mach-O with the readers LIPO, OTOOL, NM and STRINGS name (lipo, otool, nm and strings when unset)
+# platform: host-agnostic -- delegates to assert_binary_compatible.sh, which reads Mach-O with the readers LIPO, OTOOL, NM and STRINGS name (lipo, otool, nm and strings when unset, on a Mac; on Linux, which has none that read Mach-O, each must name clang22's)
 # Project wrapper around mavericks-shipyard's assert_binary_compatible.sh.
 # Encodes mavericks-swift's 10.9 policy and delegates to the shared guard:
 #   - EXTEND the denylist to the full post-10.9 os_* family (underscore-robust; the
@@ -20,6 +20,13 @@ set -eu
 . "$(dirname "$0")/../msc.sh"   # -> $SHIPYARD (shipyard scripts dir)
 SHARED="$SHIPYARD/assert_binary_compatible.sh"
 [ -f "$SHARED" ] || { echo "guard: shipyard at $SHIPYARD has no assert_binary_compatible.sh" >&2; exit 4; }
+if [ "$(uname -s)" = Linux ]; then
+  for _g_r in LIPO:llvm-lipo OTOOL:llvm-otool NM:llvm-nm STRINGS:llvm-strings; do
+    eval "_g_p=\${${_g_r%%:*}:-}"
+    [ -n "$_g_p" ] && command -v "$_g_p" >/dev/null 2>&1 \
+      || { echo "FAIL: no ${_g_r#*:} (${_g_r%%:*}='$_g_p'): on Linux ${_g_r%%:*} names clang22's ${_g_r#*:}, since the host has no reader of Mach-O" >&2; exit 4; }
+  done
+fi
 
 # Full post-10.9 os_* family, tolerant of the one/two leading-underscore SPI naming.
 export MAVERICKS_POST_10_9_SYMBOLS='__?os_signpost.*|__?os_log.*|_os_system_version_get_current_version|__?os_availability.*'

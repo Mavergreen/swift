@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- runs a Mavergreen host toolchain's Swift driver and ld64.lld (a modern Mac or OS X 10.9)
+# platform: host-agnostic -- runs a Mavergreen host toolchain's Swift driver and ld64.lld (a modern Mac, OS X 10.9, or Linux)
 #   usage: build-module.sh --name <Module> --link-name <swiftX> --sdk <sdk> --resource-dir <stdlib lib/swift>
 #            --availability <availability-macros.def> --work <dir> --out <dir>
 #            [--I <dir>]... [--link <file>]... [--unexported <list>] [--flag <word>]... [--runtime-floor]

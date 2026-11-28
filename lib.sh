@@ -1,5 +1,6 @@
 #!/bin/sh
-# platform: macOS-only -- runs pkgutil
+# platform: host-agnostic -- the swift.org installer's check and expansion, guarded below, run pkgutil and
+#           ditto on a Mac alone (build.sh refuses that branch on Linux); every other helper runs on a Mac and on Linux
 # lib.sh — the build root and the swift.org installer check, shared by every build script (sourced
 # after pins.env, which supplies TOOLCHAIN_SIGNER), and the helpers build.sh builds the runtime with on
 # either host (the dirs it hands the compilers, the prefix maps, the preflight's Mach-O readers). One
@@ -26,6 +27,7 @@ SWIFT_BUILD="$MAVERICKS_BUILD_ROOT/swift"
 # needs no human to paste a hash. Records the observed digest for provenance.
 verify_toolchain_signature() {
   _pkg="$1"
+  # platform: guarded macOS-only call -- only mirror-toolchain.sh and build.sh's swift.org branch call it, both macOS-only
   pkgutil --check-signature "$_pkg" > "$_pkg.sigcheck" 2>&1 || {
     echo "FAIL: $_pkg is not a validly signed installer" >&2; cat "$_pkg.sigcheck" >&2; return 1; }
   grep -Fq "$TOOLCHAIN_SIGNER" "$_pkg.sigcheck" || {
@@ -50,6 +52,7 @@ expand_toolchain() {
     return 0
   fi
   rm -rf "$2" "$2.x" "$_rec"
+  # platform: guarded macOS-only call -- only build.sh's swift.org branch calls it, after verify_toolchain_signature
   pkgutil --expand "$1" "$2.x" || return 1
   _payload="$(find "$2.x" -name Payload | head -1)"
   [ -n "$_payload" ] || { echo "expand_toolchain: $1 has no payload" >&2; return 1; }
@@ -144,20 +147,33 @@ source_stamp() {
 # <importer>/Dispatch.modulemap (a toolchain's lib/swift/recaulk-importer), whose Dispatch lists, in this
 # order, recaulk-dispatch.h (the virtual name here of <importer>/dispatch/dispatch.h, which the module map
 # cannot name by an absolute path) and the SDK's dispatch.h; and <sdk>'s usr/include/pthread/qos.h, which the
-# 10.9 SDK lacks, is <importer>/pthread/qos.h. The roots are the SDK's absolute path, so this is written for
+# 10.9 SDK lacks, is <importer>/pthread/qos.h. Every other <sdk>/usr/include/dispatch/*.h is named too, as
+# itself, so the whole module resolves inside the overlay (below). The roots are the SDK's absolute path, so this is written for
 # each SDK. toolchain/swiftc carries a copy of these lines, which it cannot source this file to share
 # (tests/swiftc-wrapper-test.sh keeps them the same). Fails for a path holding a quote, which would end a YAML
 # string early.
 recaulk_vfs_yaml() {
   case "$1$2" in *\'*|*'
 '*) echo "recaulk_vfs_yaml: a quote or newline in '$1' or '$2' cannot be written to a YAML string" >&2; return 1 ;; esac
-  printf '%s\n' '{' "  'version': 0," "  'case-sensitive': 'false'," "  'use-external-names': false," "  'roots': [" \
-    "    { 'name': '$1/usr/include/dispatch', 'type': 'directory'," \
-    "      'contents': [ { 'name': 'module.map', 'type': 'file', 'external-contents': '$2/Dispatch.modulemap' }," \
-    "                    { 'name': 'recaulk-dispatch.h', 'type': 'file', 'external-contents': '$2/dispatch/dispatch.h' } ] }," \
-    "    { 'name': '$1/usr/include/pthread', 'type': 'directory'," \
-    "      'contents': [ { 'name': 'qos.h', 'type': 'file', 'external-contents': '$2/pthread/qos.h' } ] }" \
-    '  ]' '}' > "$3"
+  # platform: the overlay is case-insensitive, so clang, looking up module Dispatch, takes the overlay's
+  #           dispatch dir for usr/include/Dispatch and records that spelling; a header the overlay does not
+  #           name then falls through to the real filesystem as .../Dispatch/base.h, which only a
+  #           case-insensitive one (macOS's) finds. Named here, each resolves in the overlay on any host.
+  for _rv_h in "$1"/usr/include/dispatch/*.h; do
+    case "${_rv_h##*/}" in *\'*|*'
+'*) echo "recaulk_vfs_yaml: a quote or newline in the header name '${_rv_h##*/}' cannot be written to a YAML string" >&2; return 1 ;; esac
+  done
+  { printf '%s\n' '{' "  'version': 0," "  'case-sensitive': 'false'," "  'use-external-names': false," "  'roots': [" \
+      "    { 'name': '$1/usr/include/dispatch', 'type': 'directory'," \
+      "      'contents': [ { 'name': 'module.map', 'type': 'file', 'external-contents': '$2/Dispatch.modulemap' },"
+    for _rv_h in "$1"/usr/include/dispatch/*.h; do
+      [ ! -f "$_rv_h" ] || printf '%s\n' "                    { 'name': '${_rv_h##*/}', 'type': 'file', 'external-contents': '$_rv_h' },"
+    done
+    printf '%s\n' "                    { 'name': 'recaulk-dispatch.h', 'type': 'file', 'external-contents': '$2/dispatch/dispatch.h' } ] }," \
+      "    { 'name': '$1/usr/include/pthread', 'type': 'directory'," \
+      "      'contents': [ { 'name': 'qos.h', 'type': 'file', 'external-contents': '$2/pthread/qos.h' } ] }" \
+      '  ]' '}'
+  } > "$3"
 }
 
 # recaulk_importer_layout <recaulk-prefix> <Dispatch.modulemap> <version> <dir> -- lays out <dir> as
@@ -174,9 +190,10 @@ recaulk_importer_layout() {
     && cp "$2" "$4/Dispatch.modulemap" && echo "$3" > "$4/VERSION"
 }
 
-# patch_source <dir> <patch>... -- applies each <patch> (an absolute path, -p0 paths as patches/ holds
-# them) to the source tree <dir>, in order, with the OS's patch: OS X 10.9's GNU patch 2.5.8 and a modern
-# Mac's BSD patch 2.0 write the same bytes. Each is first tried with --dry-run, so one that does not
+# patch_source <dir> <patch>... -- applies each <patch> (an absolute path) to the source tree <dir>, in order,
+# at -p1 when its first --- path starts a/ (a patch shared byte for byte with a product that applies with
+# shipyard's apply_patches.sh, -p1) and otherwise at -p0, as patches/ holds the rest, with the OS's patch:
+# OS X 10.9's GNU patch 2.5.8 and a modern Mac's BSD patch 2.0 write the same bytes. Each is first tried with --dry-run, so one that does not
 # apply fails, naming itself, before it changes anything; -N refuses one already applied instead of
 # offering to reverse it; -F 0 refuses a hunk whose context has drifted, as `git apply` did (an offset is
 # still accepted, as it was, except that GNU patch then holds a hunk with less context before than after
@@ -189,11 +206,12 @@ patch_source() {
   [ -d "$_ps_dir" ] || { echo "FAIL: no source tree at $_ps_dir to patch" >&2; return 1; }
   for _ps_p in "$@"; do
     case "$_ps_p" in /*) ;; *) echo "FAIL: patch_source: '$_ps_p' is not an absolute path" >&2; return 1 ;; esac
+    case "$(awk '/^--- / { print $2; exit }' "$_ps_p")" in a/*) _ps_l=-p1 ;; *) _ps_l=-p0 ;; esac
     # platform: GNU patch 2.5.8 (OS X 10.9) reads -V none as a version-control name, not "no backups",
     #           and leaves file.~1~ at an offset; --no-backup-if-mismatch is honoured by it and by BSD 2.0.
-    _ps_out="$(cd "$_ps_dir" && patch -p0 -N -F 0 --no-backup-if-mismatch --dry-run -i "$_ps_p" < /dev/null 2>&1)" || {
+    _ps_out="$(cd "$_ps_dir" && patch "$_ps_l" -N -F 0 --no-backup-if-mismatch --dry-run -i "$_ps_p" < /dev/null 2>&1)" || {
       printf '%s\n' "$_ps_out" >&2; echo "FAIL: patch did not apply: $_ps_p" >&2; return 1; }
-    ( cd "$_ps_dir" && patch -p0 -N -F 0 --no-backup-if-mismatch -s -i "$_ps_p" < /dev/null ) || { echo "FAIL: patch did not apply: $_ps_p" >&2; return 1; }
+    ( cd "$_ps_dir" && patch "$_ps_l" -N -F 0 --no-backup-if-mismatch -s -i "$_ps_p" < /dev/null ) || { echo "FAIL: patch did not apply: $_ps_p" >&2; return 1; }
     _ps_s="$(shasum -a 256 < "$_ps_p" | awk '{ print $1 }')"
     [ "${#_ps_s}" -eq 64 ] || { echo "FAIL: patch_source: could not hash $_ps_p" >&2; return 1; }
     printf '%s %s\n' "${_ps_p##*/}" "$_ps_s" >> "$_ps_dir/.mavergreen-patches"
@@ -292,30 +310,30 @@ native_host_shim() {
 # toolchain at <prefix>, and fails, saying why, unless <release> is one of SWIFT_VERSION's
 # (<SWIFT_VERSION>-mavericks.N). The stdlib is coupled to its compiler: this checkout's sources compiled
 # by another release's compiler fail far from the cause, or build a runtime CI never builds. The release
-# is the receipt of the pkg that installed <prefix>/bin/swift-frontend (pkgutil --file-info), whichever
-# pkg id that is, so the cross toolchain's is read as the native one's is. A copy that no pkg installed
-# has no receipt: SWIFT_HOST_TOOLCHAIN_VERSION then declares its release, held to the same rule, and
-# where there is a receipt it must agree with it.
+# is the one the manifest of the pkg that installed <prefix> names, <prefix>/mavergreen.plist (its version
+# and identifier, which are that pkg's version and id), so the cross toolchain's is read as the native
+# one's is. A prefix with no mavergreen.plist (a stage, or a partial copy; a whole copy of an installed
+# prefix carries its manifest) has SWIFT_HOST_TOOLCHAIN_VERSION declare its release, held to the same
+# rule, and where there is a manifest it must agree with it.
+# platform: the manifest reads the same on every host; a pkg receipt (pkgutil) exists only on a Mac.
 host_toolchain_release() {
-  _hr_info="$(pkgutil --file-info "$1/bin/swift-frontend")" || {
-    echo "FAIL: pkgutil could not look up the receipt of $1/bin/swift-frontend" >&2; return 1; }
-  _hr_v="$(printf '%s\n' "$_hr_info" | sed -n 's/^pkg-version: *//p' | LC_ALL=C sort -u)"
-  _hr_id="$(printf '%s\n' "$_hr_info" | sed -n 's/^pkgid: *//p' | LC_ALL=C sort -u | tr '\n' ' ')"
-  case "$_hr_v" in *'
-'*) echo "FAIL: $1/bin/swift-frontend belongs to more than one release: $(printf '%s' "$_hr_v" | tr '\n' ' ')(pkgs ${_hr_id% })" >&2
-    return 1 ;;
-  esac
-  _hr_how="pkg ${_hr_id% }"
+  _hr_v=""; _hr_id=""; _hr_m="$1/mavergreen.plist"
+  if [ -f "$_hr_m" ]; then
+    _hr_v="$(sed -n '/<key>version<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' "$_hr_m")"
+    _hr_id="$(sed -n '/<key>identifier<\/key>/{n;s/.*<string>\(.*\)<\/string>.*/\1/p;}' "$_hr_m")"
+    [ -n "$_hr_v" ] || { echo "FAIL: $_hr_m names no version" >&2; return 1; }
+  fi
+  _hr_how="pkg $_hr_id"
   if [ -n "${SWIFT_HOST_TOOLCHAIN_VERSION:-}" ]; then
     if [ -z "$_hr_v" ]; then
       _hr_v="$SWIFT_HOST_TOOLCHAIN_VERSION"; _hr_how="declared by SWIFT_HOST_TOOLCHAIN_VERSION"
     elif [ "$_hr_v" != "$SWIFT_HOST_TOOLCHAIN_VERSION" ]; then
-      echo "FAIL: SWIFT_HOST_TOOLCHAIN_VERSION says $SWIFT_HOST_TOOLCHAIN_VERSION, but the receipt of $1 ($_hr_how) says $_hr_v" >&2
+      echo "FAIL: SWIFT_HOST_TOOLCHAIN_VERSION says $SWIFT_HOST_TOOLCHAIN_VERSION, but the manifest of $1 ($_hr_how) says $_hr_v" >&2
       return 1
     fi
   fi
   [ -n "$_hr_v" ] || {
-    echo "FAIL: no pkg installed $1/bin/swift-frontend, so its release is unknown -- install swift-toolchain's newest $SWIFT_VERSION release, or declare a copy's release with SWIFT_HOST_TOOLCHAIN_VERSION" >&2
+    echo "FAIL: no pkg installed $1 (it has no mavergreen.plist), so its release is unknown -- install swift-toolchain's newest $SWIFT_VERSION release, or declare a copy's release with SWIFT_HOST_TOOLCHAIN_VERSION" >&2
     return 1; }
   case "$_hr_v" in
     "$SWIFT_VERSION"-?*) ;;
@@ -359,6 +377,17 @@ host_inputs_stamp() {
     [ "${#_hs_s}" -eq 64 ] || { echo "host_inputs_stamp: could not hash $_hs_f" >&2; return 1; }
     printf '%s %s\n' "${_hs_r%%:*}" "$_hs_s"
   done
+}
+
+# shipyard_cmake <arg>... -- runs the cmake that configures and installs this repo's builds: shipyard-cmake,
+# the family's pinned CMake, on a Mac (and OS X 10.9), and the host's own cmake on Linux.
+# platform: shipyard-cmake exists to give Macs one pinned CMake; on Linux the family uses the host's own
+#           cmake by design, and shipyard installs no launcher there.
+shipyard_cmake() {
+  case "$(uname -s)" in
+    Linux) cmake "$@" ;;
+    *) shipyard-cmake "$@" ;;
+  esac
 }
 
 # reuse_build_dir <dir> <stamp> -- keeps <dir> when its mavergreen-inputs.stamp holds exactly <stamp>;
@@ -604,18 +633,23 @@ toolchain_host_select() {
   esac
 }
 
-# compiler_patches x86_64|arm64 <dir> -- the patches in <dir> (patches/compiler) that host's compiler
+# compiler_patches x86_64|arm64|linux <dir> -- the patches in <dir> (patches/compiler) that host's compiler
 # takes, one path per line, in order. 0002 is x86_64's alone: it gives the native swift-frontend the
 # rpath @loader_path/../lib/swift/macosx, the bundled 10.9 runtime it runs on there. The cross
 # package's lib/swift/macosx holds that same x86_64 stdlib, which an arm64 frontend cannot load; it
-# runs on the OS's /usr/lib/swift, upstream's default without 0002. Every other patch is both hosts'.
-# Returns 2 for any other host, and 1 when <dir> holds no patch for it.
+# runs on the OS's /usr/lib/swift, upstream's default without 0002. 0006 is linux's alone (the compiler
+# build-toolchain.sh --host linux builds, which ships in no pkg): it lets the compiler configure without a
+# stdlib on a Linux host, and touches nothing a Darwin host configures. linux takes arm64's set and 0006.
+# Every other patch is every host's. Returns 2 for any other host, and 1 when <dir> holds no patch for it.
 compiler_patches() {
-  ( toolchain_host_select "$1" ) || return 2   # validates only: the caller's TH_* stay as they were
+  case "$1" in
+    linux) ;;
+    *) ( toolchain_host_select "$1" ) || return 2 ;;   # validates only: the caller's TH_* stay as they were
+  esac
   _cp_n=0
   for _cp_p in "$2"/*.patch; do
     [ -f "$_cp_p" ] || continue
-    case "$1:${_cp_p##*/}" in arm64:0002-*) continue ;; esac
+    case "$1:${_cp_p##*/}" in arm64:0002-*|linux:0002-*|x86_64:0006-*|arm64:0006-*) continue ;; esac
     printf '%s\n' "$_cp_p"; _cp_n=$((_cp_n + 1))
   done
   [ "$_cp_n" -gt 0 ] || { echo "compiler_patches: no $1 patches in $2" >&2; return 1; }
@@ -778,14 +812,23 @@ toolchain_digests_agree() {
 # take from it is not there: clang, clang++ and ld64.lld, and llvm-ar, llvm-ranlib, llvm-libtool-darwin,
 # llvm-lipo and llvm-nm -- one archiver, one indexer and one reader on both hosts, so the archives the
 # build makes, and what links them, are the same bytes on both -- and llvm-otool
-# and llvm-strings, the readers the build's checks run in place of the Command Line Tools' (T5a).
+# and llvm-strings, the readers the build's checks run in place of the Command Line Tools' (T5a). On
+# Linux, modern mode's clang22 is its Linux archive (fetch-clang22.sh), which the list below fits.
 clang22_prefix() {
   case "$1" in
     cross) _cp="$(sh "$2/fetch-clang22.sh")" || { echo "clang22_prefix: $2/fetch-clang22.sh failed" >&2; return 1; } ;;
     native) _cp="${CLANG22_PREFIX:-/usr/local/mavergreen/clang22}" ;;
     *) echo "clang22_prefix: the mode is cross or native, not '$1'" >&2; return 2 ;;
   esac
-  for _ct in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lipo llvm-nm llvm-otool llvm-strings; do
+  _ct_all="clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-lipo llvm-nm llvm-otool llvm-strings"
+  case "$(uname -s)" in
+    # platform: clang22's Linux archive ships no llvm-libtool-darwin (shipyard asked clang-22 to add it,
+    #           2026-11-22); build-builtins.sh archives with llvm-ar there, whose archives are
+    #           llvm-libtool-darwin's bytes.
+    Linux) ;;
+    *) _ct_all="$_ct_all llvm-libtool-darwin" ;;
+  esac
+  for _ct in $_ct_all; do
     [ -x "$_cp/bin/$_ct" ] || { echo "clang22_prefix: no $_cp/bin/$_ct (mavericks-clang-22's $1 package provides it)" >&2; return 1; }
   done
   printf '%s\n' "$_cp"
@@ -794,7 +837,7 @@ clang22_prefix() {
 # apple_probe_answers <clang22-bin> -- prints, space-separated (no spaces inside), the answers to the Apple
 # probes CMake runs in every configure, which would otherwise ask xcrun or run a Command Line Tools name:
 # OS X 10.9 has neither once the Command Line Tools are gone (T5a, D1). Every configure that compiles with
-# mavericks-clang-22 passes them, in both modes (D7); cross mode's Apple-clang configures (build-llvm.sh's
+# mavericks-clang-22 passes them, in both modes (D7); modern mode's Apple-clang configures (build-llvm.sh's
 # llvm-build, the arm64 host, the native helpers) keep asking Xcode, as they always have. None of the
 # answers reaches a byte the builds ship (T5a Task 12b measured both hosts):
 #   CMAKE_TAPI       the tool CMake makes .tbd text stubs with; no target here makes one, and /usr/bin/false
@@ -1027,26 +1070,35 @@ TCEOF
 # pkg_extract_product <pkg> <product> <dir> -- extracts, into <dir> (replaced), the payload of the one
 # component of the product archive <pkg> that installs /usr/local/mavergreen/<product>, and prints that
 # prefix, <dir>/usr/local/mavergreen/<product>; the rest of the payload (an updater under Library/, the
-# family's base component) is left out. pkgutil --expand and ditto, so it runs on a modern Mac and on OS X
-# 10.9 alike (10.9's pkgutil has no --expand-full). Fails when no component installs that prefix, or more
-# than one does. <dir> is rm -rf'd first, so it is refused when relative, when it is $HOME, and when
-# scripts/outdir.sh's refuse_root_outdir (which the caller has sourced) refuses it: / by any name.
+# family's base component) is left out. shipyard's stevedore (fetch_stevedore.sh) expands the archive and
+# gzip and cpio unpack each payload, as shipyard's fetch_product_pkg.sh does, so it runs on a modern Mac,
+# on OS X 10.9 and on Linux alike. Needs $SHIPYARD (msc.sh). Fails when no component installs that
+# prefix, or more than one does, or a component carries an AppleDouble ._* member. <dir> is rm -rf'd first, so it is refused when relative, when it is
+# $HOME, and when scripts/outdir.sh's refuse_root_outdir (which the caller has sourced) refuses it: / by
+# any name.
 pkg_extract_product() {
   case "$3" in /*) ;; *) echo "pkg_extract_product: '$3' is not an absolute path" >&2; return 1 ;; esac
   command -v refuse_root_outdir > /dev/null 2>&1 \
     || { echo "pkg_extract_product: source scripts/outdir.sh first (refuse_root_outdir guards the rm -rf of $3)" >&2; return 1; }
+  [ -n "${SHIPYARD:-}" ] && [ -f "$SHIPYARD/fetch_stevedore.sh" ] \
+    || { echo "pkg_extract_product: source msc.sh first (shipyard's fetch_stevedore.sh gives the stevedore that reads $1)" >&2; return 1; }
   ( refuse_root_outdir pkg_extract_product "$3" ) || return 1
   if [ -d "$3" ] && [ "$(CDPATH='' cd -P -- "$3" && pwd -P)" = "$(CDPATH='' cd -P -- "$HOME" && pwd -P)" ]; then
     echo "pkg_extract_product: refusing out-dir '$3' (it is \$HOME)" >&2; return 1
   fi
   [ -f "$1" ] || { echo "pkg_extract_product: no $1" >&2; return 1; }
+  _pe_sd="$(sh "$SHIPYARD/fetch_stevedore.sh")" || { echo "pkg_extract_product: shipyard's fetch_stevedore.sh gave no stevedore" >&2; return 1; }
   rm -rf "$3" "$3.x" && mkdir -p "$3/usr/local/mavergreen" "$3.x" || return 1
-  pkgutil --expand "$1" "$3.x/pkg" || { echo "pkg_extract_product: pkgutil could not expand $1" >&2; return 1; }
+  "$_pe_sd" expand "$1" "$3.x/pkg" >&2 || { echo "pkg_extract_product: stevedore could not expand $1" >&2; return 1; }
   _pe_n=0; _pe_hit=""
   for _pe_p in "$3.x"/pkg/*/Payload "$3.x"/pkg/Payload; do
     [ -f "$_pe_p" ] || continue
     _pe_n=$((_pe_n + 1)); _pe_t="$3.x/c$_pe_n"
-    mkdir -p "$_pe_t" && ditto -x -z "$_pe_p" "$_pe_t" || { echo "pkg_extract_product: could not extract $_pe_p" >&2; return 1; }
+    mkdir -p "$_pe_t" && ( cd "$_pe_t" && gzip -dc "$_pe_p" | cpio -id --quiet ) \
+      || { echo "pkg_extract_product: could not extract $_pe_p" >&2; return 1; }
+    # platform: pkgbuild on a macOS 27 host writes AppleDouble ._* members for files carrying
+    #           com.apple.provenance; ditto folded them into xattrs, cpio writes them as files.
+    _pe_ad="$(find "$_pe_t" -name '._*' | head -1)"; [ -z "$_pe_ad" ] || { echo "pkg_extract_product: $1 carries AppleDouble member ${_pe_ad#$_pe_t/} (Apple's packager on a macOS 27 host wrote it); build it with stevedore" >&2; return 1; }
     if [ -d "$_pe_t/usr/local/mavergreen/$2" ]; then
       [ -z "$_pe_hit" ] || { echo "pkg_extract_product: more than one component of $1 installs /usr/local/mavergreen/$2" >&2; return 1; }
       _pe_hit="$_pe_t"

@@ -1,11 +1,9 @@
 #!/bin/sh
-# platform: macOS-only -- pkgbuild and productbuild assemble the pkg
+# platform: host-agnostic -- shipyard's seams build the pkg with stevedore, on Linux as on a Mac
 # Package $OUT (from build.sh) into a distributable .pkg.
-# pkgbuild -> flat component pkg, then the SHARED set_install_floor.sh helper
-# (mavericks-shipyard) wraps it with a 10.9.5 install floor + self-checks it.
-#
-# NOTE: trackpad2's BundleIsVersionChecked dance does NOT apply -- that guards *bundle*
-# components; our payload is a plain libswiftCore.dylib (a file), always installed.
+# shipyard's build_component_pkg.sh -> flat component pkg, then its set_install_floor.sh wraps it with a
+# 10.9.5 install floor + self-checks it. A pkg's bytes depend only on the staged tree, the arguments and
+# SOURCE_DATE_EPOCH (the commit time, below), so every host builds the same pkg from the same payload.
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -15,7 +13,7 @@ DIST="${DIST:-$SWIFT_BUILD/dist}"
 # The full version: reuses VERSION if the workflow already resolved it this run, else derives it
 # from UPSTREAM_VERSION + the shipped tags. Never a committed file.
 [ -f "$HERE/UPSTREAM_VERSION" ] || sh "$HERE/scripts/derive-upstream-version.sh" >/dev/null
-. "$HERE/msc.sh"        # -> $SHIPYARD: resolve-version, stage_product and set_install_floor
+. "$HERE/msc.sh"        # -> $SHIPYARD: resolve-version, stage_product, build_component_pkg and set_install_floor
 VERSION="$(MAVERICKS_ROOT="$HERE" sh "$SHIPYARD/resolve-version.sh")"
 export_source_date_epoch "$HERE"
 IDENTIFIER="${PKG_IDENTIFIER:-dev.mavergreen.swift-runtime}"
@@ -30,8 +28,8 @@ LICENSE_TXT="$OUT/usr/local/mavergreen/swift-runtime/share/doc/LICENSE.txt"
 [ -f "$LICENSE_TXT" ] || { echo "no $LICENSE_TXT; run build.sh (it vendors the license)" >&2; exit 1; }
 cp "$LICENSE_TXT" "$RES/"
 
-# Nothing installs at the root of the disk. pkgbuild --root "$OUT" --install-location / ships every
-# file in $OUT, so a stray file here (the license once was) lands in / on every user's machine.
+# Nothing installs at the root of the disk. The component pkg's --root "$OUT" --install-location / ships
+# every file in $OUT, so a stray file here (the license once was) lands in / on every user's machine.
 stray="$(find "$OUT" -mindepth 1 -maxdepth 1 ! -type d)"
 [ -z "$stray" ] || { echo "files at the payload root would install into /: $stray" >&2; exit 1; }
 
@@ -56,11 +54,16 @@ else
   echo "   (no updater app at $UPD_APP; packaging runtime only -- build it: shipyard-cmake --build \"\$SWIFT_BUILD/build/updater\")"
 fi
 sh "$SHIPYARD/stage_product.sh" "$@"
+# A pkg installs each entry's mode as staged, the payload root's onto / itself, so nothing it ships may be
+# writable by group or other. Checked here, on the final tree: stage-runtime.sh stages the runtime 0755 and
+# 0644 under any umask, and stage_product.sh has just added the manifest, the updater and its LaunchAgent.
+writable="$(find "$OUT" ! -type l \( -perm -020 -o -perm -002 \))"
+[ -z "$writable" ] || { echo "group- or world-writable entries in $OUT would install so (restage it with build.sh, and stage the updater from a 0755 tree): $writable" >&2; exit 1; }
 
-echo ">> flat component pkg (payload -> /usr/local/mavergreen/swift-runtime, /Library)"
-pkgbuild --root "$OUT" --identifier "$IDENTIFIER" --version "$VERSION" \
+echo ">> flat component pkg (payload -> /usr/local/mavergreen/swift-runtime, /Library; shared helper)"
+sh "$SHIPYARD/build_component_pkg.sh" --root "$OUT" --identifier "$IDENTIFIER" --version "$VERSION" \
   --scripts "$SCR" \
-  --install-location / "$DIST/swift-runtime-component.pkg"
+  --install-location / --out "$DIST/swift-runtime-component.pkg" >/dev/null
 
 echo ">> product archive with 10.9.5 floor (shared helper)"
 sh "$SHIPYARD/set_install_floor.sh" \

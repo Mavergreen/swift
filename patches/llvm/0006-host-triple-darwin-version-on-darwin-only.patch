@@ -1,0 +1,19 @@
+diff --git llvm/lib/TargetParser/Unix/Host.inc llvm/lib/TargetParser/Unix/Host.inc
+--- llvm/lib/TargetParser/Unix/Host.inc
++++ llvm/lib/TargetParser/Unix/Host.inc
+@@ -37,6 +37,7 @@
+ }
+ 
+ static std::string updateTripleOSVersion(std::string TargetTripleString) {
++#if defined(__APPLE__) // Mavergreen: a uname release is a Darwin version only on a Darwin host
+   // On darwin, we want to update the version to match that of the target.
+   std::string::size_type DarwinDashIdx = TargetTripleString.find("-darwin");
+   if (DarwinDashIdx != std::string::npos) {
+@@ -52,6 +53,7 @@
+     TargetTripleString += "-darwin";
+     TargetTripleString += getOSVersion();
+   }
++#endif
+   // On AIX, the AIX version and release should be that of the current host
+   // unless if the version has already been specified.
+   if (Triple(LLVM_HOST_TRIPLE).getOS() == Triple::AIX) {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- the default compiler runs on a modern Mac; SWIFTC= mode runs on OS X 10.9 itself
+# platform: host-agnostic -- the default mode runs on a modern Mac or Linux (there with SWIFT_HOST_TOOLCHAIN's compiler alone); SWIFTC= mode runs on OS X 10.9 itself
 #   usage: make-selftest.sh
 #          Compiles every tests/*.swift at -O and -Onone into a self-test bundle for a 10.9 box --
 #          bin/<name> and bin/<name>-Onone, plus run-selftest.sh -- and prints the tarball's path last.
@@ -13,7 +13,12 @@
 #          A test whose first line is `// selftest: skip: <reason>` is built
 #          in neither mode, saying why (none is so marked today).
 #          Two compilers:
-#            default          the swift.org toolchain build.sh expanded, for x86_64-apple-macosx10.9,
+#            default          the swift.org toolchain build.sh expanded (or, with SWIFT_HOST_TOOLCHAIN, the
+#                             toolchain prefix build.sh's variable of that name names: this repo's compiler,
+#                             run through lib.sh's native_host_shim, which builds every test, the ones
+#                             marked below included; on Linux the only compiler, and refused without it;
+#                             a prefix without bin/dsymutil, which swiftc -g links through, is refused),
+#                             for x86_64-apple-macosx10.9,
 #                             -no-stdlib-rpath and one rpath, $SWIFT_RUNTIME_PREFIX/lib/swift
 #                             (default /usr/local/mavergreen/swift-runtime). Run after build.sh. As
 #                             build-module.sh compiles the overlays: against the SDK view build.sh made
@@ -53,7 +58,8 @@
 #                             replaces the wrapper's rpath with $SWIFT_RUNTIME_PREFIX/lib/swift:
 #                             INSTALL_NAME_TOOL, else mavericks-clang-22's llvm-install-name-tool
 #                             (CLANG22_PREFIX, default /usr/local/mavergreen/clang22) where it is
-#                             installed, else install_name_tool from PATH.
+#                             installed, else, on a Mac, install_name_tool from PATH; on Linux, which
+#                             has none, the bundle is refused without one of the first two.
 #          SELFTEST_SUPPORT=<dir> (scripts/stage-selftest-support.sh's layout, which build.sh stages as
 #          $SWIFT_BUILD/payload/selftest-support) adds upstream's own tests (spec: "Upstream tests"): each
 #          <dir>/upstream/<layer>/<path>.args, compiled from <path> (for a .gyb, gyb's output beside it) at
@@ -67,7 +73,7 @@
 #          one pair for both builds; and <dir>/lib, the test-support dylibs,
 #          is copied to the bundle's lib/, which that rpath reaches from upstream/bin/. The support
 #          modules are binary .swiftmodule files: the compiler here must be the release that built them.
-#          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, TC (toolchain usr/), DIST (output dir), RECAULK_IMPORTER, SDK_VIEW, APINOTES,
+#          Env: MAVERICKS_BUILD_ROOT, SWIFT_WORK, TC (toolchain usr/), SWIFT_HOST_TOOLCHAIN, DIST (output dir), RECAULK_IMPORTER, SDK_VIEW, APINOTES,
 #          SWIFT_RUNTIME_PREFIX, SWIFTC, INSTALL_NAME_TOOL, CLANG22_PREFIX, SELFTEST_SRC (the dir whose
 #          *.swift are the tests, default this repo's tests/), SELFTEST_SUPPORT.
 set -eu
@@ -75,6 +81,9 @@ REPO="$(cd "$(dirname "$0")" && pwd)"
 . "$REPO/lib.sh"    # -> $SWIFT_BUILD
 DIST="${DIST:-$SWIFT_BUILD/dist}"
 SKIP_MARK=""   # the default mode's: see the usage above
+# platform: Linux has no install_name_tool and no swift.org compiler that targets 10.9: its rpath rewrite is
+#           clang22's, and its default mode compiles with SWIFT_HOST_TOOLCHAIN's compiler alone, as build.sh does
+HOST=mac; [ "$(uname -s)" != Linux ] || HOST=linux
 if [ -n "${SWIFTC:-}" ]; then
   [ -x "$SWIFTC" ] || { echo "make-selftest: SWIFTC=$SWIFTC is not executable" >&2; exit 1; }
   if [ -n "${SWIFT_RUNTIME_PREFIX:-}" ]; then
@@ -90,7 +99,10 @@ if [ -n "${SWIFTC:-}" ]; then
     INT="${INSTALL_NAME_TOOL:-}"
     if [ -z "$INT" ]; then
       INT="${CLANG22_PREFIX:-/usr/local/mavergreen/clang22}/bin/llvm-install-name-tool"
-      [ -x "$INT" ] || INT=install_name_tool
+      if ! [ -x "$INT" ]; then
+        [ "$HOST" = mac ] || { echo "make-selftest: no $INT -- on Linux the rpath rewrite is clang22's llvm-install-name-tool (CLANG22_PREFIX, fetch-clang22.sh's) or INSTALL_NAME_TOOL's" >&2; exit 1; }
+        INT=install_name_tool
+      fi
     fi
     compile() {
       _c_o="$1" _c_s="$2" _c_out="$3"; shift 3
@@ -101,17 +113,45 @@ if [ -n "${SWIFTC:-}" ]; then
     compile() { _c_o="$1" _c_s="$2" _c_out="$3"; shift 3; "$SWIFTC" "-$_c_o" "$_c_s" -o "$_c_out" "$@" >&2; }
   fi
 else
-  TC="${TC:-${SWIFT_WORK:-$SWIFT_BUILD/work}/toolchain/usr}"
+  # platform: the clang importer's module cache is keyed on neither the apinotes' contents nor the VFS overlay's,
+  #           so one shared with other compiles (the host's default) can hand these tests a Dispatch imported
+  #           another way (DispatchSemaphore(value:) failable, say); a private one, afresh each run, cannot.
+  VFSD="$(mktemp -d "${TMPDIR:-/tmp}/make-selftest-vfs.XXXXXX")"; trap 'rm -rf "$VFSD"' EXIT
+  if [ -n "${SWIFT_HOST_TOOLCHAIN:-}" ]; then
+    # platform: swiftc -g (upstream's -g tests) links through the dsymutil beside swift-frontend, and Linux has
+    #           no other: a prefix staged before build-toolchain.sh --host linux staged one would fail there, late
+    [ -x "$SWIFT_HOST_TOOLCHAIN/bin/dsymutil" ] || {
+      echo "make-selftest: no $SWIFT_HOST_TOOLCHAIN/bin/dsymutil -- restage with build-toolchain.sh --host linux" >&2; exit 1; }
+    native_host_shim "$SWIFT_HOST_TOOLCHAIN" "$VFSD/host" || { echo "make-selftest: no compiler shim from SWIFT_HOST_TOOLCHAIN=$SWIFT_HOST_TOOLCHAIN" >&2; exit 1; }
+    TC="$VFSD/host/usr"
+    # spec: INGREDIENTS.md "Recaulk in every program" -- a test links as a user's program does through the shipped
+    #       swiftc, by toolchain/ld (Recaulk's archive before -lSystem), never by the shim's bare ld, which is the
+    #       stdlib build's. Without it a test binds 10.9's libm fma, fmal and truncl, whose truncl(+0) and
+    #       fma(1+u, u-1, 1) come back negative. The archive is the prefix's own (a shipped toolchain's), else
+    #       fetch-recaulk.sh's: the Linux-hosted prefix carries none.
+    RK="$SWIFT_HOST_TOOLCHAIN/lib/recaulk/librecaulk.a"
+    if ! [ -f "$RK" ]; then
+      RK="$(sh "$REPO/fetch-recaulk.sh")/lib/librecaulk.a" || { echo "make-selftest: could not fetch Recaulk, which every test links" >&2; exit 1; }
+    fi
+    mkdir -p "$VFSD/link/bin" "$VFSD/link/lib/recaulk" "$VFSD/link/libexec/mavergreen-swift" \
+      && ln -s "$SWIFT_HOST_TOOLCHAIN/bin/ld64.lld" "$VFSD/link/bin/ld64.lld" && ln -s "$RK" "$VFSD/link/lib/recaulk/librecaulk.a" \
+      && cp "$REPO/toolchain/ld" "$VFSD/link/libexec/mavergreen-swift/ld" && chmod 755 "$VFSD/link/libexec/mavergreen-swift/ld" \
+      && rm -f "$TC/bin/ld" && ln -s "$VFSD/link/libexec/mavergreen-swift/ld" "$TC/bin/ld" \
+      || { echo "make-selftest: could not lay out the tests' linker (toolchain/ld over $RK)" >&2; exit 1; }
+    # platform: this repo's (legacy) driver runs the `ld` of -tools-directory, else /usr/bin/ld: the host's own
+    #           (a GNU ld on Linux); the shim's is the prefix's ld64.lld, as build-module.sh links the overlays
+    TOOLFLAGS="-tools-directory $TC/bin"
+  else
+    [ "$HOST" = mac ] || { echo "make-selftest: on Linux the compiler is the toolchain prefix SWIFT_HOST_TOOLCHAIN names, as build.sh's" >&2; exit 1; }
+    TOOLFLAGS=""
+    TC="${TC:-${SWIFT_WORK:-$SWIFT_BUILD/work}/toolchain/usr}"
+    SKIP_MARK="// selftest: needs this repo's compiler"
+  fi
   [ -x "$TC/bin/swiftc" ] || { echo "make-selftest: no swiftc at $TC/bin/swiftc -- run build.sh first" >&2; exit 1; }
   . "$REPO/msc.sh"   # -> $SHIPYARD (fetch_sdk.sh)
   RES="${SWIFT_WORK:-$SWIFT_BUILD/work}/stdlib-build/lib/swift"
   [ -f "$RES/macosx/x86_64/libswiftCore.dylib" ] || { echo "make-selftest: no stdlib build at $RES -- run build.sh first" >&2; exit 1; }
   RUNTIME_LIB="${SWIFT_RUNTIME_PREFIX:-/usr/local/mavergreen/swift-runtime}/lib/swift"
-  SKIP_MARK="// selftest: needs this repo's compiler"
-  # platform: the clang importer's module cache is keyed on neither the apinotes' contents nor the VFS overlay's,
-  #           so one shared with other compiles (the host's default) can hand these tests a Dispatch imported
-  #           another way (DispatchSemaphore(value:) failable, say); a private one, afresh each run, cannot.
-  VFSD="$(mktemp -d "${TMPDIR:-/tmp}/make-selftest-vfs.XXXXXX")"; trap 'rm -rf "$VFSD"' EXIT
   IMPFLAGS="-module-cache-path $VFSD/module-cache"
   # What build.sh left for the importer, where the variables are not set: its Dispatch overlay's Recaulk importer
   # directory, the overlays' patched API notes (Dispatch's, Foundation's and CoreGraphics'), and the SDK view, the
@@ -144,8 +184,8 @@ else
   fi
   compile() {
     _c_o="$1" _c_s="$2" _c_out="$3"; shift 3
-    # shellcheck disable=SC2086  # IMPFLAGS' words are space-free (paths, as build-module.sh's)
-    "$TC/bin/swiftc" -sdk "$SDK" -resource-dir "$RES" -L "$RES/macosx/x86_64" -runtime-compatibility-version none $IMPFLAGS \
+    # shellcheck disable=SC2086  # IMPFLAGS' and TOOLFLAGS' words are space-free (paths, as build-module.sh's)
+    "$TC/bin/swiftc" -sdk "$SDK" -resource-dir "$RES" -L "$RES/macosx/x86_64" -runtime-compatibility-version none $IMPFLAGS $TOOLFLAGS \
       -target x86_64-apple-macosx10.9 "-$_c_o" -no-stdlib-rpath \
       -Xlinker -rpath -Xlinker "$RUNTIME_LIB" "$_c_s" -o "$_c_out" "$@" >&2
   }

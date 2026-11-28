@@ -17,8 +17,8 @@
 #   tool of another stamp, a view the tool cannot make, or a toolchain without the stamp is refused before the
 #   driver runs, the first naming the stamp and the view to delete. The tool is given the plain SDK by its real
 #   path (it writes the view's SDKSettings.json itself). Before the view's overlay the driver is given the importer's view
-#   of Recaulk's dispatch declarations: -Xcc -ivfsoverlay with a YAML that names the view's SDK and the
-#   toolchain's lib/swift/recaulk-importer, byte for byte the YAML lib.sh's recaulk_vfs_yaml writes, kept in
+#   of Recaulk's dispatch declarations: -Xcc -ivfsoverlay with a YAML that names the view's SDK, each of
+#   that SDK's usr/include/dispatch/*.h, and the toolchain's lib/swift/recaulk-importer, byte for byte the YAML lib.sh's recaulk_vfs_yaml writes, kept in
 #   the cache beside the views, written whole (atomically) before the driver replaces the shell, so no
 #   temporary file is left behind, whether the exec succeeds or fails; a toolchain without the importer's
 #   directory, or a cache path the YAML could not quote, is refused before the driver runs. With HOME unset,
@@ -36,7 +36,10 @@ P="$T/mg/swift-toolchain"; mkdir -p "$P/bin" "$P/libexec/mavergreen-swift" "$T/m
   "$T/fake-sdk/System" "$T/fake-sdk/usr/include" "$T/other-sdk/System" "$T/other-sdk/usr/include" \
   "$P/lib/swift/sdk-view/bin" "$P/lib/swift/sdk-view/share/sdk-metadata"
 cp "$REPO/toolchain/swiftc" "$P/bin/swiftc"
-mkdir -p "$P/lib/swift/recaulk-importer"
+mkdir -p "$P/lib/swift/recaulk-importer" "$T/fake-sdk/usr/include/dispatch"
+# The SDK's own dispatch headers, which the view copies and the YAML names, the view's copies (lib.sh's recaulk_vfs_yaml),
+# beside files it does not.
+for f in base.h dispatch.h queue.h introspection.d module.map; do : > "$T/fake-sdk/usr/include/dispatch/$f"; done
 HOME="$T/home"; export HOME; CACHE="$HOME/Library/Caches/mavergreen-swift"
 cat > "$P/bin/swift-frontend" <<EOF
 #!/bin/sh
@@ -72,6 +75,8 @@ if [ -e "\$out" ]; then
 fi
 [ ! -f "$T/mat-fails" ] || { echo "recaulk-materialize: recipe x does not apply" >&2; exit 1; }
 mkdir -p "\$out/sdk/MacOSX10.9.sdk" && echo '{}' > "\$out/overlay.json" && echo "\$want" > "\$out/stamp.json"
+# The view's SDK holds the plain SDK's headers, as Recaulk's does (copies): here, its dispatch dir.
+if [ -d "\$sdk/usr/include/dispatch" ]; then mkdir -p "\$out/sdk/MacOSX10.9.sdk/usr/include" && cp -R "\$sdk/usr/include/dispatch" "\$out/sdk/MacOSX10.9.sdk/usr/include/"; fi
 EOF
 echo '{"profile":"swift-foundation","ids":["a-v1"]}' > "$T/tool-stamp"
 cp "$T/tool-stamp" "$P/lib/swift/sdk-view/swift-foundation.stamp"
@@ -173,6 +178,10 @@ case "$VFS" in "$CACHE"/importer-*.yaml) ;; *) fail "the YAML is at $VFS, not in
 [ -f "$VFS" ] || fail "the YAML $VFS is not there afterwards"
 grep -qF "'$VIEW/sdk/MacOSX10.9.sdk/usr/include/dispatch'" "$VFS" || fail "the YAML does not name the view's usr/include/dispatch: $(cat "$VFS")"
 grep -qF "'$P/lib/swift/recaulk-importer/dispatch/dispatch.h'" "$VFS" || fail "the YAML does not name the toolchain's importer: $(cat "$VFS")"
+for f in base.h dispatch.h queue.h; do
+  grep -qF "{ 'name': '$f', 'type': 'file', 'external-contents': '$VIEW/sdk/MacOSX10.9.sdk/usr/include/dispatch/$f' }" "$VFS" \
+    || fail "the YAML does not name the SDK's dispatch/$f, which a case-sensitive filesystem would not find as Dispatch/$f: $(cat "$VFS")"
+done
 . "$REPO/lib.sh"
 recaulk_vfs_yaml "$VIEW/sdk/MacOSX10.9.sdk" "$P/lib/swift/recaulk-importer" "$T/lib.yaml" || fail "recaulk_vfs_yaml failed"
 cmp -s "$T/lib.yaml" "$VFS" || fail "the wrapper's YAML is not recaulk_vfs_yaml's:

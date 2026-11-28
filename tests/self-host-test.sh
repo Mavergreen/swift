@@ -8,7 +8,7 @@
 #   compared, must hold them), build.sh with that pre
 #   toolchain under a declared release of this checkout's Swift, and the stage's toolchain staged from
 #   the stdlib it built; then it must pass only when stage 2 and stage 3 are the same files, and, with
-#   --compare, only when stage 2 is the named prefix too. It must refuse cross mode, a seed that is no
+#   --compare, only when stage 2 is the named prefix too. It must refuse modern mode and any unknown mode, a seed that is no
 #   Swift toolchain, or an installed clang22 whose receipt is not pins.env's CLANG22_VERSION (unless
 #   CLANG22_PREFIX is set by hand, which it warns about), before running anything; stop at the first
 #   step that fails, naming it; record every step's wall time; and print a gate that tests stage 2's
@@ -103,7 +103,7 @@ F
 run() {  # run <name> [self-host.sh args] -- with the environment the fakes need, a fresh log
   _n="$1"; shift; rm -f "$T/log" "$T/pkgutil.log"; : > "$T/log"; _rc=0
   ( export PATH="$T/fakebin:$PATH" MAVERICKS_BUILD_ROOT="$T/root" SHIPYARD_SCRIPTS="$T/shipyard" \
-      MAVERICKS_MODE="${MODE:-native}" SWIFT_HOST_TOOLCHAIN="${SEED:-$T/seed}"
+      MAVERICKS_MODE="${MODE:-mavericks}" SWIFT_HOST_TOOLCHAIN="${SEED:-$T/seed}"
     unset SWIFT_WORK SWIFT_HOST_TOOLCHAIN_VERSION SWIFT_RUNTIME_OUT CLANG22_PREFIX
     if [ -n "${C22:-}" ]; then export CLANG22_PREFIX="$C22"; fi
     sh "$R/self-host.sh" "$@" ) > "$T/$_n.out" 2>&1 || _rc=$?
@@ -161,12 +161,14 @@ fake_prefix "$T/other" other-frontend stdlib
 if run other --compare "$T/other"; then fail "--compare passed a prefix with another frontend"; fi
 grep -q 'differ: bin/swift-frontend' "$T/other.out" || fail "other: $(cat "$T/other.out")"
 
-echo "-- refused before anything runs: cross mode, a seed that is no toolchain, a --compare that is none, bad usage"
+echo "-- refused before anything runs: modern mode, a seed that is no toolchain, a --compare that is none, bad usage"
 refused() {  # refused <name> <exit> <message> -- run <name> exited <exit>, said <message>, and ran nothing
   [ "$rc" -eq "$2" ] && grep -q -e "$3" "$T/$1.out" && [ ! -s "$T/$1.log" ] \
     || fail "$1: exit $rc (wanted $2), ran [$(head -1 "$T/$1.log")]: $(cat "$T/$1.out")"
 }
-rc=0; (MODE=cross run cross) || rc=$?; refused cross 2 "mode is 'cross'"
+rc=0; (MODE=modern run modern) || rc=$?; refused modern 2 "mode is 'modern'"
+rc=0; (MODE=sideways run sideways) || rc=$?; refused sideways 2 "mode 'sideways' is neither mavericks nor modern"
+for old in native cross; do rc=0; (MODE=$old run old$old) || rc=$?; refused old$old 2 "mode '$old' is neither mavericks nor modern"; done
 rc=0; (SEED="$T/nothing" run noseed) || rc=$?; refused noseed 1 "no Swift toolchain to seed from at $T/nothing"
 rc=0; run nocompare --compare "$T/nothing" || rc=$?; refused nocompare 1 "FAIL: --compare names no Swift toolchain: $T/nothing"
 # An empty --compare (a --compare "$UNSET") must not run unverified for hours and pass as if none were given.

@@ -12,10 +12,11 @@ out="$(cd "$REPO" && env -i PATH=/usr/bin:/bin HOME="$HOME" /bin/sh -c 'set -eu;
     "$TOOLCHAIN_URL" "$TOOLCHAIN_ASSET" "$DEPLOYMENT" "$ARCH" "${VERSION-unset}" "${BUILDSUPPORT_ASSET-unset}" \
     "$CMARK_SWIFT_RELEASE" "$CMARK_TAG" "$CMARK_SHA" "$CLANG22_VERSION" \
     "$SWIFT_TARBALL_SHA256" "$LLVM_TARBALL_SHA256" "$CMARK_TARBALL_SHA256" "$RECAULK_VERSION" \
-    "$SWIFT62_SHA" "$SWIFT62_TARBALL_SHA256" "$SWIFT54_SHA" "$SWIFT54_TARBALL_SHA256" "$SWIFT40_SHA" "$SWIFT40_TARBALL_SHA256"
+    "$SWIFT62_SHA" "$SWIFT62_TARBALL_SHA256" "$SWIFT54_SHA" "$SWIFT54_TARBALL_SHA256" "$SWIFT40_SHA" "$SWIFT40_TARBALL_SHA256" \
+    "$LINUX_SEED_URL" "$LINUX_SEED_SIG_URL" "$LINUX_SEED_SHA256" "$LINUX_SEED_KEYRING_URL" "$LINUX_SEED_KEY_FPR"
   [ -n "$TOOLCHAIN_SIGNER" ]')" || fail "sourcing pins.env with only /usr/bin:/bin on PATH failed"
 set -- $out
-[ $# -eq 26 ] || fail "expected 26 values from pins.env, got $#: $out"
+[ $# -eq 31 ] || fail "expected 31 values from pins.env, got $#: $out"
 v="$1"
 case "$v" in [0-9]*.[0-9]*.[0-9]*) ;; *) fail "SWIFT_VERSION '$v' is not X.Y.Z" ;; esac
 [ "$2" = "swift-$v-RELEASE" ] || fail "SWIFT_TAG '$2' is not derived from SWIFT_VERSION"
@@ -40,6 +41,12 @@ printf '%s' "${16}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-mavericks\.[0-9]+$' || f
 printf '%s\n%s\n' "$(printf '%s' "${16}" | sed 's/-mavericks\./ /; s/\./ /g')" "22 1 8 5" \
   | awk 'NR == 1 { split($0, h, " ") } NR == 2 { split($0, m, " "); for (i = 1; i <= 4; i++) { if (h[i] + 0 > m[i] + 0) exit 0; if (h[i] + 0 < m[i] + 0) exit 1 } exit 0 }' \
   || fail "CLANG22_VERSION '${16}' is older than 22.1.8-mavericks.5, the first libcxx22 on the OS's own libc++abi"
+# platform: shipyard's fetch_clang22.sh, which gives Linux its clang22, reads the release from a pin directory,
+#           components/clang22/version; one Renovate PR moves it and CLANG22_VERSION together.
+[ "$(cat "$REPO/components/clang22/version" 2>/dev/null)" = "${16}" ] \
+  || fail "components/clang22/version is not CLANG22_VERSION '${16}'"
+grep -q '"/^components/clang22/version\$/"' "$REPO/.github/renovate.json" \
+  || fail "no Renovate manager moves components/clang22/version with CLANG22_VERSION"
 for h in "${17}" "${18}" "${19}"; do
   printf '%s' "$h" | grep -Eq '^[0-9a-f]{64}$' || fail "a *_TARBALL_SHA256 pin '$h' is not a SHA-256 (scripts/pin-source-tarballs.sh writes them)"
 done
@@ -59,6 +66,15 @@ done
 ! grep -E '^SWIFT(62|54|40)_' "$REPO/pins.env" | grep -q 'renovate:' || fail "a frozen overlay pin carries a renovate: marker"
 ! grep -Eq 'SWIFT(62|54|40)' "$REPO/.github/renovate.json" "$REPO/scripts/pins-bot.sh" "$REPO/scripts/pin-source-tarballs.sh" \
   || fail "an automatic updater names a frozen overlay pin"
+
+# spec: the Linux seed is swift.org's ubuntu24.04 tarball: its URL moves with SWIFT_VERSION, the tarball
+#       is pinned by hash, and the signature must come from one pinned primary key
+base="https://download.swift.org/swift-$v-release/ubuntu2404/swift-$v-RELEASE/swift-$v-RELEASE-ubuntu24.04.tar.gz"
+[ "${27}" = "$base" ] || fail "LINUX_SEED_URL '${27}' is not derived from SWIFT_VERSION"
+[ "${28}" = "$base.sig" ] || fail "LINUX_SEED_SIG_URL '${28}' is not LINUX_SEED_URL plus .sig"
+printf '%s' "${29}" | grep -Eq '^[0-9a-f]{64}$' || fail "LINUX_SEED_SHA256 '${29}' is not a SHA-256"
+[ "${30}" = "https://swift.org/keys/all-keys.asc" ] || fail "LINUX_SEED_KEYRING_URL is '${30}'"
+printf '%s' "${31}" | grep -Eq '^[0-9A-F]{40}$' || fail "LINUX_SEED_KEY_FPR '${31}' is not a 40-hex fingerprint"
 
 up="$(cd "$REPO" && sh scripts/derive-upstream-version.sh)"
 [ "$up" = "$v" ] || fail "derive-upstream-version.sh says '$up', pins.env says '$v'"

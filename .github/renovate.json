@@ -57,6 +57,16 @@
       "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
     },
     {
+      "description": "The same clang-22 release as CLANG22_VERSION, in the pin directory shipyard's fetch_clang22.sh reads (components/clang22/version): on Linux it gives the runtime build clang22's Linux archive, or install@v1's products: install of it, verified against the release's SHA256SUMS. Same dependency, so the one Renovate branch moves both files; tests/pins-test.sh fails when they differ.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^components/clang22/version$/"],
+      "matchStrings": ["^(?<currentValue>\\S+)\\s*$"],
+      "depNameTemplate": "Mavergreen/clang-22",
+      "packageNameTemplate": "Mavergreen/clang-22",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-mavericks\\.(?<build>\\d+)$"
+    },
+    {
       "description": "Recaulk, whose librecaulk.a supplies the few post-10.9 APIs build.sh's RECAULK_RUNTIME_SYMBOLS names, linked statically into libswiftCore. The whole pin is the version: fetch-recaulk.sh verifies the pkg against that release's own SHA256SUMS. Recaulk tags YYYYMMDD.N; the versioning regex reads N as the build, so two releases on one day order.",
       "customType": "regex",
       "managerFilePatterns": ["/^pins\\.env$/"],
@@ -77,7 +87,7 @@
       ],
       "groupName": "Swift release",
       "prBodyNotes": [
-        "**The tarball pins:** `.github/workflows/pins-bot.yml` writes `LLVM_TARBALL_SHA256`, `SWIFT_TARBALL_SHA256` and `CMARK_TARBALL_SHA256` on this branch, after checking that each tarball is its commit's tree, and runs `release.yml` on its commit; that run's `build` is the check this PR merges on. Until then CI fails at the first fetch, naming the pin. If the bot failed, run `sh scripts/pin-source-tarballs.sh` on this branch and push `pins.env` (INGREDIENTS.md)."
+        "**The tarball pins:** `.github/workflows/pins-bot.yml` writes `LLVM_TARBALL_SHA256`, `SWIFT_TARBALL_SHA256`, `CMARK_TARBALL_SHA256` and `LINUX_SEED_SHA256` on this branch, after checking that each source tarball is its commit's tree and that the Linux seed is signed by swift.org's pinned key, and runs `release.yml` on its commit; that run's `build` is the check this PR merges on. Until then CI fails at the first fetch, naming the pin. If the bot failed, run `sh scripts/pin-source-tarballs.sh` on this branch and push `pins.env` (INGREDIENTS.md)."
       ]
     }
   ]

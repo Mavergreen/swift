@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- execs ld64.lld, this toolchain's OS X linker
+# platform: host-agnostic -- execs ld64.lld, this toolchain's OS X linker, on the toolchain's Mac and on a Linux host's selftest links
 #   The Swift driver runs a program named `ld`; lld takes its Mach-O personality only when invoked as
 #   ld64.lld, so this execs it under that name.
 #   spec: INGREDIENTS.md "Recaulk in every program" -- as mavericks-clang-22 does, every program and dylib

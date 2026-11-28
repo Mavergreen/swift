@@ -5,13 +5,14 @@
 #          sh scripts/pins-bot.sh apply <KEY=SHA256>...
 #          sh scripts/pins-bot.sh fill <base-ref>
 #          What .github/workflows/pins-bot.yml decides and writes when it fills a Swift bump's tarball pins on
-#          Renovate's branch (scripts/pin-source-tarballs.sh computes and checks the hashes themselves).
+#          Renovate's branch (scripts/pin-source-tarballs.sh computes and checks the hashes themselves; the seed's only for a tarball
+#          signed by the pinned key, so the bot's read-only job needs gpg and downloads ~1.1 GB on a Swift bump).
 #          moved   exit 0, printing them, when pins.env's source pin lines (LLVM_SHA, SWIFT_SHA, CMARK_SHA,
-#                  *_TARBALL_SHA256) differ from those of the commit where this branch left <base-ref>; else 1;
+#                  *_TARBALL_SHA256, LINUX_SEED_SHA256) differ from those of the commit where this branch left <base-ref>; else 1;
 #                  2 when git cannot tell (no merge base, a failed diff), never 1.
-#          values  prints the three tarball pins as KEY=SHA256, one line, three words; refuses one that is not
+#          values  prints the three tarball pins and the Linux seed's as KEY=SHA256, one line, four words; refuses one that is not
 #                  64 hex digits.
-#          apply   writes those three pins into pins.env and nothing else; refuses another key, a value that is
+#          apply   writes those four pins into pins.env and nothing else; refuses another key, a value that is
 #                  not 64 hex digits, or a key given twice, before writing anything; prints "changed" or
 #                  "unchanged".
 #          fill    the pins job's whole decision: exit 0 printing nothing when no source pin moved (moved) or
@@ -22,7 +23,7 @@
 set -eu
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 PINS="$HERE/pins.env"
-KEYS="LLVM_TARBALL_SHA256 SWIFT_TARBALL_SHA256 CMARK_TARBALL_SHA256"
+KEYS="LLVM_TARBALL_SHA256 SWIFT_TARBALL_SHA256 CMARK_TARBALL_SHA256 LINUX_SEED_SHA256"
 hex64() { case "$1" in *[!0-9a-f]*|'') return 1 ;; esac; [ "${#1}" -eq 64 ]; }
 case "${1:-}" in
   moved)
@@ -30,7 +31,7 @@ case "${1:-}" in
     base="$(git -C "$HERE" merge-base "$2" HEAD)" || { echo "pins-bot: no merge base with $2" >&2; exit 2; }
     # The diff is taken whole first: a git that fails must not read as "no source pin moved".
     d="$(git -C "$HERE" diff "$base" HEAD -- pins.env)" || { echo "pins-bot: git diff $base HEAD -- pins.env failed" >&2; exit 2; }
-    lines="$(printf '%s\n' "$d" | grep -E '^[-+](LLVM_SHA|SWIFT_SHA|CMARK_SHA|[A-Z]+_TARBALL_SHA256)=' || :)"
+    lines="$(printf '%s\n' "$d" | grep -E '^[-+](LLVM_SHA|SWIFT_SHA|CMARK_SHA|[A-Z]+_TARBALL_SHA256|LINUX_SEED_SHA256)=' || :)"
     [ -n "$lines" ] || exit 1
     printf '%s\n' "$lines" ;;
   values)

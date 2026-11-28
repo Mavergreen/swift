@@ -1,11 +1,11 @@
 #!/bin/sh
-# platform: macOS-only -- runs build.sh (macOS-only), in both modes, with a fake pkgutil and toolchain
-# usage: sh tests/build-native-host-test.sh
+# platform: macOS-only -- runs build.sh's Mac modes, mavericks and modern, which a Linux host refuses or runs otherwise
+# usage: sh tests/build-mavericks-host-test.sh
 #   build.sh must build with a host toolchain of this checkout's Swift only: step 1 prints the release the
-#   toolchain's receipt names, and refuses one of another Swift version, or one no pkg installed unless
-#   SWIFT_HOST_TOOLCHAIN_VERSION declares it. Native mode cannot run here (it needs OS X 10.9 and the
-#   installed toolchain), so a fake toolchain prefix and a fake pkgutil stand in; NM names no program, so a
-#   toolchain step 1 accepts stops there, at the next check, before any SDK fetch. Cross mode (CI) takes
+#   toolchain's pkg names in its mavergreen.plist, and refuses one of another Swift version, or one no pkg
+#   installed unless SWIFT_HOST_TOOLCHAIN_VERSION declares it; it never asks pkgutil. Mavericks mode cannot run
+#   here (it needs OS X 10.9 and the installed toolchain), so a fake toolchain prefix stands in; NM names no program, so a
+#   toolchain step 1 accepts stops there, at the next check, before any SDK fetch. Modern mode (CI) takes
 #   the toolchain SWIFT_HOST_TOOLCHAIN names the same way, never the swift.org pkg, and stops at the SDK
 #   fetch (this test's shipyard has none), and passes CMAKE_OSX_ARCHITECTURES=x86_64 to the stdlib configure
 #   (an arm64 Mac's CMake probe would ask the x86_64-only toolchain clang for arm64; step 1 reports the flag
@@ -24,7 +24,7 @@
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
-T="$(mktemp -d "${TMPDIR:-/tmp}/build-native-host.XXXXXX")"
+T="$(mktemp -d "${TMPDIR:-/tmp}/build-mavericks-host.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 T="$(CDPATH='' cd -P -- "$T" && pwd -P)"
 . "$REPO/pins.env"   # -> SWIFT_VERSION
@@ -34,70 +34,72 @@ R="$T/root"; mkdir -p "$R/swift/out/llvm/lib/cmake/llvm" "$R/swift/work/llvm-bui
 : > "$R/swift/work/llvm-build/bin/ld64.lld"; chmod +x "$R/swift/work/llvm-build/bin/ld64.lld"
 H="$T/tc"; mkdir -p "$H/bin" "$H/lib/swift/macosx" "$H/lib/clang/21/include" "$H/lib/clang/21/lib/darwin"
 : > "$H/bin/swift-frontend"; : > "$H/bin/clang"; : > "$H/bin/ld64.lld"; : > "$H/lib/clang/21/lib/darwin/libclang_rt.osx.a"
-printf '#!/bin/sh\n[ "$1" = --file-info ] || exit 2\necho "$2" >> "%s/pkgutil-args"\ncat "%s/receipt"\n' "$T" "$T" > "$T/fakebin/pkgutil"
+printf '#!/bin/sh\necho "pkgutil $*" >> "%s/pkgutil-args"\nexit 1\n' "$T" > "$T/fakebin/pkgutil"
 chmod +x "$T/fakebin/pkgutil"
-receipt() {  # $1 = pkg-version, or nothing for no receipt
-  { echo "volume: /"; echo "path: $H/bin/swift-frontend"
-    [ -z "${1:-}" ] || printf '\npkgid: dev.mavergreen.swift-toolchain\npkg-version: %s\ninstall-time: 1790384965\n' "$1"; } > "$T/receipt"
+manifest() {  # $1 = the version the prefix's mavergreen.plist names, or nothing for no pkg (no manifest)
+  rm -f "$H/mavergreen.plist"
+  [ -z "${1:-}" ] || printf '%s\n' '<plist version="1.0">' '<dict>' '  <key>identifier</key>' '  <string>dev.mavergreen.swift-toolchain</string>' \
+    '  <key>version</key>' "  <string>$1</string>" '</dict>' '</plist>' > "$H/mavergreen.plist"
 }
-build() {  # runs build.sh's native mode; its output in $T/out
-  ( export PATH="$T/fakebin:$PATH" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=native \
+build() {  # runs build.sh's mavericks mode; its output in $T/out
+  ( export PATH="$T/fakebin:$PATH" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=mavericks \
       SWIFT_HOST_TOOLCHAIN="$H" NM="$T/no-nm"
     unset SWIFT_WORK SWIFT_BUILTINS
     sh "$REPO/build.sh" ) > "$T/out" 2>&1
 }
 went_past_step_1() { grep -q "FAIL: no $T/no-nm" "$T/out"; }
 
-echo "-- a receipt of this checkout's Swift: printed, and step 1 goes on"
-receipt "$SWIFT_VERSION-mavericks.7"
+echo "-- a manifest of this checkout's Swift: printed, and step 1 goes on"
+manifest "$SWIFT_VERSION-mavericks.7"
 if build; then fail "build.sh succeeded with a fake toolchain: $(cat "$T/out")"; fi
 grep -qxF "    host toolchain $H: release $SWIFT_VERSION-mavericks.7 (pkg dev.mavergreen.swift-toolchain)" "$T/out" \
   || fail "did not print the release: $(cat "$T/out")"
 went_past_step_1 || fail "stopped before the check after the release's: $(cat "$T/out")"
-if grep -q 'CMAKE_OSX_ARCHITECTURES' "$T/out"; then fail "native mode passes CMAKE_OSX_ARCHITECTURES: $(cat "$T/out")"; fi
-grep -qxF "$H/bin/swift-frontend" "$T/pkgutil-args" || fail "looked up another file's receipt: $(cat "$T/pkgutil-args")"
+if grep -q 'CMAKE_OSX_ARCHITECTURES' "$T/out"; then fail "mavericks mode passes CMAKE_OSX_ARCHITECTURES: $(cat "$T/out")"; fi
+[ ! -e "$T/pkgutil-args" ] || fail "asked pkgutil: $(cat "$T/pkgutil-args")"
 
-echo "-- a receipt of another Swift: refused in step 1"
-receipt "0.0.1-mavericks.1"
+echo "-- a manifest of another Swift: refused in step 1"
+manifest "0.0.1-mavericks.1"
 if build; then fail "build.sh succeeded with a fake toolchain: $(cat "$T/out")"; fi
 grep -q "FAIL: the host toolchain at $H is release 0.0.1-mavericks.1" "$T/out" || fail "did not refuse 0.0.1: $(cat "$T/out")"
 if went_past_step_1; then fail "went on past a toolchain of another Swift: $(cat "$T/out")"; fi
 
-echo "-- no receipt: refused, unless SWIFT_HOST_TOOLCHAIN_VERSION declares this checkout's Swift"
-receipt ""
+echo "-- no manifest (mavergreen.plist): refused, unless SWIFT_HOST_TOOLCHAIN_VERSION declares this checkout's Swift"
+manifest ""
 if build; then fail "build.sh succeeded with a fake toolchain: $(cat "$T/out")"; fi
 grep -q 'SWIFT_HOST_TOOLCHAIN_VERSION' "$T/out" || fail "did not name the override: $(cat "$T/out")"
-if went_past_step_1; then fail "went on past a toolchain with no receipt: $(cat "$T/out")"; fi
+if went_past_step_1; then fail "went on past a toolchain with no manifest: $(cat "$T/out")"; fi
 if ( export SWIFT_HOST_TOOLCHAIN_VERSION="$SWIFT_VERSION-mavericks.7"; build ); then fail "build.sh succeeded with a fake toolchain"; fi
 grep -q "release $SWIFT_VERSION-mavericks.7 (declared" "$T/out" || fail "did not print the declared release: $(cat "$T/out")"
 went_past_step_1 || fail "stopped at a declared release of this checkout's Swift: $(cat "$T/out")"
 
-echo "-- cross mode with SWIFT_HOST_TOOLCHAIN: that toolchain, its receipt checked, never the swift.org pkg"
-build_cross() {  # build.sh's cross mode; $1 names the host toolchain, or nothing for none
-  ( export PATH="$T/fakebin:$PATH" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=cross
+echo "-- modern mode with SWIFT_HOST_TOOLCHAIN: that toolchain, its manifest checked, never the swift.org pkg"
+build_cross() {  # build.sh's modern mode; $1 names the host toolchain, or nothing for none
+  ( export PATH="$T/fakebin:$PATH" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=modern
     unset SWIFT_WORK SWIFT_BUILTINS NM SWIFT_HOST_TOOLCHAIN
     if [ -n "$1" ]; then export SWIFT_HOST_TOOLCHAIN="$1"; fi
     sh "$REPO/build.sh" ) > "$T/out" 2>&1
 }
-receipt ""
+manifest ""
 if ( export SWIFT_HOST_TOOLCHAIN_VERSION="$SWIFT_VERSION-mavericks.9"; build_cross "$H" ); then fail "build.sh succeeded with a fake toolchain: $(cat "$T/out")"; fi
 grep -qxF "    host toolchain $H: release $SWIFT_VERSION-mavericks.9 (declared by SWIFT_HOST_TOOLCHAIN_VERSION)" "$T/out" \
-  || fail "cross mode did not take the named toolchain: $(cat "$T/out")"
-grep -q 'FAIL: could not fetch the pinned modern SDK' "$T/out" || fail "cross mode stopped before the SDK fetch: $(cat "$T/out")"
-if grep -q 'swift.org toolchain' "$T/out"; then fail "cross mode looked for the swift.org pkg beside a named toolchain"; fi
+  || fail "modern mode did not take the named toolchain: $(cat "$T/out")"
+grep -q 'FAIL: could not fetch the pinned modern SDK' "$T/out" || fail "modern mode stopped before the SDK fetch: $(cat "$T/out")"
+if grep -q 'swift.org toolchain' "$T/out"; then fail "modern mode looked for the swift.org pkg beside a named toolchain"; fi
 grep -qxF "    cmake architectures: -DCMAKE_OSX_ARCHITECTURES=x86_64 (a named host toolchain's clang is x86_64 only)" "$T/out" \
-  || fail "cross mode with a named toolchain did not pass CMAKE_OSX_ARCHITECTURES: $(cat "$T/out")"
+  || fail "modern mode with a named toolchain did not pass CMAKE_OSX_ARCHITECTURES: $(cat "$T/out")"
 if build_cross "$H"; then fail "build.sh succeeded with a fake toolchain"; fi
-grep -q 'SWIFT_HOST_TOOLCHAIN_VERSION' "$T/out" || fail "cross mode took a receipt-less toolchain without a declared release: $(cat "$T/out")"
+grep -q 'SWIFT_HOST_TOOLCHAIN_VERSION' "$T/out" || fail "modern mode took a manifest-less toolchain without a declared release: $(cat "$T/out")"
 if build_cross ""; then fail "build.sh succeeded with no swift.org pkg"; fi
-if grep -q 'CMAKE_OSX_ARCHITECTURES' "$T/out"; then fail "cross mode without a host toolchain passes CMAKE_OSX_ARCHITECTURES"; fi
-grep -q "FAIL: no swift.org toolchain at $R/swift/cache/" "$T/out" || fail "cross mode without a host toolchain: $(cat "$T/out")"
+if grep -q 'CMAKE_OSX_ARCHITECTURES' "$T/out"; then fail "modern mode without a host toolchain passes CMAKE_OSX_ARCHITECTURES"; fi
+grep -q "FAIL: no swift.org toolchain at $R/swift/cache/" "$T/out" || fail "modern mode without a host toolchain: $(cat "$T/out")"
 
 echo "-- the stdlib configure takes step 1's architecture arguments (the call is run here with a fake shipyard-cmake)"
 # Reaching step 4 for real needs the pinned swift source, patched; so the configure call itself is cut out of
-# build.sh (from `shipyard-cmake` to the first line with no trailing backslash) and run with CMAKE_ARCH_ARGS set.
-awk '/^shipyard-cmake /{on=1} on{print} on&&!/\\$/{exit}' "$REPO/build.sh" > "$T/configure.sh"
-[ -s "$T/configure.sh" ] || fail "found no shipyard-cmake call in build.sh"
+# build.sh (from `shipyard_cmake` to the first line with no trailing backslash) and run with CMAKE_ARCH_ARGS set,
+# lib.sh's shipyard_cmake running shipyard-cmake on a Mac.
+{ echo ". \"$REPO/lib.sh\""; awk '/^shipyard_cmake /{on=1} on{print} on&&!/\\$/{exit}' "$REPO/build.sh"; } > "$T/configure.sh"
+grep -q '^shipyard_cmake ' "$T/configure.sh" || fail "found no shipyard_cmake call in build.sh"
 printf '#!/bin/sh\nprintf "%%s\\n" "$@"\n' > "$T/fakebin/shipyard-cmake"; chmod +x "$T/fakebin/shipyard-cmake"
 configure_args() {  # $1 = CMAKE_ARCH_ARGS; the arguments the call passes, one a line
   ( set +eu; CMAKE_ARCH_ARGS="$1"
@@ -213,10 +215,10 @@ F
 printf '#!/bin/sh\nexit 3\n' > "$T/fakebin/ninja"
 for c in git xcrun; do printf '#!/bin/sh\necho "%s $*" >> "%s/log"\nexit 1\n' "$c" "$T" > "$T/fakebin/$c"; done
 chmod +x "$T/shipyard/"* "$T/fakebin/"*
-receipt "$SWIFT_VERSION-mavericks.9"
-build_native() {  # build.sh's native mode past step 1, everything faked; ninja stops it after the configure
+manifest "$SWIFT_VERSION-mavericks.9"
+build_native() {  # build.sh's mavericks mode past step 1, everything faked; ninja stops it after the configure
   : > "$T/log"
-  if ( export PATH="$T/fakebin:$PATH" FAKE_LOG="$T/log" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=native \
+  if ( export PATH="$T/fakebin:$PATH" FAKE_LOG="$T/log" MAVERICKS_BUILD_ROOT="$R" SHIPYARD_SCRIPTS="$T/shipyard" MAVERICKS_MODE=mavericks \
         SWIFT_HOST_TOOLCHAIN="$H" CLANG22_PREFIX="$C22" MAVERICKS_CLANG_CACHE="$T/clang-cache" MAVERGREEN_RECAULK_CACHE="$T/recaulk-cache" \
         MAVERICKS_SDK_CACHE="$T/sdk-cache"
       unset SWIFT_WORK SWIFT_BUILTINS NM
@@ -266,8 +268,13 @@ awk '/^build_overlay\(\) \{/,/^}/' "$REPO/build.sh" | grep -q 'build-module.sh' 
 #       against recaulk-materialize's view, its sdk/MacOSX10.9.sdk and its overlay.json.
 awk '/^build_overlay\(\) \{/,/^}/' "$REPO/build.sh" | grep -qF -e '--sdk "$SDK_VIEW_SDK" --sdk-view "$SDK_VIEW_VFS"' \
   || fail "build_overlay does not compile against the SDK view"
-grep -q '^"$RECAULK_PREFIX/bin/recaulk-materialize" --sdk "$SDK_PLAIN" --out "$SDK_VIEW" --profile "$SDK_VIEW_PROFILE"' "$REPO/build.sh" \
+grep -qx 'RECAULK_MATERIALIZE="$RECAULK_PREFIX/bin/recaulk-materialize"' "$REPO/build.sh" \
+  && grep -q '^"$RECAULK_MATERIALIZE" --sdk "$SDK_PLAIN" --out "$SDK_VIEW" --profile "$SDK_VIEW_PROFILE"' "$REPO/build.sh" \
   || fail "build.sh does not make the SDK view with Recaulk's recaulk-materialize"
+# On Linux, which cannot run the pkg's Mach-O, the release's Linux one makes it (fetch-recaulk.sh --materializer).
+awk '/^RECAULK_MATERIALIZE=/,/^"\$RECAULK_MATERIALIZE" --sdk/' "$REPO/build.sh" | grep -q 'if \[ "\$HOST" = linux \]; then' \
+  && awk '/^RECAULK_MATERIALIZE=/,/^"\$RECAULK_MATERIALIZE" --sdk/' "$REPO/build.sh" | grep -qF 'RECAULK_MATERIALIZE="$(sh "$HERE/fetch-recaulk.sh" --materializer)"' \
+  || fail "build.sh on Linux does not take the release's Linux recaulk-materialize"
 # Step 5b builds the overlays in the order they import each other, Foundation's three after Dispatch: CoreFoundation,
 # CoreGraphics, then Foundation, which links 10.9's Foundation and CoreFoundation frameworks, as CoreGraphics links
 # ApplicationServices (10.9's CoreGraphics is inside it); Foundation's two Objective-C files go to its link; step 7
@@ -302,6 +309,8 @@ for l in CoreFoundation CoreGraphics Foundation; do
   grep -q "^RUNTIME_DYLIBS=.*libswift$l\.dylib" "$REPO/scripts/stage-runtime.sh" || fail "stage-runtime.sh's RUNTIME_DYLIBS lacks libswift$l.dylib"
 done
 if grep -q '^git \|^xcrun ' "$T/log"; then fail "ran $(grep '^git \|^xcrun ' "$T/log" | head -1)"; fi
+# A Mac configures for its own platform: the Linux host's CMake platform and install_name_tool are not passed.
+if grep -q 'CMAKE_SYSTEM_NAME\|CMAKE_SYSTEM_PROCESSOR\|CMAKE_INSTALL_NAME_TOOL' "$T/log"; then fail "a Mac configure passes the Linux host's CMake platform: $(cat "$T/log")"; fi
 
 echo "-- step 5b's test support: with Concurrency when the host compiler declares a 10.9 async function; without"
 echo "   it, and without upstream's concurrency tests, saying so, when it refuses one (the swift.org seed); else FAIL"
@@ -397,7 +406,7 @@ grep -qxF "source swift https://github.com/swiftlang/swift.git $SWIFT_SHA $SWIFT
 : > "$SB/kept.o"
 build_native
 [ -f "$SB/kept.o" ] || fail "the same swift source removed the stdlib-build: $(cat "$T/out")"
-(export FAKE_SWIFT_SOURCE="https://github.com/swiftlang/swift.git 1111111111111111111111111111111111111111 $SWIFT_TARBALL_SHA256"; build_native)
+(export FAKE_SWIFT_SOURCE="https://github.com/swiftlang/swift.git 1111111111111111111111111111111111111111 $SWIFT_TARBALL_SHA256"; build_native) || exit 1
 [ ! -e "$SB/kept.o" ] || fail "another swift commit kept the stdlib-build: $(cat "$T/out")"
 grep -q "removing $SB: " "$T/out" || fail "removed the stdlib-build without saying so: $(cat "$T/out")"
 echo "PASS"

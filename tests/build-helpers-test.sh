@@ -7,7 +7,13 @@
 #   what it cannot use before it removes anything. apple_probe_answers must answer CMake's and LLVM's Apple
 #   probes (tapi, strip, ld64) without xcrun or a Command Line Tools name, and HOST_LINK_VERSION be 10.9's ld64.
 #   source_stamp must name each source tree's commit, so a build dir stamped with it starts afresh when
-#   another commit's tarball is extracted, and is kept when the same one is.
+#   another commit's tarball is extracted, and is kept when the same one is. clang22_prefix must require
+#   llvm-libtool-darwin on a Mac and not on Linux (a faked uname), whose clang22 archive has none, and
+#   fetch-clang22.sh on Linux must hand shipyard's fetch_clang22.sh the repo's components/clang22, refusing
+#   one whose version is not pins.env's CLANG22_VERSION, and run no pkgutil. host_toolchain_release must read
+#   a prefix's release from the mavergreen.plist its pkg installed, never a pkgutil receipt, so it reads the
+#   same on either host; recaulk_vfs_yaml must name every usr/include/dispatch/*.h of the SDK, so a
+#   case-sensitive filesystem resolves the Dispatch module inside the overlay.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -15,6 +21,7 @@ T="$(mktemp -d "${TMPDIR:-/tmp}/build-helpers.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 T="$(CDPATH='' cd -P -- "$T" && pwd -P)"   # physical, so a link below is the only second spelling
 . "$REPO/lib.sh"
+unset SWIFT_HOST_TOOLCHAIN SWIFT_HOST_TOOLCHAIN_VERSION   # a build host's environment names its own
 
 echo "-- apple_probe_answers: tapi, strip and ld64 named, none of them xcrun or a Command Line Tools tool"
 [ "$(apple_probe_answers /c22/bin)" = "-DCMAKE_TAPI=/usr/bin/false -DCMAKE_STRIP=/c22/bin/llvm-strip -DLD64_EXECUTABLE=/usr/bin/false" ] \
@@ -233,41 +240,122 @@ grep -q '(false)' "$T/out" || fail "did not name OTOOL's reader: $(cat "$T/out")
 ( export PATH="$T/fakebin:$PATH" FAKE_OTOOL_OUT="$LIBS"; OTOOL="$T/llvm-otool" macho_links_none_under "$T/lld" /opt/pkg/ ) > /dev/null \
   || fail "refused a clean lld read by OTOOL"
 
-echo "-- host_toolchain_release: the receipt's release, of SWIFT_VERSION, whatever the pkg id"
+echo "-- host_toolchain_release: the release its pkg's mavergreen.plist names, of SWIFT_VERSION, whatever the pkg id; no pkgutil"
 SWIFT_VERSION=6.4.0; mkdir -p "$T/fakebin"
-printf '#!/bin/sh\n[ "$1" = --file-info ] || exit 2\necho "$2" > "%s/pkgutil-arg"\ncat "%s/receipt"\nexit "${FAKE_PKGUTIL_RC:-0}"\n' "$T" "$T" > "$T/fakebin/pkgutil"
+# platform: a pkg receipt exists only on a Mac; the manifest every Mavergreen pkg installs beside its prefix
+#           reads the same on any host, so pkgutil must never run.
+printf '#!/bin/sh\necho "pkgutil $*" >> "%s/pkgutil-log"\nexit 1\n' "$T" > "$T/fakebin/pkgutil"
 chmod +x "$T/fakebin/pkgutil"
-receipt() {  # $1 = pkgid, $2... = pkg-versions (none: no receipt)
-  _id="$1"; shift
-  { echo "volume: /"; echo "path: $T/tc/bin/swift-frontend"
-    for _v in "$@"; do printf '\npkgid: %s\npkg-version: %s\ninstall-time: 1790384965\n' "$_id" "$_v"; done; } > "$T/receipt"
+manifest() {  # $1 = identifier, $2 = version (no $1: no mavergreen.plist; an empty $2: a manifest without one)
+  rm -f "$T/tc/mavergreen.plist"
+  [ -n "${1:-}" ] || return 0
+  { printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0">' '<dict>' \
+      '  <key>identifier</key>' "  <string>$1</string>" '  <key>name</key>' '  <string>Mavericks Swift Toolchain</string>'
+    [ -z "$2" ] || printf '%s\n' '  <key>version</key>' "  <string>$2</string>"
+    printf '%s\n' '  <key>requires</key>' '  <array>' '    <string>libcxx22&gt;=22.1.8-mavericks.22</string>' '  </array>' '</dict>' '</plist>'
+  } > "$T/tc/mavergreen.plist"
 }
 release() { ( PATH="$T/fakebin:$PATH"; host_toolchain_release "$T/tc" ) > "$T/out" 2> "$T/err"; }
-receipt dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
+manifest dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
 release || fail "refused 6.4.0-mavericks.7: $(cat "$T/err")"
 [ "$(cat "$T/out")" = "6.4.0-mavericks.7 (pkg dev.mavergreen.swift-toolchain)" ] || fail "printed: $(cat "$T/out")"
-[ "$(cat "$T/pkgutil-arg")" = "$T/tc/bin/swift-frontend" ] || fail "looked up $(cat "$T/pkgutil-arg"), not the frontend"
-receipt dev.mavergreen.swift-toolchain-cross 6.4.0-mavericks.8
-release || fail "refused the cross toolchain's receipt: $(cat "$T/err")"
+manifest dev.mavergreen.swift-toolchain-cross 6.4.0-mavericks.8
+release || fail "refused the cross toolchain's manifest: $(cat "$T/err")"
 [ "$(cat "$T/out")" = "6.4.0-mavericks.8 (pkg dev.mavergreen.swift-toolchain-cross)" ] || fail "printed: $(cat "$T/out")"
 for v in 6.4.1-mavericks.1 6.3.3-mavericks.6 6.4.0 6.4.0- 6.4.01-mavericks.1; do
-  receipt dev.mavergreen.swift-toolchain "$v"
+  manifest dev.mavergreen.swift-toolchain "$v"
   if release; then fail "accepted release $v for Swift 6.4.0"; fi
   grep -q "$v" "$T/err" && grep -q 'Swift 6.4.0' "$T/err" || fail "did not name $v and 6.4.0: $(cat "$T/err")"
 done
-receipt dev.mavergreen.swift-toolchain 6.4.0-mavericks.7 6.4.0-mavericks.8
-if release; then fail "accepted a frontend two releases claim"; fi
-receipt dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
-if ( export FAKE_PKGUTIL_RC=1; release ); then fail "passed although pkgutil failed"; fi
+manifest dev.mavergreen.swift-toolchain ""
+if release; then fail "accepted a manifest that names no version"; fi
+grep -q 'mavergreen.plist' "$T/err" || fail "did not name the manifest: $(cat "$T/err")"
+[ ! -e "$T/pkgutil-log" ] || fail "ran pkgutil: $(cat "$T/pkgutil-log")"
 
 echo "-- host_toolchain_release: a copy no pkg installed needs its release declared, under the same rule"
-receipt none
-if release; then fail "accepted a toolchain with no receipt"; fi
+manifest
+if release; then fail "accepted a toolchain with no mavergreen.plist"; fi
 grep -q 'SWIFT_HOST_TOOLCHAIN_VERSION' "$T/err" || fail "did not name the override: $(cat "$T/err")"
 ( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.7; release ) || fail "refused a declared 6.4.0-mavericks.7: $(cat "$T/err")"
 grep -q '^6.4.0-mavericks.7 (declared' "$T/out" || fail "printed: $(cat "$T/out")"
 if ( SWIFT_HOST_TOOLCHAIN_VERSION=6.3.3-mavericks.6; release ); then fail "accepted a declared 6.3.3 release"; fi
-receipt dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
-if ( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.8; release ); then fail "accepted a declaration the receipt contradicts"; fi
-( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.7; release ) || fail "refused a declaration the receipt agrees with"
+manifest dev.mavergreen.swift-toolchain 6.4.0-mavericks.7
+if ( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.8; release ); then fail "accepted a declaration the manifest contradicts"; fi
+( SWIFT_HOST_TOOLCHAIN_VERSION=6.4.0-mavericks.7; release ) || fail "refused a declaration the manifest agrees with"
+rm -f "$T/tc/mavergreen.plist"
+[ ! -e "$T/pkgutil-log" ] || fail "ran pkgutil: $(cat "$T/pkgutil-log")"
+
+echo "-- recaulk_vfs_yaml: every header of the SDK's dispatch dir named, so a case-sensitive filesystem resolves the module"
+S="$T/vfs-sdk"; mkdir -p "$S/usr/include/dispatch"
+for f in base.h dispatch.h introspection.d introspection.h module.map queue.h; do : > "$S/usr/include/dispatch/$f"; done
+recaulk_vfs_yaml "$S" "$T/imp" "$T/vfs.yaml" || fail "recaulk_vfs_yaml failed"
+cat > "$T/vfs.want" <<W
+{
+  'version': 0,
+  'case-sensitive': 'false',
+  'use-external-names': false,
+  'roots': [
+    { 'name': '$S/usr/include/dispatch', 'type': 'directory',
+      'contents': [ { 'name': 'module.map', 'type': 'file', 'external-contents': '$T/imp/Dispatch.modulemap' },
+                    { 'name': 'base.h', 'type': 'file', 'external-contents': '$S/usr/include/dispatch/base.h' },
+                    { 'name': 'dispatch.h', 'type': 'file', 'external-contents': '$S/usr/include/dispatch/dispatch.h' },
+                    { 'name': 'introspection.h', 'type': 'file', 'external-contents': '$S/usr/include/dispatch/introspection.h' },
+                    { 'name': 'queue.h', 'type': 'file', 'external-contents': '$S/usr/include/dispatch/queue.h' },
+                    { 'name': 'recaulk-dispatch.h', 'type': 'file', 'external-contents': '$T/imp/dispatch/dispatch.h' } ] },
+    { 'name': '$S/usr/include/pthread', 'type': 'directory',
+      'contents': [ { 'name': 'qos.h', 'type': 'file', 'external-contents': '$T/imp/pthread/qos.h' } ] }
+  ]
+}
+W
+cmp -s "$T/vfs.want" "$T/vfs.yaml" || fail "recaulk_vfs_yaml: $(diff "$T/vfs.want" "$T/vfs.yaml")"
+: > "$S/usr/include/dispatch/it's.h"
+if recaulk_vfs_yaml "$S" "$T/imp" "$T/vfs.yaml" 2> "$T/err"; then fail "wrote a header name holding a quote"; fi
+grep -q "it's.h" "$T/err" || fail "did not name the header it could not quote: $(cat "$T/err")"
+echo "-- clang22_prefix: llvm-libtool-darwin required on a Mac, not on Linux (clang22's Linux archive has none)"
+mkdir -p "$T/unamebin"
+printf '#!/bin/sh\nif [ -n "${FAKE_UNAME:-}" ] && [ "$1" = -s ]; then echo "$FAKE_UNAME"; else exec /usr/bin/uname "$@"; fi\n' > "$T/unamebin/uname"
+chmod +x "$T/unamebin/uname"
+C="$T/c22"; mkdir -p "$C/bin"
+for t in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-lipo llvm-nm llvm-otool llvm-strings; do
+  printf '#!/bin/sh\n' > "$C/bin/$t"; chmod +x "$C/bin/$t"
+done
+mkdir -p "$T/c22repo"; printf '#!/bin/sh\necho "%s"\n' "$C" > "$T/c22repo/fetch-clang22.sh"
+on() { _h="$1"; shift; ( PATH="$T/unamebin:$PATH"; FAKE_UNAME="$_h"; export FAKE_UNAME; "$@" ); }
+[ "$(on Linux clang22_prefix cross "$T/c22repo" 2> "$T/err")" = "$C" ] || fail "Linux: refused a clang22 without llvm-libtool-darwin: $(cat "$T/err")"
+if on Darwin clang22_prefix cross "$T/c22repo" > /dev/null 2> "$T/err"; then fail "Darwin: accepted a clang22 without llvm-libtool-darwin"; fi
+grep -q "no $C/bin/llvm-libtool-darwin" "$T/err" || fail "Darwin: did not name llvm-libtool-darwin: $(cat "$T/err")"
+for t in llvm-ar llvm-otool; do
+  mv "$C/bin/$t" "$T/$t.away"
+  if on Linux clang22_prefix cross "$T/c22repo" > /dev/null 2> "$T/err"; then fail "Linux: accepted a clang22 without $t"; fi
+  grep -q "no $C/bin/$t" "$T/err" || fail "Linux: did not name $t: $(cat "$T/err")"
+  mv "$T/$t.away" "$C/bin/$t"
+done
+
+echo "-- fetch-clang22.sh on Linux: shipyard's fetch_clang22.sh, given the repo's components/clang22; no pkgutil"
+. "$REPO/pins.env"
+R="$T/fc22"; mkdir -p "$R/components/clang22" "$T/fc22-shipyard" "$T/fc22bin"
+cp "$REPO/fetch-clang22.sh" "$REPO/pins.env" "$REPO/msc.sh" "$R/"
+cp "$REPO/components/clang22/version" "$R/components/clang22/version"
+# v1.0.822's fetch_clang22.sh installs the products: prefix with install-products.sh: it names it.
+printf '#!/bin/sh\n# install-products.sh\necho "fetch_clang22.sh $*" >> "%s/fc22.log"\necho "%s"\n' "$T" "$C" > "$T/fc22-shipyard/fetch_clang22.sh"
+: > "$T/fc22-shipyard/install-products.sh"
+printf '#!/bin/sh\necho "pkgutil $*" >> "%s/fc22.log"\nexit 1\n' "$T" > "$T/fc22bin/pkgutil"; chmod +x "$T/fc22bin/pkgutil"
+fc22() { ( PATH="$T/fc22bin:$T/unamebin:$PATH"; FAKE_UNAME=Linux SHIPYARD_SCRIPTS="$T/fc22-shipyard"; export FAKE_UNAME SHIPYARD_SCRIPTS
+           sh "$R/fetch-clang22.sh" ) > "$T/out" 2> "$T/err"; }
+: > "$T/fc22.log"
+fc22 || fail "fetch-clang22.sh failed on Linux: $(cat "$T/err")"
+[ "$(cat "$T/out")" = "$C" ] || fail "printed '$(cat "$T/out")', not fetch_clang22.sh's prefix"
+[ "$(cat "$T/fc22.log")" = "fetch_clang22.sh $R/components/clang22" ] || fail "ran: $(cat "$T/fc22.log")"
+[ "$(cat "$R/components/clang22/version")" = "$CLANG22_VERSION" ] || fail "the repo's components/clang22/version is not pins.env's CLANG22_VERSION"
+echo 22.1.8-mavericks.1 > "$R/components/clang22/version"
+if fc22; then fail "accepted a components/clang22/version that is not CLANG22_VERSION"; fi
+grep -q "22.1.8-mavericks.1" "$T/err" && grep -q "$CLANG22_VERSION" "$T/err" || fail "did not name both versions: $(cat "$T/err")"
+cp "$REPO/components/clang22/version" "$R/components/clang22/version"
+# An older fetch_clang22.sh beside a newer install-products.sh (a partial checkout) is still refused.
+printf '#!/bin/sh\necho "fetch_clang22.sh $*" >> "%s/fc22.log"\necho "%s"\n' "$T" "$C" > "$T/fc22-shipyard/fetch_clang22.sh"
+: > "$T/fc22.log"
+if fc22; then fail "used a shipyard whose fetch_clang22.sh predates the products: prefix"; fi
+[ ! -s "$T/fc22.log" ] || fail "ran the old fetch_clang22.sh: $(cat "$T/fc22.log")"
+grep -q 'shipyard' "$T/err" || fail "did not name shipyard: $(cat "$T/err")"
+if grep -q '^pkgutil' "$T/fc22.log"; then fail "ran pkgutil on Linux: $(grep '^pkgutil' "$T/fc22.log")"; fi
 echo "PASS"

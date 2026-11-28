@@ -107,7 +107,10 @@ done
 #       with mavericks-clang-22's llvm-otool on both hosts (OTOOL names another): 10.9 has no otool without
 #       the Command Line Tools.
 if [ -z "${OTOOL:-}" ]; then
-  C22="$(clang22_prefix "${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}" "$HERE")" \
+  # clang22_prefix's argument names a clang22 product variant (cross or native), not the build mode.
+  _mode="${MAVERICKS_MODE:-$(sh "$SHIPYARD/mavericks_mode.sh")}"
+  case "$_mode" in mavericks) _c22=native ;; *) _c22=cross ;; esac
+  C22="$(clang22_prefix "$_c22" "$HERE")" \
     || { echo "stage-toolchain: no usable mavericks-clang-22, whose llvm-otool reads the stdlib's dylibs" >&2; exit 1; }
   OTOOL="$C22/bin/llvm-otool"
 fi

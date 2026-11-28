@@ -1,7 +1,7 @@
 #!/bin/sh
 # platform: host-agnostic
 # usage: SWIFT_HOST_TOOLCHAIN=<prefix> [SDKROOT=<MacOSX10.9.sdk>] sh tests/objc-imported-protocol-test.sh
-#   Compiler patch 0006: a program that refers to an imported Objective-C protocol in a mangled name (here an
+#   Compiler patch 0007: a program that refers to an imported Objective-C protocol in a mangled name (here an
 #   escaping closure's capture of `any FixtureSource`) makes the compiler emit that protocol's ObjC record,
 #   and those it refines. Below macOS 13.3 the record is built by Swift, not clang (emitObjCProtocolData),
 #   and compiler patch 0003 opens ObjC protocol symbolic references at 10.9, so a 10.9 target reaches that
@@ -64,7 +64,7 @@ rc=0
 ( cd "$T" && "$FE" -frontend -emit-ir -primary-file use.swift -module-name use -language-mode 6 \
     -target x86_64-apple-macosx10.9 -sdk "$SDK" -resource-dir "$HTC/lib/swift" -I inc \
     -disable-implicit-string-processing-module-import -o use.ll ) > "$T/out" 2>&1 || rc=$?
-[ "$rc" -eq 0 ] || fail "the frontend exited $rc emitting a 10.9 program that captures an imported protocol (compiler patch 0006): $(grep -m1 'While emitting' "$T/out" || tail -3 "$T/out")"
+[ "$rc" -eq 0 ] || fail "the frontend exited $rc emitting a 10.9 program that captures an imported protocol (compiler patch 0007): $(grep -m1 'While emitting' "$T/out" || tail -3 "$T/out")"
 
 echo "-- FixtureBase keeps both properties, typed as the header declares them"
 props="$(grep '^@_PROTOCOL_PROPERTIES_FixtureBase = ' "$T/use.ll")" || fail "no property list for FixtureBase: the record dropped its property requirements"

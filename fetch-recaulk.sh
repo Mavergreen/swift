@@ -1,5 +1,5 @@
 #!/bin/sh
-# platform: macOS-only -- pkgutil expands Recaulk's installer
+# platform: host-agnostic -- shipyard's fetch_product_pkg.sh reads the pkg (stevedore); a Mac also reads the receipt
 #   usage: fetch-recaulk.sh
 #          Prints the prefix of Recaulk, the family's library of back-filled OS APIs (lib/librecaulk.a, from
 #          which build.sh links the definitions libswiftCore takes, and share/recaulk/notices.tsv, the
@@ -9,25 +9,54 @@
 #          carry, which build.sh's recaulk_subset admits), at pins.env's RECAULK_VERSION. An
 #          installed /usr/local/mavergreen/recaulk at that version is used as is; otherwise shipyard's
 #          fetch_product_pkg.sh downloads the release's .pkg, verifies it against that release's own
-#          SHA256SUMS, and unpacks it into ~/Library/Caches/mavergreen-recaulk without root. Everything
-#          but the prefix goes to stderr.
+#          SHA256SUMS, and unpacks it into ~/Library/Caches/mavergreen-recaulk (~/.cache/mavergreen-recaulk
+#          on Linux, where no pkg receipt says what is installed) without root. Everything but the prefix
+#          goes to stderr.
+#   usage: fetch-recaulk.sh --materializer
+#          Prints the recaulk-materialize this host runs, from the same release: on a Mac the prefix's (the
+#          pkg's universal binary); on Linux, which cannot run that Mach-O, the release's linux-x86_64
+#          archive's, which shipyard's fetch_product_tar.sh unpacks under the cache below and verifies against
+#          that release's SHA256SUMS.
 set -eu
+case "$#:${1:-}" in 0:) WANT=prefix ;; 1:--materializer) WANT=materializer ;; *) echo "usage: fetch-recaulk.sh [--materializer]" >&2; exit 2 ;; esac
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/pins.env"
 . "$HERE/msc.sh"    # -> $SHIPYARD (fetch_product_pkg.sh)
 PREFIX=/usr/local/mavergreen/recaulk
 ok() { [ -f "$1/lib/librecaulk.a" ] && [ -f "$1/share/recaulk/notices.tsv" ] && [ -f "$1/share/recaulk/image-local-shadows.txt" ]; }
 
-have="$(pkgutil --pkg-info dev.mavergreen.recaulk 2>/dev/null | sed -n 's/^version: //p')"
+have=""
+if [ "$(uname -s)" = Darwin ]; then
+  # platform: guarded macOS-only call -- the uname test above; a pkg receipt exists only on a Mac
+  have="$(pkgutil --pkg-info dev.mavergreen.recaulk 2>/dev/null | sed -n 's/^version: //p')"
+fi
+# emit <prefix> -- prints what WANT asks for, from <prefix>, and exits.
+emit() {
+  if [ "$WANT" = prefix ]; then echo "$1"; exit 0; fi
+  if [ "$(uname -s)" != Linux ]; then
+    [ -x "$1/bin/recaulk-materialize" ] || { echo "fetch-recaulk: Recaulk $RECAULK_VERSION has no $1/bin/recaulk-materialize" >&2; exit 1; }
+    echo "$1/bin/recaulk-materialize"; exit 0
+  fi
+  [ -f "$SHIPYARD/fetch_product_tar.sh" ] || { echo "fetch-recaulk: the shipyard at $SHIPYARD has no fetch_product_tar.sh, which reads Recaulk's Linux archive" >&2; exit 1; }
+  _lx="$(sh "$SHIPYARD/fetch_product_tar.sh" recaulk "$RECAULK_VERSION" "$CACHE/$RECAULK_VERSION/recaulk-linux")" || exit 1
+  _lx="$(printf '%s\n' "$_lx" | tail -1)"   # the prefix is its last line
+  [ -x "$_lx/bin/recaulk-materialize" ] || { echo "fetch-recaulk: recaulk-$RECAULK_VERSION-linux-x86_64.tar.gz holds no bin/recaulk-materialize" >&2; exit 1; }
+  echo "$_lx/bin/recaulk-materialize"; exit 0
+}
+
 if [ "$have" = "$RECAULK_VERSION" ] && ok "$PREFIX"; then
-  echo "$PREFIX"; exit 0
+  emit "$PREFIX"
 fi
 
-CACHE="${MAVERGREEN_RECAULK_CACHE:-$HOME/Library/Caches/mavergreen-recaulk}"
+# platform: Linux keeps caches under XDG's cache home, as shipyard's fetchers do there.
+case "$(uname -s)" in
+  Linux) CACHE="${MAVERGREEN_RECAULK_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/mavergreen-recaulk}" ;;
+  *) CACHE="${MAVERGREEN_RECAULK_CACHE:-$HOME/Library/Caches/mavergreen-recaulk}" ;;
+esac
 D="$CACHE/$RECAULK_VERSION/recaulk"
 if ! ok "$D"; then
   mkdir -p "$(dirname "$D")"
   sh "$SHIPYARD/fetch_product_pkg.sh" recaulk "$RECAULK_VERSION" "$D" >/dev/null
   ok "$D" || { echo "fetch-recaulk: recaulk-$RECAULK_VERSION.pkg holds no lib/librecaulk.a, share/recaulk/notices.tsv or share/recaulk/image-local-shadows.txt -- payload layout changed?" >&2; exit 1; }
 fi
-echo "$D"
+emit "$D"

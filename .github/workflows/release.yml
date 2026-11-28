@@ -6,12 +6,17 @@ name: release
 # own Sparkle updater, sign all three, and attach the .pkgs + signed appcasts to one GitHub Release. Tags
 # ARE the version -- no `v` prefix; see VERSION.
 #
-# Six jobs: `version` resolves the one version every job labels its pkgs with; `build-cross` builds the
+# Fourteen jobs: `version` resolves the one version every job labels its pkgs with; `build-cross` builds the
 # cross toolchain, its Swift half compiled by the swift.org compiler (CI's one seed), then the stdlib --
 # built once, by that cross toolchain -- and the runtime pkg; `build` then builds the native toolchain,
 # its Swift half compiled by build-cross's toolchain, and stages build-cross's stdlib and builtins in it;
 # `collect` checks that both toolchains carry those same bytes, signs, renders the feeds and runs
-# conformance over all three pkgs; `scan` and `publish` follow it. CI never builds with an earlier
+# conformance over all three pkgs; `scan` and `publish` follow it, and publish also waits for `vm-test`, the
+# acceptance on 10.9 (RELEASE GATING, below). Off the release's path, on Linux runners alone, the one Linux path
+# per push: `linux-compiler-probe`, `-tools`, `-llvm` and `-swift` build the Linux-hosted compiler when its cache
+# misses; `linux-runtime` builds the same commit's runtime, pkg and self-test bundle with it; `vm-test-prebuilt`
+# gates that bundle on 10.9; and `equivalence` compares its pkg with build-cross's, warning of each difference.
+# publish waits for none of them. CI never builds with an earlier
 # release; OS X 10.9 rebuilds the native toolchain with the previous release (self-host.sh), and the
 # two must be the same bytes (docs/superpowers/specs/2026-09-25-t4-self-hosting-design.md).
 #
@@ -63,12 +68,19 @@ concurrency:
                 && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # The scripts the Linux-hosted compiler's build runs, named once: the linux-compiler-* jobs run these, and its
+  # cache key hashes what they read (tests/cache-key-test.sh holds the key to them; DEVELOPING.md "In CI").
+  COMPILER_BUILD: build-llvm.sh build-builtins.sh build-toolchain.sh
+
 jobs:
   # One version for the whole run: both build jobs label their pkgs with this one (resolve-version.sh
   # reuses a written VERSION: "every job must agree"), and build-cross declares it as the release of the
   # cross toolchain it builds the stdlib with.
+  # Linux: version.sh and derive-upstream-version.sh are shell and git, and install@v1 gives a Linux runner
+  # shipyard's scripts as it gives a Mac its pkg.
   version:
-    runs-on: macos-26
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
       publish: ${{ steps.ver.outputs.publish }}
@@ -221,15 +233,9 @@ jobs:
       - name: Compat guard over the runtime (must pass)
         run: ./scripts/guard.sh "$SWIFT_BUILD/payload/runtime/usr/local/mavergreen/swift-runtime/lib/swift"/*.dylib
 
-      - name: Build swift-runtime-updater.app (Cocoa/Sparkle; must NOT link Swift)
-        run: |
-          # The Sparkle framework is fetched inside mavericks_add_updater_app (mavericks_fetch_sparkle).
-          shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater" -DCMAKE_OBJC_COMPILER=/usr/bin/clang \
-            -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
-          shipyard-cmake --build "$SWIFT_BUILD/build/updater" --target swift-runtime-updater
-          otool -L "$SWIFT_BUILD/build/updater/swift-runtime-updater.app/Contents/MacOS/swift-runtime-updater" > /tmp/o.txt
-          cat /tmp/o.txt
-          ! grep -q 'libswift' /tmp/o.txt || { echo "::error::updater links a Swift runtime library (self-update circularity)"; exit 1; }
+      # The same script builds linux-runtime's updater, so both runtime pkgs carry one.
+      - name: Build swift-runtime-updater.app (Cocoa/Sparkle, by clang22; must NOT link Swift)
+        run: sh scripts/build-runtime-updater.sh
 
       - name: Package runtime .pkg (10.9.5 floor; stages the manifest, updater + LaunchAgent)
         run: REQUIRE_UPDATER=1 ./package.sh
@@ -287,6 +293,8 @@ jobs:
       # arm64 / macOS 11, where the cross toolchain runs (clang22-cross's updater, CLANG_VARIANT=cross).
       - name: Build swift-toolchain-cross-updater.app (Cocoa/Sparkle, arm64 / macOS 11; must NOT link Swift)
         run: |
+          # spec: shipyard's "Apple's clang is a declared deviation, never a default" -- this updater still builds with
+          #       /usr/bin/clang; it exits when this step moves to clang22, as swift-runtime-updater's did.
           shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater-toolchain-cross" -DSWIFT_UPDATER_PRODUCT=swift-toolchain-cross \
             -DCMAKE_OBJC_COMPILER=/usr/bin/clang -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
           shipyard-cmake --build "$SWIFT_BUILD/build/updater-toolchain-cross" --target swift-toolchain-cross-updater
@@ -408,14 +416,22 @@ jobs:
 
       # The pkg this release ships, unpacked as lib.sh's pkg_extract_product lays it out: the compiler
       # that compiles this toolchain's Swift half, and the stdlib and builtins this toolchain stages.
-      # scripts/outdir.sh first: pkg_extract_product refuses to rm -rf its out-dir without its guard.
+      # scripts/outdir.sh first: pkg_extract_product refuses to rm -rf its out-dir without its guard;
+      # msc.sh for shipyard's stevedore, which reads the pkg.
       - name: Unpack the same run's cross toolchain
         run: |
           . ./scripts/outdir.sh
+          . ./msc.sh
           . ./lib.sh
           X="$(pkg_extract_product "$(ls "$RUNNER_TEMP"/cross-dist/swift-toolchain-cross-*.pkg)" swift-toolchain-cross "$RUNNER_TEMP/cross-toolchain")"
           "$X/bin/swift-frontend" -version
           echo "SWIFT_HOST_TOOLCHAIN=$X" >> "$GITHUB_ENV"
+
+      # llvm patch 0007: the cross toolchain lays out an optimized async function's frame in the order the
+      # IR alone decides. Required here, so a missing compiler or stdlib fails the step rather than skips it.
+      - name: Coroutine frame layout of the same run's cross toolchain
+        run: |
+          CORO_FRAME_ORDER_REQUIRED=1 sh tests/coro-frame-order-test.sh
 
       - name: Disk before the toolchain build
         run: df -h "$RUNNER_TEMP" | tail -1
@@ -481,6 +497,8 @@ jobs:
 
       - name: Build swift-toolchain-updater.app (Cocoa/Sparkle; must NOT link Swift)
         run: |
+          # spec: shipyard's "Apple's clang is a declared deviation, never a default" -- this updater still builds with
+          #       /usr/bin/clang; it exits when this step moves to clang22, as swift-runtime-updater's did.
           shipyard-cmake -S . -B "$SWIFT_BUILD/build/updater-toolchain" -DSWIFT_UPDATER_PRODUCT=swift-toolchain \
             -DCMAKE_OBJC_COMPILER=/usr/bin/clang -DCMAKE_TOOLCHAIN_FILE="$SHIPYARD_SCRIPTS/../MavericksToolchain.cmake"
           shipyard-cmake --build "$SWIFT_BUILD/build/updater-toolchain" --target swift-toolchain-updater
@@ -638,17 +656,18 @@ jobs:
       version: ${{ needs.collect.outputs.version }}
       artifact: swift
 
-  # Acceptance on Mac OS X 10.9 (Mavergreen/mavericks-vm: a 10.9.5 guest without the Command Line Tools), every run:
-  # the previous release's runtime and native toolchain pkgs install there, then this run's over them (an
-  # upgrade, as a user's is), the family install checks, the installed swiftc builds the self-test bundle on
-  # 10.9 itself (make-selftest.sh's SWIFTC= mode), and the bundle's gate runs against the installed runtime:
-  # 500x plus 10x under Guard Malloc, at -O and -Onone, after a --loads run (each test once, every libswift*
-  # read from where it must load from), and upstream's own tests (build-cross's selftest-support) at 20x plus
-  # 1x under Guard Malloc. Then the native toolchain's smoke runs, natively, its
-  # load commands read with mavericks-clang-22's llvm-otool and llvm-nm (10.9's are Command Line Tools stubs),
-  # installed, with the Longboat its pkg requires, before the self-test is built: the gate checks upstream's
-  # tests' output with FileCheck, which only clang22 ships. publish waits for it.
+  # Acceptance on Mac OS X 10.9 (Mavergreen/mavericks-vm: a 10.9.5 guest without the Command Line Tools), every
+  # run: the previous release's runtime and native toolchain pkgs install there, then this run's over them (an
+  # upgrade, as a user's is), the family install checks, the installed swiftc builds the self-test bundle on 10.9
+  # itself (make-selftest.sh's SWIFTC= mode), and the bundle's gate runs against the installed runtime: 500x plus
+  # 10x under Guard Malloc, at -O and -Onone, after a --loads run (each test once, every libswift* read from where it
+  # must load from), and upstream's own tests (build-cross's selftest-support) at 20x plus 1x under Guard Malloc.
+  # Then the native toolchain's smoke runs, natively, its load commands read with mavericks-clang-22's llvm-otool
+  # and llvm-nm (10.9's are Command Line Tools stubs), installed, with the Longboat its pkg requires, before the
+  # self-test is built: the gate checks upstream's tests' output with FileCheck, which only clang22 ships. What the
+  # guest installs is fetched by .github/actions/vm-test (bundle_mode compile). publish waits for it.
   vm-test:
+    name: vm-test
     needs: [version, build-cross, build]
     runs-on: ubuntu-latest
     timeout-minutes: 335   # sized in INGREDIENTS ("Every Swift bump merges on green"): 334 binaries to compile and gate, about 168 min at worst
@@ -658,47 +677,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { persist-credentials: false }
-      - uses: actions/download-artifact@v8
-        with: { name: swift-cross, path: dist }
-      - uses: actions/download-artifact@v8
-        with: { name: swift-native, path: dist }
-      # The runtime links libcxx22's libc++ and its pkg requires libcxx22 at pins.env's CLANG22_VERSION or later:
-      # that release's pkg, checked against its own SHA256SUMS, installs first. Its native clang22 pkg, from the
-      # same release, supplies the smoke's Mach-O readers.
-      - name: Fetch libcxx22 and mavericks-clang-22 at the pinned clang22 release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          v="$(sed -n 's/^CLANG22_VERSION="\([^"]*\)".*/\1/p' pins.env)"
-          [ -n "$v" ] || { echo "::error::no CLANG22_VERSION in pins.env"; exit 1; }
-          mkdir -p libcxx clang22
-          ( cd libcxx && gh release download "$v" -R Mavergreen/clang-22 -p "libcxx22-$v.pkg" -p SHA256SUMS &&
-            grep " libcxx22-$v.pkg\$" SHA256SUMS | sha256sum -c - )
-          ( cd clang22 && gh release download "$v" -R Mavergreen/clang-22 -p "mavericks-clang-22-native-$v.pkg" -p SHA256SUMS &&
-            grep " mavericks-clang-22-native-$v.pkg\$" SHA256SUMS | sha256sum -c - )
-      # mavericks-clang-22's pkg refuses to install without Longboat, and points the user at its latest release.
-      - name: Fetch Longboat's latest release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          lb="$(gh release view -R Mavergreen/longboat --json tagName --jq .tagName)"
-          [ -n "$lb" ] || { echo "::error::no Longboat release"; exit 1; }
-          mkdir -p longboat && cd longboat
-          gh release download "$lb" -R Mavergreen/longboat -p "longboat-$lb.pkg" -p SHA256SUMS
-          grep " longboat-$lb.pkg\$" SHA256SUMS | sha256sum -c -
-      # A user upgrades: the latest release's pkgs install first, this run's over them.
-      - name: Fetch the previous release's runtime and native toolchain pkgs
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -eu
-          prev="$(gh release view -R "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
-          [ -n "$prev" ] || { echo "::error::no previous release to upgrade from"; exit 1; }
-          mkdir -p prev && cd prev
-          gh release download "$prev" -R "$GITHUB_REPOSITORY" -p "swift-runtime-$prev.pkg" -p "swift-toolchain-$prev.pkg" -p SHA256SUMS
-          grep -E " swift-(runtime|toolchain)-$prev\.pkg\$" SHA256SUMS | sha256sum -c -
+      - name: Fetch what the 10.9 guest installs (bundle_mode compile)
+        uses: ./.github/actions/vm-test
+        with:
+          bundle_mode: compile
+          publish: ${{ needs.version.outputs.publish }}
       - name: Install the pkgs, build the self-test with the installed swiftc, and gate it, on Mac OS X 10.9
         id: vm
         uses: Mavergreen/mavericks-vm@v1
@@ -751,3 +734,543 @@ jobs:
           name: mavericks-vm-logs
           path: ${{ steps.vm.outputs.logs-dir }}
           if-no-files-found: warn
+
+  # The Linux-hosted compiler (build-toolchain.sh --host linux), cached under
+  # swift-linux-compiler-<runner.os>-x86_64-<hash>: the hash is scripts/compiler-cache-inputs.sh's, over the scripts
+  # COMPILER_BUILD names (the only list of them, which the compiler jobs run): every repo file they read, and the
+  # closure of the shipyard scripts they run, from the shipyard each job installed; never the runner image, nor
+  # shipyard's version. A hit skips every compiler job. A miss builds it cold in three jobs, since 12 cores took
+  # 2 h 24 min (build-llvm.sh 30 min, LLVM 65, swift-frontend 49) and a 4-vCPU runner takes about three times that,
+  # more than GitHub's six hours for one job. Each hands its work dirs to the next as a same-run artifact, a tar that
+  # keeps their times, and every job builds under the same path, so CMake's and ninja's records stay true.
+  # Is the compiler cached? Only a lookup: linux-runtime restores it.
+  linux-compiler-probe:
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    outputs:
+      hit: ${{ steps.probe.outputs.cache-hit }}
+      shipyard: ${{ steps.shipyard.outputs.version }}
+      hash: ${{ steps.inputs.outputs.hash }}
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - name: Install mavericks-shipyard
+        uses: Mavergreen/shipyard/.github/actions/install@v1
+      # The only install@v1 of the Linux jobs: the version it resolves is every later Linux stage's.
+      - name: The shipyard version this run builds with
+        id: shipyard
+        run: |
+          [ -n "${SHIPYARD_VERSION:-}" ] || { echo "::error::install@v1 named no shipyard version, so the later stages could not pin it"; exit 1; }
+          echo "version=$SHIPYARD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "shipyard $SHIPYARD_VERSION, for every Linux stage of this run"
+      - name: Hash what the compiler's build reads
+        id: inputs
+        run: |
+          sh scripts/compiler-cache-inputs.sh $COMPILER_BUILD
+          h="$(sh scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD)"
+          echo "hash=$h" >> "$GITHUB_OUTPUT"
+      - name: Look the compiler up
+        id: probe
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ runner.temp }}/mm-build/swift/work/toolchain-linux
+            ${{ runner.temp }}/mm-build/swift/work/llvm-build/bin/lld
+            ${{ runner.temp }}/mm-build/swift/work/llvm-build/bin/ld64.lld
+            ${{ runner.temp }}/mm-build/swift/out/llvm
+          key: swift-linux-compiler-${{ runner.os }}-x86_64-${{ steps.inputs.outputs.hash }}
+          lookup-only: true
+
+  # LLVM's build support and lld (build.sh links the runtime with it), and compiler-rt's builtins for 10.9.
+  linux-compiler-tools:
+    needs: [linux-compiler-probe]
+    if: needs.linux-compiler-probe.outputs.hit != 'true'
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    timeout-minutes: 355
+    env:
+      MAVERICKS_USE_CCACHE: "1"   # build-toolchain.sh launches its compilers through ccache
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - name: The clang22 release components/clang22/version pins
+        id: pins
+        run: |
+          clang22="$(cat components/clang22/version)"
+          echo "clang22=$clang22" >> "$GITHUB_OUTPUT"
+      # One shipyard for the whole run: linux-compiler-probe's. install@v1 would give a later stage whatever shipyard
+      # published since, and the cold chain spans hours.
+      - name: Check out shipyard at linux-compiler-probe's version
+        uses: actions/checkout@v7
+        with:
+          repository: Mavergreen/shipyard
+          ref: v${{ needs.linux-compiler-probe.outputs.shipyard }}
+          path: .shipyard
+          persist-credentials: false
+      - name: Install mavericks-shipyard and clang22 (linux-compiler-probe's version)
+        uses: ./.shipyard/.github/actions/install
+        with:
+          products: clang22@${{ steps.pins.outputs.clang22 }}
+      # platform: an action from a checkout has no ref to name its version by, so the probe's is said here.
+      - name: Say which shipyard this is
+        env:
+          PINNED: ${{ needs.linux-compiler-probe.outputs.shipyard }}
+        run: echo "SHIPYARD_VERSION=$PINNED" >> "$GITHUB_ENV"
+      # The probe's hash is the run's: a job whose shipyard hashes otherwise would build, or restore, a compiler the
+      # key it was looked up under does not describe.
+      - name: Hash what the compiler's build reads (linux-compiler-probe's hash, or stop)
+        id: inputs
+        env:
+          PROBE_HASH: ${{ needs.linux-compiler-probe.outputs.hash }}
+        run: |
+          sh scripts/compiler-cache-inputs.sh $COMPILER_BUILD
+          h="$(sh scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD)"
+          echo "hash=$h" >> "$GITHUB_OUTPUT"
+          [ "$h" = "$PROBE_HASH" ] || { echo "::error::the compiler's inputs hash to $h here but to $PROBE_HASH in linux-compiler-probe (shipyard moved between jobs?); re-run all jobs"; exit 1; }
+      - name: The Linux host's packages
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq uuid-dev pkg-config ninja-build ccache
+      - name: Room for the build
+        run: |
+          df -h / | tail -1
+          # platform: the runner leaves too little of / free for LLVM's source, two LLVM builds and the seed; these
+          #           preinstalled SDKs are the largest, and no step here uses them.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
+      - name: Build out of tree
+        run: |
+          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+          echo "SWIFT_BUILD=$RUNNER_TEMP/mm-build/swift" >> "$GITHUB_ENV"
+      - name: Build the LLVM build support and lld
+        run: ./build-llvm.sh
+      - name: Build compiler-rt's builtins (x86_64, 10.9)
+        run: ./build-builtins.sh
+      - name: Hand the work on
+        run: tar --zstd -cf "$RUNNER_TEMP/linux-compiler-tools.tar.zst" -C "$SWIFT_BUILD" work/llvm-project work/llvm-build work/builtins-x86 out/llvm
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-compiler-tools
+          path: ${{ runner.temp }}/linux-compiler-tools.tar.zst
+          retention-days: 1
+          compression-level: 0
+
+  # LLVM, clang, lld and dsymutil for a Linux host: the longest stage, alone in its job.
+  linux-compiler-llvm:
+    needs: [linux-compiler-probe, linux-compiler-tools]
+    if: needs.linux-compiler-probe.outputs.hit != 'true'
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    timeout-minutes: 355
+    env:
+      MAVERICKS_USE_CCACHE: "1"   # build-toolchain.sh launches its compilers through ccache
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      # One shipyard for the whole run: linux-compiler-probe's. install@v1 would give a later stage whatever shipyard
+      # published since, and the cold chain spans hours.
+      - name: Check out shipyard at linux-compiler-probe's version
+        uses: actions/checkout@v7
+        with:
+          repository: Mavergreen/shipyard
+          ref: v${{ needs.linux-compiler-probe.outputs.shipyard }}
+          path: .shipyard
+          persist-credentials: false
+      - name: Install mavericks-shipyard (linux-compiler-probe's version)
+        uses: ./.shipyard/.github/actions/install
+      # platform: an action from a checkout has no ref to name its version by, so the probe's is said here.
+      - name: Say which shipyard this is
+        env:
+          PINNED: ${{ needs.linux-compiler-probe.outputs.shipyard }}
+        run: echo "SHIPYARD_VERSION=$PINNED" >> "$GITHUB_ENV"
+      # The probe's hash is the run's: a job whose shipyard hashes otherwise would build, or restore, a compiler the
+      # key it was looked up under does not describe.
+      - name: Hash what the compiler's build reads (linux-compiler-probe's hash, or stop)
+        id: inputs
+        env:
+          PROBE_HASH: ${{ needs.linux-compiler-probe.outputs.hash }}
+        run: |
+          sh scripts/compiler-cache-inputs.sh $COMPILER_BUILD
+          h="$(sh scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD)"
+          echo "hash=$h" >> "$GITHUB_OUTPUT"
+          [ "$h" = "$PROBE_HASH" ] || { echo "::error::the compiler's inputs hash to $h here but to $PROBE_HASH in linux-compiler-probe (shipyard moved between jobs?); re-run all jobs"; exit 1; }
+      - name: The Linux host's packages
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq uuid-dev pkg-config ninja-build ccache
+      - name: Room for the build
+        run: |
+          df -h / | tail -1
+          # platform: as linux-compiler-tools'
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
+      - name: Build out of tree
+        run: |
+          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+          echo "SWIFT_BUILD=$RUNNER_TEMP/mm-build/swift" >> "$GITHUB_ENV"
+          echo "CCACHE_DIR=$RUNNER_TEMP/ccache" >> "$GITHUB_ENV"
+      # Content-addressed, so a stale entry can only miss, never change a result.
+      - name: Restore ccache (LLVM)
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-linux-compiler-llvm-${{ github.run_id }}
+          restore-keys: ccache-${{ runner.os }}-linux-compiler-llvm-
+      - uses: actions/download-artifact@v8
+        with: { name: linux-compiler-tools, path: "${{ runner.temp }}" }
+      - name: Take linux-compiler-tools' work
+        run: |
+          mkdir -p "$SWIFT_BUILD"
+          tar --zstd -xf "$RUNNER_TEMP/linux-compiler-tools.tar.zst" -C "$SWIFT_BUILD" && rm "$RUNNER_TEMP/linux-compiler-tools.tar.zst"
+      - name: Build LLVM, clang, lld and dsymutil for the Linux host
+        id: llvm
+        run: ./build-toolchain.sh --host linux --stop-after llvm
+      - name: ccache statistics
+        if: ${{ !cancelled() && steps.llvm.outcome != 'skipped' }}
+        run: ccache -s
+      - name: Save ccache (LLVM), even when the build failed
+        if: ${{ !cancelled() && steps.llvm.outcome != 'skipped' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-linux-compiler-llvm-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Hand the work on
+        run: tar --zstd -cf "$RUNNER_TEMP/linux-compiler-llvm.tar.zst" -C "$SWIFT_BUILD" work/llvm-linux
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-compiler-llvm
+          path: ${{ runner.temp }}/linux-compiler-llvm.tar.zst
+          retention-days: 1
+          compression-level: 0
+
+  # cmark and swift-frontend, the prefix staged and checked, and the compiler cached.
+  linux-compiler-swift:
+    needs: [linux-compiler-probe, linux-compiler-llvm]
+    if: needs.linux-compiler-probe.outputs.hit != 'true'
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    timeout-minutes: 355
+    env:
+      MAVERICKS_USE_CCACHE: "1"   # build-toolchain.sh launches its compilers through ccache
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      # One shipyard for the whole run: linux-compiler-probe's. install@v1 would give a later stage whatever shipyard
+      # published since, and the cold chain spans hours.
+      - name: Check out shipyard at linux-compiler-probe's version
+        uses: actions/checkout@v7
+        with:
+          repository: Mavergreen/shipyard
+          ref: v${{ needs.linux-compiler-probe.outputs.shipyard }}
+          path: .shipyard
+          persist-credentials: false
+      - name: Install mavericks-shipyard (linux-compiler-probe's version)
+        uses: ./.shipyard/.github/actions/install
+      # platform: an action from a checkout has no ref to name its version by, so the probe's is said here.
+      - name: Say which shipyard this is
+        env:
+          PINNED: ${{ needs.linux-compiler-probe.outputs.shipyard }}
+        run: echo "SHIPYARD_VERSION=$PINNED" >> "$GITHUB_ENV"
+      - name: The Linux host's packages
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq uuid-dev pkg-config ninja-build ccache
+      - name: Room for the build
+        run: |
+          df -h / | tail -1
+          # platform: as linux-compiler-tools'
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
+      - name: Build out of tree
+        run: |
+          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+          echo "SWIFT_BUILD=$RUNNER_TEMP/mm-build/swift" >> "$GITHUB_ENV"
+          echo "CCACHE_DIR=$RUNNER_TEMP/ccache" >> "$GITHUB_ENV"
+      # The probe's hash is the run's: a job whose shipyard hashes otherwise would build, or restore, a compiler the
+      # key it was looked up under does not describe.
+      - name: Hash what the compiler's build reads (linux-compiler-probe's hash, or stop)
+        id: inputs
+        env:
+          PROBE_HASH: ${{ needs.linux-compiler-probe.outputs.hash }}
+        run: |
+          sh scripts/compiler-cache-inputs.sh $COMPILER_BUILD
+          h="$(sh scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD)"
+          echo "hash=$h" >> "$GITHUB_OUTPUT"
+          [ "$h" = "$PROBE_HASH" ] || { echo "::error::the compiler's inputs hash to $h here but to $PROBE_HASH in linux-compiler-probe (shipyard moved between jobs?); re-run all jobs"; exit 1; }
+      - name: Restore ccache (swift)
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-linux-compiler-swift-${{ github.run_id }}
+          restore-keys: ccache-${{ runner.os }}-linux-compiler-swift-
+      - uses: actions/download-artifact@v8
+        with: { name: linux-compiler-tools, path: "${{ runner.temp }}" }
+      - uses: actions/download-artifact@v8
+        with: { name: linux-compiler-llvm, path: "${{ runner.temp }}" }
+      - name: Take linux-compiler-tools' and linux-compiler-llvm's work
+        run: |
+          mkdir -p "$SWIFT_BUILD"
+          for a in linux-compiler-tools linux-compiler-llvm; do
+            tar --zstd -xf "$RUNNER_TEMP/$a.tar.zst" -C "$SWIFT_BUILD" && rm "$RUNNER_TEMP/$a.tar.zst"
+          done
+      # LLVM is built, so its ninja should find nothing to do: said here, so a rebuild across the handoff shows.
+      - name: Does LLVM's ninja have anything left to do?
+        run: |
+          # Only said, never a failure: build-toolchain.sh below decides what to build.
+          { ninja -C "$SWIFT_BUILD/work/llvm-linux" -n llvm-libraries clang-libraries clang-resource-headers lld clang dsymutil || echo "ninja -n exited $?"; } | tail -1
+      - name: Build the Linux-hosted compiler (cmark, swift-frontend; its Swift half by the swift.org Linux seed)
+        id: swift
+        run: ./build-toolchain.sh --host linux
+      - name: ccache statistics
+        if: ${{ !cancelled() && steps.swift.outcome != 'skipped' }}
+        run: ccache -s
+      - name: Save ccache (swift), even when the build failed
+        if: ${{ !cancelled() && steps.swift.outcome != 'skipped' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-linux-compiler-swift-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Cache the compiler
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ runner.temp }}/mm-build/swift/work/toolchain-linux
+            ${{ runner.temp }}/mm-build/swift/work/llvm-build/bin/lld
+            ${{ runner.temp }}/mm-build/swift/work/llvm-build/bin/ld64.lld
+            ${{ runner.temp }}/mm-build/swift/out/llvm
+          key: swift-linux-compiler-${{ runner.os }}-x86_64-${{ needs.linux-compiler-probe.outputs.hash }}
+
+  # The same commit's runtime, built on Linux with the cached Linux-hosted compiler, at this run's version: build.sh,
+  # the coroutine reproducer (required), the pkg with its updater, and the self-test bundle, uploaded as swift-linux.
+  # equivalence compares its pkg with build-cross's, and vm-test-prebuilt gates its bundle on 10.9. Nothing it builds
+  # ships.
+  linux-runtime:
+    needs: [version, linux-compiler-probe, linux-compiler-swift]
+    if: ${{ !cancelled() && needs.version.result == 'success' && needs.linux-compiler-probe.result == 'success' && (needs.linux-compiler-probe.outputs.hit == 'true' || needs.linux-compiler-swift.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions: { contents: read }
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The clang22 release components/clang22/version pins
+        id: pins
+        run: |
+          clang22="$(cat components/clang22/version)"
+          echo "clang22=$clang22" >> "$GITHUB_OUTPUT"
+      # One shipyard for the whole run: linux-compiler-probe's. install@v1 would give a later stage whatever shipyard
+      # published since, and the cold chain spans hours.
+      - name: Check out shipyard at linux-compiler-probe's version
+        uses: actions/checkout@v7
+        with:
+          repository: Mavergreen/shipyard
+          ref: v${{ needs.linux-compiler-probe.outputs.shipyard }}
+          path: .shipyard
+          persist-credentials: false
+      - name: Install mavericks-shipyard and clang22 (linux-compiler-probe's version)
+        uses: ./.shipyard/.github/actions/install
+        with:
+          products: clang22@${{ steps.pins.outputs.clang22 }}
+      # platform: an action from a checkout has no ref to name its version by, so the probe's is said here.
+      - name: Say which shipyard this is
+        env:
+          PINNED: ${{ needs.linux-compiler-probe.outputs.shipyard }}
+        run: echo "SHIPYARD_VERSION=$PINNED" >> "$GITHUB_ENV"
+      - name: The Linux host's packages
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq uuid-dev pkg-config ninja-build ccache
+      - name: Build out of tree
+        run: |
+          echo "MAVERICKS_BUILD_ROOT=$RUNNER_TEMP/mm-build" >> "$GITHUB_ENV"
+          echo "SWIFT_BUILD=$RUNNER_TEMP/mm-build/swift" >> "$GITHUB_ENV"
+      # The restore looks up this job's own hash, so it never takes a compiler its inputs do not describe; when that
+      # is not the probe's, it misses (shipyard moved since the probe), and the error says why: re-run all jobs.
+      - name: Hash what the compiler's build reads (and compare it with linux-compiler-probe's)
+        id: inputs
+        env:
+          PROBE_HASH: ${{ needs.linux-compiler-probe.outputs.hash }}
+        run: |
+          sh scripts/compiler-cache-inputs.sh $COMPILER_BUILD
+          h="$(sh scripts/compiler-cache-inputs.sh --hash $COMPILER_BUILD)"
+          echo "hash=$h" >> "$GITHUB_OUTPUT"
+          [ "$h" = "$PROBE_HASH" ] || echo "::error::the compiler's inputs hash to $h here but to $PROBE_HASH in linux-compiler-probe (shipyard moved between jobs?); the restore below looks up $h"
+      - name: Restore the compiler
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ runner.temp }}/mm-build/swift/work/toolchain-linux
+            ${{ runner.temp }}/mm-build/swift/work/llvm-build/bin/lld
+            ${{ runner.temp }}/mm-build/swift/work/llvm-build/bin/ld64.lld
+            ${{ runner.temp }}/mm-build/swift/out/llvm
+          key: swift-linux-compiler-${{ runner.os }}-x86_64-${{ steps.inputs.outputs.hash }}
+          fail-on-cache-miss: true
+      - name: The version the pkg carries (the run's)
+        env:
+          VERSION_IN: ${{ needs.version.outputs.version }}
+        run: |
+          sh scripts/derive-upstream-version.sh
+          printf '%s\n' "$VERSION_IN" > VERSION   # a build product; every later step reads this one
+      - name: Record the pre-build tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh" --record
+      - name: The cached compiler
+        run: |
+          echo "SWIFT_HOST_TOOLCHAIN=$SWIFT_BUILD/work/toolchain-linux" >> "$GITHUB_ENV"
+          "$SWIFT_BUILD/work/toolchain-linux/bin/swift-frontend" -version
+      # The prefix declares no release, so the run's version is declared for it, as build-cross declares its own.
+      - name: Build the stdlib and the runtime with the Linux-hosted compiler
+        run: |
+          SWIFT_HOST_TOOLCHAIN_VERSION="$(cat VERSION)" ./build.sh
+      # The builtins archive too: the compiler was cached, and the guard reads today's INGREDIENTS.md.
+      - name: Compat guard over the runtime and the builtins it linked (must pass)
+        run: |
+          CL="$(./fetch-clang22.sh)"
+          export LIPO="$CL/bin/llvm-lipo" OTOOL="$CL/bin/llvm-otool" NM="$CL/bin/llvm-nm" STRINGS="$CL/bin/llvm-strings"
+          ./scripts/guard.sh "$SWIFT_BUILD/payload/runtime/usr/local/mavergreen/swift-runtime/lib/swift"/*.dylib
+          ./scripts/guard.sh "$SWIFT_HOST_TOOLCHAIN"/lib/clang/*/lib/darwin/libclang_rt.osx.a
+      # llvm patch 0007: the Linux-hosted compiler lays out an optimized async function's frame as the Mac's does.
+      - name: Coroutine frame layout of the Linux-hosted compiler
+        run: |
+          CORO_FRAME_ORDER_REQUIRED=1 sh tests/coro-frame-order-test.sh
+      - name: Build swift-runtime-updater.app (Cocoa/Sparkle, by clang22; must NOT link Swift)
+        run: sh scripts/build-runtime-updater.sh
+      - name: Package runtime .pkg (10.9.5 floor; stages the manifest, updater + LaunchAgent)
+        run: REQUIRE_UPDATER=1 ./package.sh
+      - name: Build the self-test bundle with the Linux-hosted compiler
+        run: |
+          SELFTEST_SUPPORT="$SWIFT_BUILD/payload/selftest-support" ./make-selftest.sh
+      - name: The build must not have written into the source tree
+        run: sh "$SHIPYARD_SCRIPTS/assert-tree-clean.sh"
+      - name: Upload the runtime pkg and the self-test bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: swift-linux
+          path: |
+            ${{ env.SWIFT_BUILD }}/dist/swift-runtime-*.pkg
+            ${{ env.SWIFT_BUILD }}/dist/swift-runtime-selftest.tar.gz
+          if-no-files-found: error
+
+  # The Linux-built bundle's gate on Mac OS X 10.9: linux-runtime's swift-linux (its runtime pkg and the self-test
+  # bundle built beside it) installed in the guest, the runtime's updater launched once, so dyld shows any symbol 10.9
+  # lacks, and the bundle's --loads (every libswift* from this runtime) and then its gate. No compile in the guest, no
+  # toolchain, no smoke, no previous release. publish does not wait for it while build-cross's runtime is the one
+  # that ships; it becomes required, in publish's needs, when Linux becomes the release path.
+  vm-test-prebuilt:
+    needs: [version, linux-runtime]
+    runs-on: ubuntu-latest
+    timeout-minutes: 335
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - name: Fetch what the 10.9 guest installs (bundle_mode prebuilt)
+        uses: ./.github/actions/vm-test
+        with:
+          bundle_mode: prebuilt
+          publish: 'false'
+          prebuilt_artifact: swift-linux
+      - name: Install the runtime pkg and gate the prebuilt self-test bundle, on Mac OS X 10.9
+        id: vm
+        uses: Mavergreen/mavericks-vm@v1
+        env:
+          SWIFT_FULL_VERSION: ${{ needs.version.outputs.version }}
+        with:
+          image-key: ${{ secrets.MAVERICKS_VM_KEY }}
+          envs: SWIFT_FULL_VERSION
+          copyback: false
+          run: |
+            set -eu
+            sw_vers
+            if [ -e /Library/Developer/CommandLineTools ]; then echo "this guest has the Command Line Tools"; else echo "this guest has no Command Line Tools"; fi
+            sudo -n true || { echo "the guest's user cannot sudo without a password, and installer needs root"; exit 1; }
+            # installer says only "an error"; the reason (a preinstall's refusal, say) is in install.log.
+            install() { for p in "$@"; do [ -f "$p" ] || { echo "no $p"; exit 1; }
+              sudo installer -pkg "$p" -target / || { tail -40 /var/log/install.log; exit 1; }; done; }
+            [ -f dist/swift-runtime-selftest.tar.gz ] || { echo "no prebuilt bundle at dist/swift-runtime-selftest.tar.gz"; exit 1; }
+            install libcxx/libcxx22-*.pkg dist/swift-runtime-*.pkg
+            got="$(pkgutil --pkg-info dev.mavergreen.swift-runtime | sed -n 's/^version: //p')"
+            [ "$got" = "$SWIFT_FULL_VERSION" ] || { echo "dev.mavergreen.swift-runtime is $got, not $SWIFT_FULL_VERSION"; exit 1; }
+            /usr/local/bin/mavergreen check
+            # platform: dyld binds every import of the runtime's updater at launch (DYLD_BIND_AT_LAUNCH), so one
+            #           launch shows a symbol 10.9 lacks: dyld prints "dyld: ..." and stops the process (SIGTRAP, 133).
+            loc="$(pkgutil --pkg-info dev.mavergreen.swift-runtime | sed -n 's/^location: //p')"
+            rel="$(pkgutil --files dev.mavergreen.swift-runtime | grep 'swift-runtime-updater\.app/Contents/MacOS/swift-runtime-updater$' | head -1)"
+            u="/${loc:+${loc#/}/}$rel"; u="$(printf '%s\n' "$u" | sed 's|//*|/|g')"
+            [ -n "$rel" ] && [ -x "$u" ] || { echo "no swift-runtime-updater in the runtime's receipt ($u)"; exit 1; }
+            DYLD_BIND_AT_LAUNCH=1 "$u" --background > updater.log 2>&1 &
+            pid=$!; sleep 10; kill "$pid" 2>/dev/null || :; rc=0; wait "$pid" || rc=$?
+            cat updater.log
+            ! grep -q '^dyld: ' updater.log && [ "$rc" -ne 133 ] || { echo "the runtime's updater does not load on 10.9 (exit $rc)"; exit 1; }
+            echo "the runtime's updater launched (exit $rc after 10 s)"
+            # spec: INGREDIENTS.md "Every Swift bump merges on green, the real-10.9 gate included" -- FileCheck (clang22's) checks the gate's output.
+            install longboat/longboat-[0-9]*.pkg
+            # platform: mavericks-clang-22's preinstall refuses without Longboat's 10.9 SDK (dev.mavergreen.longboat.sdk109) installed.
+            sudo /usr/local/mavergreen/bin/longboat sdk install 10.9
+            install clang22/mavericks-clang-22-native-*.pkg
+            # spec: tests/run-selftest.sh's --loads -- a bundle built elsewhere must load every libswift* from this runtime, or not be gated.
+            # platform: Guard Malloc makes cancellation_handler_concurrent too slow for the 2-vCPU guest; real 10.9 covers it (INGREDIENTS.md on-target:cancellation-gmalloc).
+            # platform: 10.9's sh (bash 3.2.53) has a set -e that does not stop for a failing ( ... && ... ) subshell.
+            mkdir gate
+            ( cd gate && tar -xzf ../dist/swift-runtime-selftest.tar.gz &&
+              sh swift-runtime-selftest/run-selftest.sh --loads &&
+              SELFTEST_NO_GMALLOC="upstream/bin/concurrency-cancellation_handler_concurrent upstream/bin/concurrency-cancellation_handler_concurrent-Onone" \
+              sh swift-runtime-selftest/run-selftest.sh --gate ) || exit 1
+      # spec: mavericks-vm's logs-dir output -- on a failure, the boot's serial console and what the guest
+      #       logged; a guest that stops answering ssh (exit 255) is otherwise a log with no cause in it.
+      - name: Keep the 10.9 guest's logs when it fails
+        if: failure() && steps.vm.outputs.logs-dir != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: mavericks-vm-logs-prebuilt
+          path: ${{ steps.vm.outputs.logs-dir }}
+          if-no-files-found: warn
+
+  # The same commit's runtime pkg, built on Linux (linux-runtime) and on a Mac (build-cross): shipyard's
+  # build-equivalence.sh, with this repo's INGREDIENTS.md entries, on Linux (it is host-agnostic, and reads Mach-O
+  # with clang22's llvm-nm, llvm-otool and llvm-lipo). Warnings only, for now: a difference, or no Linux pkg at all,
+  # never stops a release, and publish does not wait for this job. When it becomes blocking
+  # (build-equivalence.sh in place of scripts/equivalence-warnings.sh), publish gains it in its needs.
+  equivalence:
+    needs: [version, build-cross, linux-compiler-probe, linux-runtime]
+    if: ${{ !cancelled() && needs.build-cross.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: The clang22 release components/clang22/version pins
+        id: pins
+        run: |
+          clang22="$(cat components/clang22/version)"
+          echo "clang22=$clang22" >> "$GITHUB_OUTPUT"
+      # One shipyard for the whole run: linux-compiler-probe's. install@v1 would give a later stage whatever shipyard
+      # published since, and the cold chain spans hours.
+      - name: Check out shipyard at linux-compiler-probe's version
+        uses: actions/checkout@v7
+        with:
+          repository: Mavergreen/shipyard
+          ref: v${{ needs.linux-compiler-probe.outputs.shipyard }}
+          path: .shipyard
+          persist-credentials: false
+      - name: Install mavericks-shipyard and clang22 (linux-compiler-probe's version)
+        uses: ./.shipyard/.github/actions/install
+        with:
+          products: clang22@${{ steps.pins.outputs.clang22 }}
+      # platform: an action from a checkout has no ref to name its version by, so the probe's is said here.
+      - name: Say which shipyard this is
+        env:
+          PINNED: ${{ needs.linux-compiler-probe.outputs.shipyard }}
+        run: echo "SHIPYARD_VERSION=$PINNED" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v8
+        with: { name: swift-cross, path: dist }
+      - name: Download the Linux runtime pkg
+        if: needs.linux-runtime.result == 'success'
+        uses: actions/download-artifact@v8
+        with: { name: swift-linux, path: linux-dist }
+      - name: The Linux runtime pkg against build-cross's (warnings only)
+        env:
+          LINUX_RESULT: ${{ needs.linux-runtime.result }}
+        run: |
+          if [ "$LINUX_RESULT" != success ]; then
+            echo "::warning::the Linux runtime job's result is '$LINUX_RESULT', so there is no Linux runtime pkg to compare"
+          else
+            CL="$(./fetch-clang22.sh)"
+            export LIPO="$CL/bin/llvm-lipo" OTOOL="$CL/bin/llvm-otool" NM="$CL/bin/llvm-nm" STRINGS="$CL/bin/llvm-strings"
+            sh scripts/equivalence-warnings.sh "$(ls dist/swift-runtime-[0-9]*.pkg)" "$(ls linux-dist/swift-runtime-[0-9]*.pkg)"
+          fi

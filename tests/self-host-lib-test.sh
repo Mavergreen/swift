@@ -25,7 +25,10 @@ for t in clang clang++ ld64.lld llvm-ar llvm-ranlib llvm-libtool-darwin llvm-lip
 done
 [ "$(CLANG22_PREFIX="$C" clang22_prefix native "$REPO")" = "$C" ] || fail "native: not $C"
 rm "$C/bin/llvm-libtool-darwin"
-if CLANG22_PREFIX="$C" clang22_prefix native "$REPO" > /dev/null 2> "$T/err"; then fail "accepted a clang22 without llvm-libtool-darwin"; fi
+# A Mac's (uname faked, so this holds on Linux too): Linux's clang22 has none, and it is not asked for there.
+mkdir -p "$T/darwinbin"; printf '#!/bin/sh\n[ "$1" = -s ] && { echo Darwin; exit 0; }\nexec /usr/bin/uname "$@"\n' > "$T/darwinbin/uname"
+chmod +x "$T/darwinbin/uname"
+if ( PATH="$T/darwinbin:$PATH"; CLANG22_PREFIX="$C" clang22_prefix native "$REPO" ) > /dev/null 2> "$T/err"; then fail "accepted a clang22 without llvm-libtool-darwin"; fi
 grep -q "no $C/bin/llvm-libtool-darwin" "$T/err" || fail "did not name the missing tool: $(cat "$T/err")"
 printf '#!/bin/sh\n' > "$C/bin/llvm-libtool-darwin"; chmod +x "$C/bin/llvm-libtool-darwin"
 rm "$C/bin/llvm-otool"

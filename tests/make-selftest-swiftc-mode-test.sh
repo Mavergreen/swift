@@ -23,8 +23,14 @@
 #   upstream/check/<name>.swift, the source FileCheck reads (for a .gyb, the .gyb itself), one for both
 #   -O and -Onone, named as the binary less -Onone; two tests of one name, or a <dir> without lib/, are refused before anything
 #   is compiled. Upstream's concurrency layer is built in SWIFTC= mode and skipped, saying so, in the default
-#   mode, whose swift.org compiler refuses its 10.9 async code. A fake compiler and fake install_name_tools
-#   record their calls.
+#   mode, whose swift.org compiler refuses its 10.9 async code. With SWIFT_HOST_TOOLCHAIN (a toolchain prefix,
+#   as build.sh's) the default mode compiles with that prefix's swift-frontend, this repo's compiler, and so
+#   builds every test, those that need compiler patch 0003 and upstream's concurrency tests included, on a Mac
+#   and on Linux; a prefix without bin/dsymutil (which swiftc -g links through) is refused before anything is
+#   compiled. On Linux (a fake uname) the default mode without SWIFT_HOST_TOOLCHAIN is refused before
+#   anything is compiled, and SWIFTC= mode's rpath replacement is INSTALL_NAME_TOOL's or clang22's
+#   llvm-install-name-tool, never install_name_tool's from PATH: without either it is refused before anything
+#   is compiled. A fake compiler and fake install_name_tools record their calls.
 set -eu
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -42,7 +48,10 @@ mkdir -p "$T/c22/bin"
 printf '#!/bin/sh\necho "llvm $*" >> "%s/int-calls"\n' "$T" > "$T/c22/bin/llvm-install-name-tool"
 printf '#!/bin/sh\necho "named $*" >> "%s/int-calls"\n' "$T" > "$T/named-int"
 chmod +x "$T/fake-swiftc" "$T/bin/install_name_tool" "$T/c22/bin/llvm-install-name-tool" "$T/named-int"
-# Unless a case says otherwise, no clang22 (the box has one installed, at the default prefix).
+# Unless a case says otherwise, a Mac (a fake uname: the Linux cases put theirs first), so the cases read the
+# same on either host, and no clang22 (the box has one installed, at the default prefix).
+mkdir -p "$T/darwin"; printf '#!/bin/sh\necho Darwin\n' > "$T/darwin/uname"; chmod +x "$T/darwin/uname"
+PATH="$T/darwin:$PATH"; export PATH; unset SWIFT_HOST_TOOLCHAIN
 CLANG22_PREFIX="$T/no-clang22"; export CLANG22_PREFIX; unset INSTALL_NAME_TOOL
 B="$T/dist/swift-runtime-selftest/bin"
 # The corpus.
@@ -218,6 +227,59 @@ if grep -q 'concurrency' "$T/calls"; then fail "the default mode built an upstre
 grep -q "skipped: upstream's concurrency tests (they need this repo's compiler, not the swift.org one)" "$T/out" \
   || fail "the default mode did not say it skips upstream's concurrency tests: $(cat "$T/out")"
 rm -r "$SUP/upstream/concurrency"
+
+echo "-- SWIFT_HOST_TOOLCHAIN: the default mode compiles with the named prefix's swift-frontend, this repo's compiler,"
+echo "   and builds every test, on a Mac and on Linux"
+mkdir -p "$T/linux" "$T/htc/bin" "$T/htc/lib/swift" "$T/htc/lib/recaulk"
+# The prefix's own Recaulk archive, so no fetch: tests/make-selftest-recaulk-test.sh holds the link to it.
+: > "$T/htc/lib/recaulk/librecaulk.a"
+printf '#!/bin/sh\necho Linux\n' > "$T/linux/uname"; chmod +x "$T/linux/uname"
+cp "$T/fake-swiftc" "$T/htc/bin/swift-frontend"; : > "$T/htc/bin/clang"; : > "$T/htc/bin/ld64.lld"
+echo "   a prefix with no dsymutil (swiftc -g links through it) is refused before any compile"
+rm -f "$T/calls"
+if ( unset SWIFT_RUNTIME_PREFIX SWIFTC TC; SWIFT_HOST_TOOLCHAIN="$T/htc" SWIFT_WORK="$T/work" SHIPYARD_SCRIPTS="$T/shipyard" \
+     DIST="$T/dist" sh "$REPO/make-selftest.sh" > /dev/null 2> "$T/err" ); then fail "made a bundle with a prefix that has no dsymutil"; fi
+grep -q 'dsymutil.*build-toolchain.sh --host linux' "$T/err" || fail "did not say the prefix needs restaging for its dsymutil: $(cat "$T/err")"
+[ ! -f "$T/calls" ] || fail "compiled before refusing a prefix with no dsymutil: $(cat "$T/calls")"
+printf '#!/bin/sh\nexit 0\n' > "$T/htc/bin/dsymutil"; chmod +x "$T/htc/bin/dsymutil"
+mkdir -p "$SUP/upstream/concurrency/test/Concurrency"
+: > "$SUP/upstream/concurrency/test/Concurrency/Baz.swift"
+printf '%s\n' -swift-version 5 -parse-as-library > "$SUP/upstream/concurrency/test/Concurrency/Baz.swift.args"
+for host in mac linux; do
+  hp="$PATH"; [ "$host" = mac ] || hp="$T/linux:$PATH"
+  rm -f "$T/calls"
+  ( unset SWIFT_RUNTIME_PREFIX SWIFTC TC; PATH="$hp" SWIFT_HOST_TOOLCHAIN="$T/htc" SWIFT_WORK="$T/work" SHIPYARD_SCRIPTS="$T/shipyard" \
+      SELFTEST_SUPPORT="$SUP" DIST="$T/dist" sh "$REPO/make-selftest.sh" ) > "$T/out" 2>&1 \
+    || fail "$host: the default mode failed with SWIFT_HOST_TOOLCHAIN: $(cat "$T/out")"
+  for src in "$T/src"/*.swift; do
+    n="$(basename "$src" .swift)"; ! skipped "$src" || continue
+    grep -q -- "-target x86_64-apple-macosx10.9 -O .* $src -o $B/$n\( \|\$\)" "$T/calls" || fail "$host: SWIFT_HOST_TOOLCHAIN's compiler did not build $n: $(cat "$T/out")"
+  done
+  grep -q -- "-target x86_64-apple-macosx10.9 .*-o $B/typed_throws_test\( \|\$\)" "$T/calls" || fail "$host: typed_throws_test was not built for 10.9: $(cat "$T/calls")"
+  grep -q -- "-target x86_64-apple-macosx10.9 -O .* $SUP/upstream/concurrency/test/Concurrency/Baz.swift -o $U/concurrency-Baz " "$T/calls" \
+    || fail "$host: SWIFT_HOST_TOOLCHAIN's compiler did not build concurrency's Baz: $(cat "$T/out")"
+  if grep -q 'skipped: .*not the swift.org one' "$T/out"; then fail "$host: skipped a test SWIFT_HOST_TOOLCHAIN's compiler builds: $(cat "$T/out")"; fi
+done
+rm -r "$SUP/upstream/concurrency"
+
+echo "-- Linux: the default mode without SWIFT_HOST_TOOLCHAIN is refused before any compile"
+rm -f "$T/calls"
+if ( unset SWIFT_RUNTIME_PREFIX SWIFTC SWIFT_HOST_TOOLCHAIN; PATH="$T/linux:$PATH" TC="$T/tc" SWIFT_WORK="$T/work" SHIPYARD_SCRIPTS="$T/shipyard" \
+     DIST="$T/dist" sh "$REPO/make-selftest.sh" > /dev/null 2> "$T/err" ); then fail "made a Linux bundle without SWIFT_HOST_TOOLCHAIN"; fi
+grep -q 'SWIFT_HOST_TOOLCHAIN' "$T/err" || fail "did not say why the Linux default mode was refused: $(cat "$T/err")"
+[ ! -f "$T/calls" ] || fail "compiled before refusing the Linux default mode: $(cat "$T/calls")"
+
+echo "-- Linux: SWIFTC= mode rewrites rpaths with clang22's llvm-install-name-tool or INSTALL_NAME_TOOL, never install_name_tool"
+rm -f "$T/int-calls" "$T/calls"
+if ( PATH="$T/linux:$T/bin:$PATH" SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFIX="$P" DIST="$T/dist" \
+     sh "$REPO/make-selftest.sh" > /dev/null 2> "$T/err" ); then fail "made a Linux bundle with install_name_tool from PATH"; fi
+grep -q 'llvm-install-name-tool' "$T/err" || fail "did not say the Linux rewrite needs clang22's llvm-install-name-tool: $(cat "$T/err")"
+[ ! -f "$T/calls" ] && [ ! -f "$T/int-calls" ] || fail "compiled before refusing the Linux rewrite: $(cat "$T/calls" "$T/int-calls" 2>/dev/null)"
+PATH="$T/linux:$T/bin:$PATH" CLANG22_PREFIX="$T/c22" SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFIX="$P" DIST="$T/dist" sh "$REPO/make-selftest.sh" > /dev/null
+[ "$(cut -d' ' -f1 "$T/int-calls" | sort -u)" = llvm ] || fail "Linux did not rewrite with clang22's llvm-install-name-tool: $(cat "$T/int-calls")"
+rm -f "$T/int-calls"
+PATH="$T/linux:$T/bin:$PATH" INSTALL_NAME_TOOL="$T/named-int" SWIFTC="$T/fake-swiftc" SWIFT_RUNTIME_PREFIX="$P" DIST="$T/dist" sh "$REPO/make-selftest.sh" > /dev/null
+[ "$(cut -d' ' -f1 "$T/int-calls" | sort -u)" = named ] || fail "Linux did not rewrite with INSTALL_NAME_TOOL: $(cat "$T/int-calls")"
 
 echo "-- SELFTEST_SUPPORT: a dir without lib/, or two tests of one name, is refused before any compile"
 mkdir -p "$T/nolib/modules" "$T/nolib/upstream"
